@@ -1,4 +1,5 @@
 import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
+import { initMarkups } from '/js/markups.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -6,6 +7,8 @@ const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
 const sheetId = params.get('sheetId');
 document.getElementById('back-link').href = `/viewer.html?projectId=${projectId}`;
+
+let markupsController = null;
 
 async function loadShell() {
   const me = await requireSession();
@@ -28,6 +31,7 @@ async function renderPdf(versionId) {
     const ctx = canvas.getContext('2d');
     await page.render({ canvasContext: ctx, viewport }).promise;
     statusEl.textContent = '';
+    if (markupsController) markupsController.resync();
   } catch (err) {
     statusEl.textContent = `Failed to render PDF: ${err.message}`;
   }
@@ -243,5 +247,16 @@ document.getElementById('compare-reset').addEventListener('click', () => resetAl
 
   renderVersionList(sheet, versions);
   setupCompare(sheet, versions);
+
+  const { documents } = await api('GET', `/api/projects/${projectId}/documents`);
+  markupsController = initMarkups({
+    sheetId,
+    me,
+    svgEl: document.getElementById('markup-svg'),
+    canvasEl: document.getElementById('pdf-canvas'),
+    documents,
+  });
+
   await renderPdf(sheet.current_version_id);
+  await markupsController.load();
 })();

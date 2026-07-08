@@ -13,16 +13,33 @@
     <h1 id="sheet-number"></h1>
     <p class="muted" id="sheet-title"></p>
 
+    <div class="row" id="markup-toolbar">
+      <button class="tool-btn" data-tool="select">Select</button>
+      <button class="tool-btn" data-tool="line">Line</button>
+      <button class="tool-btn" data-tool="arrow">Arrow</button>
+      <button class="tool-btn" data-tool="rect">Rectangle</button>
+      <button class="tool-btn" data-tool="cloud">Cloud</button>
+      <button class="tool-btn" data-tool="text">Text</button>
+      <label>Color: <input type="color" id="markup-color" value="#e11d48"></label>
+      <label>Width: <input type="number" id="markup-width" value="2" min="1" max="10" style="width:50px;"></label>
+      <label id="publish-default-wrap" style="display:none;"><input type="checkbox" id="markup-publish-default"> Draw as published</label>
+    </div>
+
     <div class="row" style="align-items: flex-start;">
       <div style="flex: 1; min-width: 0;">
         <div class="pdf-viewer-wrap">
-          <canvas id="pdf-canvas"></canvas>
+          <div class="markup-stage">
+            <canvas id="pdf-canvas"></canvas>
+            <svg id="markup-svg"></svg>
+          </div>
         </div>
         <p class="muted" id="pdf-status"></p>
       </div>
       <div class="card" style="width: 260px; flex-shrink: 0;">
         <h3>Version history</h3>
         <ul class="version-list" id="version-list"></ul>
+        <h3>Markups</h3>
+        <ul class="markup-list" id="markup-list"></ul>
       </div>
     </div>
 

@@ -11,6 +11,10 @@ const revisionsRoutes = require('./routes/revisions.routes');
 const stagedSheetsRoutes = require('./routes/stagedSheets.routes');
 const sheetsRoutes = require('./routes/sheets.routes');
 const sheetVersionsRoutes = require('./routes/sheetVersions.routes');
+const documentsRoutes = require('./routes/documents.routes');
+const documentFilesRoutes = require('./routes/documentFiles.routes');
+const markupsRoutes = require('./routes/markups.routes');
+const markupByIdRoutes = require('./routes/markupById.routes');
 
 const app = express();
 
@@ -36,6 +40,10 @@ app.use('/api/projects/:projectId/revisions', revisionsRoutes);
 app.use('/api/staged-sheets', stagedSheetsRoutes);
 app.use('/api/projects/:projectId/sheets', sheetsRoutes);
 app.use('/api/sheet-versions', sheetVersionsRoutes);
+app.use('/api/projects/:projectId/documents', documentsRoutes);
+app.use('/api/documents', documentFilesRoutes);
+app.use('/api/sheets/:sheetId/markups', markupsRoutes);
+app.use('/api/markups', markupByIdRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
