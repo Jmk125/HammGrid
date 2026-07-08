@@ -26,4 +26,7 @@ function addColumnIfMissing(table, column, definition) {
 
 addColumnIfMissing('sheet_versions', 'overlay_path', 'TEXT');
 
+addColumnIfMissing('markups', 'updated_at', 'TEXT');
+db.exec(`UPDATE markups SET updated_at = created_at WHERE updated_at IS NULL`);
+
 module.exports = db;

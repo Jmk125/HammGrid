@@ -1,5 +1,6 @@
 import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { initMarkups } from '/js/markups.js';
+import { getCachedAsset, getCachedSheets } from '/js/offline-store.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -17,12 +18,19 @@ async function loadShell() {
   return me;
 }
 
+// Reads the PDF from OPFS if this version has been synced - no network in
+// the path of viewing a sheet, per CLAUDE.md - falling back to the
+// authenticated network endpoint for versions that were never synced.
 async function renderPdf(versionId) {
   const statusEl = document.getElementById('pdf-status');
   statusEl.textContent = 'Loading...';
   const canvas = document.getElementById('pdf-canvas');
   try {
-    const loadingTask = pdfjsLib.getDocument(`/api/sheet-versions/${versionId}/pdf`);
+    const cachedFile = await getCachedAsset(versionId, 'pdf');
+    const source = cachedFile
+      ? { data: await cachedFile.arrayBuffer() }
+      : { url: `/api/sheet-versions/${versionId}/pdf` };
+    const loadingTask = pdfjsLib.getDocument(source);
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(1);
     const viewport = page.getViewport({ scale: 2 });
@@ -30,7 +38,7 @@ async function renderPdf(versionId) {
     canvas.height = viewport.height;
     const ctx = canvas.getContext('2d');
     await page.render({ canvasContext: ctx, viewport }).promise;
-    statusEl.textContent = '';
+    statusEl.textContent = cachedFile ? '(from local cache)' : '';
     if (markupsController) markupsController.resync();
   } catch (err) {
     statusEl.textContent = `Failed to render PDF: ${err.message}`;
@@ -236,11 +244,50 @@ document.getElementById('compare-old').addEventListener('change', loadCompare);
 document.getElementById('compare-new').addEventListener('change', loadCompare);
 document.getElementById('compare-reset').addEventListener('click', () => resetAlignment(true));
 
+// Offline fallback: reconstruct a minimal sheet/versions pair from whatever
+// synced during the last visit (just the current version - full version
+// history isn't part of the offline-viewing requirement, only the current
+// published sheet is).
+async function loadSheetOffline() {
+  const cachedSheets = await getCachedSheets(projectId);
+  const cached = cachedSheets.find((s) => String(s.sheet_id) === String(sheetId));
+  if (!cached) return null;
+  return {
+    sheet: {
+      id: cached.sheet_id,
+      sheet_number: cached.sheet_number,
+      discipline: cached.discipline,
+      current_version_id: cached.current_version_id,
+    },
+    versions: [
+      {
+        id: cached.current_version_id,
+        revision_id: cached.current_revision_id,
+        revision_title: 'Current (offline)',
+        title: cached.current_title,
+        overlay_path: null,
+      },
+    ],
+  };
+}
+
 (async function init() {
   const me = await loadShell();
   if (!me) return;
 
-  const { sheet, versions } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}`);
+  let sheet;
+  let versions;
+  try {
+    ({ sheet, versions } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}`));
+  } catch (err) {
+    const offline = await loadSheetOffline();
+    if (!offline) {
+      document.getElementById('pdf-status').textContent = 'Offline, and this sheet has never been synced to this device.';
+      return;
+    }
+    ({ sheet, versions } = offline);
+  }
+
   document.getElementById('sheet-number').textContent = sheet.sheet_number;
   const current = versions.find((v) => v.id === sheet.current_version_id);
   document.getElementById('sheet-title').textContent = current ? current.title : '';
@@ -248,7 +295,13 @@ document.getElementById('compare-reset').addEventListener('click', () => resetAl
   renderVersionList(sheet, versions);
   setupCompare(sheet, versions);
 
-  const { documents } = await api('GET', `/api/projects/${projectId}/documents`);
+  let documents = [];
+  try {
+    ({ documents } = await api('GET', `/api/projects/${projectId}/documents`));
+  } catch (err) {
+    // offline - markup linking dropdown just won't have options this session
+  }
+
   markupsController = initMarkups({
     sheetId,
     me,

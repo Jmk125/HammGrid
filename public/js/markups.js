@@ -1,3 +1,5 @@
+import { getCachedMarkupsForSheet } from '/js/offline-store.js';
+
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const TYPE_LABELS = { line: 'Line', arrow: 'Arrow', rect: 'Rectangle', cloud: 'Cloud', text: 'Text' };
 
@@ -314,8 +316,13 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
   return {
     async load() {
       syncViewBox();
-      const { markups: loaded } = await api('GET', `/api/sheets/${sheetId}/markups`);
-      markups = loaded;
+      try {
+        const { markups: loaded } = await api('GET', `/api/sheets/${sheetId}/markups`);
+        markups = loaded;
+      } catch (err) {
+        // Offline: fall back to whatever markups synced during the last visit.
+        markups = await getCachedMarkupsForSheet(sheetId);
+      }
       renderAll();
     },
     resync() {

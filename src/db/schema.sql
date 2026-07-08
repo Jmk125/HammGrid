@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS markups (
   geometry TEXT NOT NULL,
   style TEXT NOT NULL DEFAULT '{}',
   linked_document_id INTEGER REFERENCES documents(id),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS shares (

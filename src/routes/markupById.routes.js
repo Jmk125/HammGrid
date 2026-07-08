@@ -39,7 +39,8 @@ router.patch('/:id', requireAuth, (req, res) => {
        geometry = ?,
        style = ?,
        linked_document_id = ?,
-       visibility = ?
+       visibility = ?,
+       updated_at = datetime('now')
      WHERE id = ?`
   ).run(
     geometry !== undefined ? JSON.stringify(geometry) : markup.geometry,

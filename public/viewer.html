@@ -1,5 +1,7 @@
 <title>Sheets — Drawing App</title>
 <link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2563eb">
 <body>
   <header>
     <a href="/dashboard.html">Drawing App</a>
@@ -25,7 +27,9 @@
 
     <div id="grid" class="grid"></div>
     <p class="muted" id="empty-msg" style="display:none;">No sheets match these filters.</p>
+    <p class="muted" id="sync-status"></p>
   </main>
   <script src="/js/api.js"></script>
-  <script src="/js/viewer.js"></script>
+  <script type="module" src="/js/viewer.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
 </body>
