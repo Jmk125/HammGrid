@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS sheet_versions (
   pdf_path TEXT NOT NULL,
   thumb_path TEXT,
   preview_path TEXT,
+  overlay_path TEXT,
   ocr_confidence REAL,
   extraction_status TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))

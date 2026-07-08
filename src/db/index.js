@@ -15,4 +15,15 @@ db.pragma('foreign_keys = ON');
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
+// CREATE TABLE IF NOT EXISTS doesn't add new columns to a table that already
+// existed pre-migration, so new columns need an explicit ALTER TABLE here.
+function addColumnIfMissing(table, column, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!columns.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+addColumnIfMissing('sheet_versions', 'overlay_path', 'TEXT');
+
 module.exports = db;

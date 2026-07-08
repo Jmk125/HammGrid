@@ -25,6 +25,27 @@
         <ul class="version-list" id="version-list"></ul>
       </div>
     </div>
+
+    <div class="card" id="compare-card" style="display:none;">
+      <h2>Compare versions</h2>
+      <div class="row">
+        <label>Old (red):
+          <select id="compare-old"></select>
+        </label>
+        <label>New (cyan):
+          <select id="compare-new"></select>
+        </label>
+        <button id="compare-reset">Reset alignment</button>
+      </div>
+      <p class="muted">Drag the image to shift. Use the scale slider to nudge size. Unchanged lines are black; removed content is red; added content is cyan.</p>
+      <div class="row">
+        <label>Scale: <input type="range" id="compare-scale" min="0.9" max="1.1" step="0.002" value="1"></label>
+      </div>
+      <div class="pdf-viewer-wrap">
+        <canvas id="compare-canvas"></canvas>
+      </div>
+      <p class="muted" id="compare-status"></p>
+    </div>
   </main>
   <script src="/js/api.js"></script>
   <script type="module" src="/js/sheet.js"></script>

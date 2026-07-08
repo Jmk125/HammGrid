@@ -17,5 +17,6 @@ function serveFile(pathColumn, contentType) {
 router.get('/:id/thumb', requireAuth, serveFile('thumb_path', 'image/webp'));
 router.get('/:id/preview', requireAuth, serveFile('preview_path', 'image/webp'));
 router.get('/:id/pdf', requireAuth, serveFile('pdf_path', 'application/pdf'));
+router.get('/:id/overlay', requireAuth, serveFile('overlay_path', 'image/webp'));
 
 module.exports = router;

@@ -14,6 +14,7 @@ const router = express.Router({ mergeParams: true });
 
 const BURST_SCRIPT = path.join(__dirname, '..', '..', 'pyproc', 'burst.py');
 const OCR_SCRIPT = path.join(__dirname, '..', '..', 'pyproc', 'ocr_region.py');
+const OVERLAY_SCRIPT = path.join(__dirname, '..', '..', 'pyproc', 'overlay.py');
 
 const uploadTmpDir = path.join(config.storageDir, 'uploads', 'tmp');
 fs.mkdirSync(uploadTmpDir, { recursive: true });
@@ -224,7 +225,7 @@ router.post('/:revisionId/ocr', requireRole('admin', 'editor'), async (req, res)
   res.json({ updated });
 });
 
-router.post('/:revisionId/publish', requireRole('admin', 'editor'), (req, res) => {
+router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, res) => {
   const revision = getRevisionOr404(req, res);
   if (!revision) return;
   if (revision.status !== 'draft') {
@@ -251,6 +252,30 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), (req, res) =
 
   const toPublish = staged.filter((s) => s.match_status !== 'ignored');
   const toDiscard = staged.filter((s) => s.match_status === 'ignored');
+
+  // Pre-bake the current-vs-previous overlay for replacements (spec: pre-bake the
+  // common comparison at publish time for instant load). This needs the queue's
+  // async python calls, which can't run inside the synchronous db.transaction()
+  // below, and must read the *old* current_version_id before publish overwrites it.
+  const overlayPaths = {};
+  for (const s of toPublish) {
+    if (s.match_status !== 'replacement' || !s.match_sheet_id) continue;
+    const oldSheet = db.prepare('SELECT current_version_id FROM sheets WHERE id = ?').get(s.match_sheet_id);
+    const oldVersion = oldSheet && oldSheet.current_version_id
+      ? db.prepare('SELECT pdf_path FROM sheet_versions WHERE id = ?').get(oldSheet.current_version_id)
+      : null;
+    if (!oldVersion) continue;
+
+    const destDir = path.join(config.storageDir, 'projects', String(revision.project_id), 'sheets', String(s.match_sheet_id));
+    fs.mkdirSync(destDir, { recursive: true });
+    const overlayDest = path.join(destDir, `v${revision.id}_overlay.webp`);
+    try {
+      await queue.enqueue(() => runPython(OVERLAY_SCRIPT, [oldVersion.pdf_path, s.pdf_path, overlayDest]));
+      overlayPaths[s.id] = overlayDest;
+    } catch (err) {
+      console.error('Overlay generation failed for staged sheet', s.id, err);
+    }
+  }
 
   const publishTxn = db.transaction(() => {
     for (const s of toPublish) {
@@ -286,10 +311,10 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), (req, res) =
 
       const versionResult = db
         .prepare(
-          `INSERT INTO sheet_versions (sheet_id, revision_id, title, pdf_path, thumb_path, preview_path, ocr_confidence)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO sheet_versions (sheet_id, revision_id, title, pdf_path, thumb_path, preview_path, overlay_path, ocr_confidence)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(sheetId, revision.id, title, destPdf, destThumb, destPreview, s.ocr_number_confidence);
+        .run(sheetId, revision.id, title, destPdf, destThumb, destPreview, overlayPaths[s.id] || null, s.ocr_number_confidence);
 
       db.prepare('UPDATE sheets SET current_version_id = ? WHERE id = ?').run(versionResult.lastInsertRowid, sheetId);
     }
