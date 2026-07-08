@@ -9,6 +9,8 @@ const usersRoutes = require('./routes/users.routes');
 const projectsRoutes = require('./routes/projects.routes');
 const revisionsRoutes = require('./routes/revisions.routes');
 const stagedSheetsRoutes = require('./routes/stagedSheets.routes');
+const sheetsRoutes = require('./routes/sheets.routes');
+const sheetVersionsRoutes = require('./routes/sheetVersions.routes');
 
 const app = express();
 
@@ -32,6 +34,8 @@ app.use('/api/users', usersRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/projects/:projectId/revisions', revisionsRoutes);
 app.use('/api/staged-sheets', stagedSheetsRoutes);
+app.use('/api/projects/:projectId/sheets', sheetsRoutes);
+app.use('/api/sheet-versions', sheetVersionsRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

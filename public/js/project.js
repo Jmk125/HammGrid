@@ -10,6 +10,7 @@ async function load() {
 
   const { project } = await api('GET', `/api/projects/${projectId}`);
   document.getElementById('project-name').textContent = project.name;
+  document.getElementById('viewer-link').href = `/viewer.html?projectId=${projectId}`;
 
   const { revisions } = await api('GET', `/api/projects/${projectId}/revisions`);
   const tbody = document.querySelector('#revisions-table tbody');

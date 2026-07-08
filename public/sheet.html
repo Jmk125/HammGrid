@@ -1,0 +1,31 @@
+<title>Sheet — Drawing App</title>
+<link rel="stylesheet" href="/css/style.css">
+<body>
+  <header>
+    <a href="/dashboard.html">Drawing App</a>
+    <div class="row">
+      <span id="whoami" class="muted"></span>
+      <button id="logout">Sign out</button>
+    </div>
+  </header>
+  <main>
+    <p><a id="back-link" href="#">&larr; Sheets</a></p>
+    <h1 id="sheet-number"></h1>
+    <p class="muted" id="sheet-title"></p>
+
+    <div class="row" style="align-items: flex-start;">
+      <div style="flex: 1; min-width: 0;">
+        <div class="pdf-viewer-wrap">
+          <canvas id="pdf-canvas"></canvas>
+        </div>
+        <p class="muted" id="pdf-status"></p>
+      </div>
+      <div class="card" style="width: 260px; flex-shrink: 0;">
+        <h3>Version history</h3>
+        <ul class="version-list" id="version-list"></ul>
+      </div>
+    </div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script type="module" src="/js/sheet.js"></script>
+</body>

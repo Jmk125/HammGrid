@@ -1,0 +1,31 @@
+<title>Sheets — Drawing App</title>
+<link rel="stylesheet" href="/css/style.css">
+<body>
+  <header>
+    <a href="/dashboard.html">Drawing App</a>
+    <div class="row">
+      <span id="whoami" class="muted"></span>
+      <button id="logout">Sign out</button>
+    </div>
+  </header>
+  <main>
+    <p><a id="back-link" href="#">&larr; Project</a></p>
+    <h1 id="project-name"></h1>
+
+    <div class="card">
+      <div class="row">
+        <label>Discipline:
+          <select id="discipline-filter"><option value="">All</option></select>
+        </label>
+        <label>Revision:
+          <select id="revision-filter"><option value="">All (current set)</option></select>
+        </label>
+      </div>
+    </div>
+
+    <div id="grid" class="grid"></div>
+    <p class="muted" id="empty-msg" style="display:none;">No sheets match these filters.</p>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/viewer.js"></script>
+</body>
