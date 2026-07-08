@@ -1,0 +1,96 @@
+:root {
+  color-scheme: light;
+  --border: #d0d5dd;
+  --bg: #f7f8fa;
+  --text: #1a1d23;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --danger: #dc2626;
+  --warn-bg: #fef3c7;
+  --ok: #16a34a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+}
+
+header a { color: var(--text); text-decoration: none; font-weight: 600; }
+
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+h1, h2, h3 { margin: 0 0 12px; }
+
+.card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+button {
+  font: inherit;
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #fff;
+  cursor: pointer;
+}
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+input, select {
+  font: inherit;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+table { border-collapse: collapse; width: 100%; }
+th, td { padding: 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+tr.needs-attention td { background: var(--warn-bg); }
+tr.ignored td { opacity: 0.5; }
+
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #e5e7eb;
+}
+.pill.new { background: #dbeafe; color: #1e40af; }
+.pill.replacement { background: #dcfce7; color: #166534; }
+.pill.suspicious { background: #fee2e2; color: #991b1b; }
+.pill.pending { background: #e5e7eb; color: #374151; }
+.pill.ignored { background: #f3f4f6; color: #9ca3af; }
+
+.thumb { width: 80px; height: auto; border: 1px solid var(--border); border-radius: 4px; }
+
+.error { color: var(--danger); margin: 8px 0; }
+.muted { color: var(--muted); font-size: 13px; }
+
+.box-draw-wrap { position: relative; display: inline-block; max-width: 100%; }
+.box-draw-wrap img { max-width: 100%; display: block; }
+.box-draw-wrap canvas { position: absolute; top: 0; left: 0; cursor: crosshair; }
+
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }

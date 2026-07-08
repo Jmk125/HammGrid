@@ -1,0 +1,35 @@
+<title>Project — Drawing App</title>
+<link rel="stylesheet" href="/css/style.css">
+<body>
+  <header>
+    <a href="/dashboard.html">Drawing App</a>
+    <div class="row">
+      <span id="whoami" class="muted"></span>
+      <button id="logout">Sign out</button>
+    </div>
+  </header>
+  <main>
+    <p><a href="/dashboard.html">&larr; All projects</a></p>
+    <h1 id="project-name"></h1>
+
+    <div class="card" id="new-revision-card" style="display:none;">
+      <h2>New revision</h2>
+      <form id="new-revision-form" class="row">
+        <input id="rev-title" placeholder="Title (e.g. Revision 0, ASI-014)" required>
+        <input id="rev-source" placeholder="Source (optional)">
+        <input id="rev-date" type="date">
+        <button class="primary" type="submit">Create</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Revisions</h2>
+      <table id="revisions-table">
+        <thead><tr><th>Title</th><th>Source</th><th>Status</th><th>Created</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/project.js"></script>
+</body>

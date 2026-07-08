@@ -1,0 +1,14 @@
+<title>Drawing App</title>
+<body>
+  <script src="/js/api.js"></script>
+  <script>
+    (async () => {
+      try {
+        await api('GET', '/api/auth/me');
+        window.location.href = '/dashboard.html';
+      } catch (e) {
+        window.location.href = '/login.html';
+      }
+    })();
+  </script>
+</body>

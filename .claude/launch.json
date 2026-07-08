@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "drawing-app-server",
+      "runtimeExecutable": "C:\\Users\\hc.62\\Documents\\Tools\\node\\node.exe",
+      "runtimeArgs": ["src/server.js"],
+      "port": 3000
+    }
+  ]
+}

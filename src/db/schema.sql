@@ -114,6 +114,31 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires INTEGER NOT NULL
 );
 
+-- Ingest staging: incoming sheets sit here between upload and publish, while
+-- the user reviews/corrects OCR results and confirms sheet matching. Rows are
+-- deleted once the revision is published (their data lands in sheets/sheet_versions).
+CREATE TABLE IF NOT EXISTS staged_sheets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  revision_id INTEGER NOT NULL REFERENCES revisions(id) ON DELETE CASCADE,
+  upload_order INTEGER NOT NULL,
+  pdf_path TEXT NOT NULL,
+  thumb_path TEXT,
+  preview_path TEXT,
+  page_width_pt REAL,
+  page_height_pt REAL,
+  region_scope TEXT,
+  ocr_number TEXT,
+  ocr_number_confidence REAL,
+  ocr_title TEXT,
+  ocr_title_confidence REAL,
+  corrected_number TEXT,
+  corrected_title TEXT,
+  discipline TEXT,
+  match_status TEXT NOT NULL CHECK (match_status IN ('pending', 'new', 'replacement', 'suspicious', 'ignored')) DEFAULT 'pending',
+  match_sheet_id INTEGER REFERENCES sheets(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_revisions_project ON revisions(project_id);
 CREATE INDEX IF NOT EXISTS idx_ocr_regions_project ON ocr_regions(project_id);
 CREATE INDEX IF NOT EXISTS idx_sheets_project ON sheets(project_id);
@@ -126,3 +151,5 @@ CREATE INDEX IF NOT EXISTS idx_shares_project ON shares(project_id);
 CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token);
 CREATE INDEX IF NOT EXISTS idx_activity_log_project ON activity_log(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires);
+CREATE INDEX IF NOT EXISTS idx_staged_sheets_revision ON staged_sheets(revision_id);
+CREATE INDEX IF NOT EXISTS idx_ocr_regions_scope ON ocr_regions(project_id, scope);
