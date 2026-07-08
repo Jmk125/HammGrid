@@ -4,7 +4,10 @@
 // to the opaque HTTP cache eviction CLAUDE.md warns about. This worker's job
 // is only "make the app itself installable and load with no network."
 
-const CACHE_NAME = 'app-shell-v1';
+// Bump this on every deploy that changes any precached file. It's the only
+// thing that forces already-visited browsers to drop a stale cache - see
+// the fetch handler below for why that alone used to not be enough.
+const CACHE_NAME = 'app-shell-v2';
 
 const PRECACHE_URLS = [
   '/',
@@ -14,6 +17,8 @@ const PRECACHE_URLS = [
   '/viewer.html',
   '/sheet.html',
   '/documents.html',
+  '/shares.html',
+  '/activity.html',
   '/css/style.css',
   '/js/api.js',
   '/js/login.js',
@@ -25,6 +30,8 @@ const PRECACHE_URLS = [
   '/js/documents.js',
   '/js/offline-store.js',
   '/js/pwa.js',
+  '/js/shares.js',
+  '/js/activity.js',
   '/vendor/pdfjs/pdf.min.mjs',
   '/vendor/pdfjs/pdf.worker.min.mjs',
   '/manifest.webmanifest',
@@ -47,6 +54,12 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+// Network-first, cache as the offline fallback - NOT cache-first. This is an
+// actively-developed app; cache-first silently froze already-visited
+// browsers on whatever HTML/JS existed at first-visit time, since nothing
+// here has content-hashed filenames to bust on change. Every successful
+// online fetch refreshes the cache, so the offline fallback still stays
+// reasonably current.
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.pathname.startsWith('/api/')) {
@@ -54,15 +67,14 @@ self.addEventListener('fetch', (event) => {
   }
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
+    fetch(event.request)
+      .then((response) => {
         if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
         return response;
-      });
-    })
+      })
+      .catch(() => caches.match(event.request))
   );
 });
