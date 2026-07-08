@@ -16,6 +16,10 @@ const documentFilesRoutes = require('./routes/documentFiles.routes');
 const markupsRoutes = require('./routes/markups.routes');
 const markupByIdRoutes = require('./routes/markupById.routes');
 const syncRoutes = require('./routes/sync.routes');
+const sharesRoutes = require('./routes/shares.routes');
+const shareAccessRoutes = require('./routes/shareAccess.routes');
+const exportsRoutes = require('./routes/exports.routes');
+const activityRoutes = require('./routes/activity.routes');
 
 const app = express();
 
@@ -46,6 +50,10 @@ app.use('/api/documents', documentFilesRoutes);
 app.use('/api/sheets/:sheetId/markups', markupsRoutes);
 app.use('/api/markups', markupByIdRoutes);
 app.use('/api/projects/:projectId/sync', syncRoutes);
+app.use('/api/projects/:projectId/shares', sharesRoutes);
+app.use('/api/share', shareAccessRoutes);
+app.use('/api/projects/:projectId/export', exportsRoutes);
+app.use('/api/projects/:projectId/activity', activityRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

@@ -6,12 +6,18 @@ async function load() {
   document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
   if (me.role === 'admin' || me.role === 'editor') {
     document.getElementById('new-revision-card').style.display = '';
+    document.getElementById('shares-link').style.display = '';
+  }
+  if (me.role === 'admin') {
+    document.getElementById('activity-link').style.display = '';
   }
 
   const { project } = await api('GET', `/api/projects/${projectId}`);
   document.getElementById('project-name').textContent = project.name;
   document.getElementById('viewer-link').href = `/viewer.html?projectId=${projectId}`;
   document.getElementById('documents-link').href = `/documents.html?projectId=${projectId}`;
+  document.getElementById('shares-link').href = `/shares.html?projectId=${projectId}`;
+  document.getElementById('activity-link').href = `/activity.html?projectId=${projectId}`;
 
   const { revisions } = await api('GET', `/api/projects/${projectId}/revisions`);
   const tbody = document.querySelector('#revisions-table tbody');

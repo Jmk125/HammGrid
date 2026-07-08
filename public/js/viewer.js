@@ -94,7 +94,17 @@ async function renderFromLiveApi() {
   );
 }
 
-document.getElementById('discipline-filter').addEventListener('change', renderFromCache);
+function updateExportLinks() {
+  const discipline = document.getElementById('discipline-filter').value;
+  const qs = discipline ? `?discipline=${encodeURIComponent(discipline)}` : '';
+  document.getElementById('export-zip-link').href = `/api/projects/${projectId}/export/zip${qs}`;
+  document.getElementById('export-merged-link').href = `/api/projects/${projectId}/export/merged-pdf${qs}`;
+}
+
+document.getElementById('discipline-filter').addEventListener('change', () => {
+  renderFromCache();
+  updateExportLinks();
+});
 document.getElementById('revision-filter').addEventListener('change', renderFromCache);
 
 document.getElementById('logout').addEventListener('click', async () => {
@@ -112,6 +122,7 @@ document.getElementById('logout').addEventListener('click', async () => {
     // offline on first-ever load with no cached project metadata - filters just stay empty
   }
 
+  updateExportLinks();
   const cachedCount = await renderFromCache();
   if (cachedCount === 0) {
     try {

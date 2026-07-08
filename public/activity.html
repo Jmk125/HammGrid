@@ -1,0 +1,27 @@
+<title>Activity Log — Drawing App</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2563eb">
+<body>
+  <header>
+    <a href="/dashboard.html">Drawing App</a>
+    <div class="row">
+      <span id="whoami" class="muted"></span>
+      <button id="logout">Sign out</button>
+    </div>
+  </header>
+  <main>
+    <p><a id="back-link" href="#">&larr; Project</a></p>
+    <h1>Activity Log</h1>
+    <p class="error" id="error" style="display:none;"></p>
+    <div class="card">
+      <table id="activity-table">
+        <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </main>
+  <script src="/js/api.js"></script>
+  <script src="/js/activity.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
+</body>
