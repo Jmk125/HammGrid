@@ -10,6 +10,13 @@ function serveFile(pathColumn, contentType) {
     const row = db.prepare(`SELECT ${pathColumn} AS p FROM sheet_versions WHERE id = ?`).get(req.params.id);
     if (!row || !row.p) return res.status(404).end();
     res.type(contentType);
+    // A published sheet_version's files never change in place - a new
+    // revision always writes a new file (v<revisionId>.*), never overwrites
+    // an existing one - so these are safe to cache hard. Repeat views of the
+    // same sheet (going back to it, re-opening after a version switch) then
+    // load from disk instead of re-fetching over the network. `private` (not
+    // `public`) since this still requires auth per CLAUDE.md's access model.
+    res.set('Cache-Control', 'private, max-age=31536000, immutable');
     fs.createReadStream(row.p).pipe(res);
   };
 }
