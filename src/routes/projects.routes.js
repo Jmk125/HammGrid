@@ -1,5 +1,8 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const db = require('../db');
+const config = require('../config');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
@@ -78,9 +81,47 @@ router.put('/:id', requireRole('admin'), (req, res) => {
   res.json({ project: parseProject(project) });
 });
 
+// Destructive and unrecoverable, so it requires the caller to echo back the
+// project's exact name (defense in depth - the UI also makes the user type
+// it, but a stray/buggy API call shouldn't be able to wipe a project by id
+// alone).
 router.delete('/:id', requireRole('admin'), (req, res) => {
-  const result = db.prepare('DELETE FROM projects WHERE id = ?').run(req.params.id);
-  if (result.changes === 0) return res.status(404).json({ error: 'Not found' });
+  const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+  if (!project) return res.status(404).json({ error: 'Not found' });
+
+  if (req.body.confirm_name !== project.name) {
+    return res.status(400).json({ error: 'confirm_name must exactly match the project name' });
+  }
+
+  // Documents live in a flat, non-project-scoped folder, so their file paths
+  // have to be collected before the cascade delete removes the DB rows that
+  // point to them. Revision ids are needed for the same reason (staging
+  // directories are keyed by revision_id, not project_id).
+  const documentPaths = db
+    .prepare('SELECT pdf_path FROM documents WHERE project_id = ?')
+    .all(project.id)
+    .map((d) => d.pdf_path)
+    .filter(Boolean);
+  const revisionIds = db.prepare('SELECT id FROM revisions WHERE project_id = ?').all(project.id).map((r) => r.id);
+
+  db.prepare('DELETE FROM projects WHERE id = ?').run(project.id);
+
+  db.prepare('INSERT INTO activity_log (project_id, actor, action, detail) VALUES (?, ?, ?, ?)').run(
+    null,
+    String(req.session.user.id),
+    'project_delete',
+    JSON.stringify({ project_id: project.id, project_name: project.name })
+  );
+
+  const projectDir = path.join(config.storageDir, 'projects', String(project.id));
+  fs.rm(projectDir, { recursive: true, force: true }, () => {});
+  for (const revId of revisionIds) {
+    fs.rm(path.join(config.storageDir, 'staging', String(revId)), { recursive: true, force: true }, () => {});
+  }
+  for (const docPath of documentPaths) {
+    fs.rm(docPath, { force: true }, () => {});
+  }
+
   res.json({ ok: true });
 });
 
