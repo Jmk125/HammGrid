@@ -1,7 +1,9 @@
+import { renderShell } from '/js/shell.js';
+
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
 const revisionId = params.get('revisionId');
-document.getElementById('back-link').href = `/project.html?id=${projectId}`;
+document.getElementById('back-link').href = `/project-settings.html?projectId=${projectId}`;
 
 const NUMBER_PATTERN = /^[A-Z]{1,2}-?\d+(\.\d+)?$/i;
 const CONFIDENCE_THRESHOLD = 70;
@@ -19,12 +21,6 @@ let stagedSheets = [];
 let boxes = { number_box: null, title_box: null };
 let drawing = null; // {startX, startY} while dragging
 
-async function loadShell() {
-  const me = await requireSession();
-  if (!me) return null;
-  document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
-  return me;
-}
 
 async function loadRevision() {
   const { revision } = await api('GET', `/api/projects/${projectId}/revisions/${revisionId}`);
@@ -309,21 +305,23 @@ document.getElementById('publish-btn').addEventListener('click', async () => {
   try {
     const result = await api('POST', `/api/projects/${projectId}/revisions/${revisionId}/publish`);
     alert(`Published ${result.published_sheets} sheet(s).`);
-    window.location.href = `/project.html?id=${projectId}`;
+    window.location.href = `/project-settings.html?projectId=${projectId}`;
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.style.display = 'block';
   }
 });
 
-document.getElementById('logout').addEventListener('click', async () => {
-  await api('POST', '/api/auth/logout');
-  window.location.href = '/login.html';
-});
-
 (async function init() {
-  const me = await loadShell();
+  const me = await requireSession();
   if (!me) return;
+  await renderShell({
+    topbarEl: document.getElementById('topbar'),
+    sidebarEl: document.getElementById('sidebar'),
+    projectId,
+    active: 'settings',
+    me,
+  });
   await loadRevision();
   await loadStaged();
 })();

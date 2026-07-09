@@ -1,15 +1,14 @@
-<title>Revision — Drawing App</title>
+<title>HammGrid</title>
 <link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f2b46">
 <body>
-  <header>
-    <a href="/dashboard.html">Drawing App</a>
-    <div class="row">
-      <span id="whoami" class="muted"></span>
-      <button id="logout">Sign out</button>
-    </div>
-  </header>
-  <main>
-    <p><a id="back-link" href="#">&larr; Project</a></p>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+    <p><a id="back-link" href="#">&larr; Project Settings</a></p>
     <h1 id="revision-title"></h1>
     <p><span id="revision-status" class="pill"></span></p>
 
@@ -67,7 +66,10 @@
         <button class="primary" id="publish-btn">Publish revision</button>
       </div>
     </div>
-  </main>
+      </main>
+    </div>
+  </div>
   <script src="/js/api.js"></script>
-  <script src="/js/revision.js"></script>
+  <script type="module" src="/js/revision.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
 </body>

@@ -1,44 +1,42 @@
-<title>Shares — Drawing App</title>
+<title>HammGrid</title>
 <link rel="stylesheet" href="/css/style.css">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#0f2b46">
 <body>
-  <header>
-    <a href="/dashboard.html">Drawing App</a>
-    <div class="row">
-      <span id="whoami" class="muted"></span>
-      <button id="logout">Sign out</button>
-    </div>
-  </header>
-  <main>
-    <p><a id="back-link" href="#">&larr; Project</a></p>
-    <h1>Share links</h1>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+        <h1>Invite / Share links</h1>
 
-    <div class="card">
-      <h2>New share link</h2>
-      <form id="new-share-form" class="row">
-        <select id="share-scope">
-          <option value="live">Live (always current)</option>
-          <option value="snapshot">Snapshot (frozen at a revision)</option>
-        </select>
-        <select id="share-revision" style="display:none;"></select>
-        <select id="share-discipline">
-          <option value="">All disciplines</option>
-        </select>
-        <label>Expires: <input type="date" id="share-expires"></label>
-        <button class="primary" type="submit">Create link</button>
-      </form>
-      <p class="muted" id="new-share-result"></p>
-    </div>
+        <div class="card">
+          <h2>New share link</h2>
+          <form id="new-share-form" class="row">
+            <select id="share-scope">
+              <option value="live">Live (always current)</option>
+              <option value="snapshot">Snapshot (frozen at a revision)</option>
+            </select>
+            <select id="share-revision" style="display:none;"></select>
+            <select id="share-discipline">
+              <option value="">All disciplines</option>
+            </select>
+            <label>Expires: <input type="date" id="share-expires"></label>
+            <button class="primary" type="submit">Create link</button>
+          </form>
+          <p class="muted" id="new-share-result"></p>
+        </div>
 
-    <div class="card">
-      <table id="shares-table">
-        <thead><tr><th>Scope</th><th>Discipline</th><th>Expires</th><th>Created by</th><th>Status</th><th>Link</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
+        <div class="card">
+          <table id="shares-table">
+            <thead><tr><th>Scope</th><th>Discipline</th><th>Expires</th><th>Created by</th><th>Status</th><th>Link</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </main>
     </div>
-  </main>
+  </div>
   <script src="/js/api.js"></script>
-  <script src="/js/shares.js"></script>
+  <script type="module" src="/js/shares.js"></script>
   <script type="module" src="/js/pwa.js"></script>
 </body>

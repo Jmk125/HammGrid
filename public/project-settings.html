@@ -1,0 +1,38 @@
+<title>Project Settings — HammGrid</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f2b46">
+<body>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+        <h1>Project Settings</h1>
+
+        <div class="card">
+          <h2>Details</h2>
+          <form id="settings-form">
+            <div class="field"><label>Name</label><input id="s-name"></div>
+            <div class="field"><label>Job number</label><input id="s-number"></div>
+            <div class="field"><label>Location</label><input id="s-location"></div>
+            <div class="field"><label>Size</label><input id="s-size"></div>
+            <button class="primary" type="submit">Save</button>
+            <span class="muted" id="save-status"></span>
+          </form>
+        </div>
+
+        <div class="card">
+          <h2>Revisions</h2>
+          <table id="revisions-table">
+            <thead><tr><th>Title</th><th>Source</th><th>Status</th><th>Created</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/js/api.js"></script>
+  <script type="module" src="/js/project-settings.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
+</body>

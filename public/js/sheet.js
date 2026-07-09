@@ -1,6 +1,7 @@
 import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { initMarkups } from '/js/markups.js';
 import { getCachedAsset, getCachedSheets } from '/js/offline-store.js';
+import { renderShell } from '/js/shell.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -10,13 +11,6 @@ const sheetId = params.get('sheetId');
 document.getElementById('back-link').href = `/viewer.html?projectId=${projectId}`;
 
 let markupsController = null;
-
-async function loadShell() {
-  const me = await requireSession();
-  if (!me) return null;
-  document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
-  return me;
-}
 
 // Reads the PDF from OPFS if this version has been synced - no network in
 // the path of viewing a sheet, per CLAUDE.md - falling back to the
@@ -63,11 +57,6 @@ function renderVersionList(sheet, versions) {
     list.appendChild(li);
   }
 }
-
-document.getElementById('logout').addEventListener('click', async () => {
-  await api('POST', '/api/auth/logout');
-  window.location.href = '/login.html';
-});
 
 // --- Version compare / overlay ---
 
@@ -272,8 +261,15 @@ async function loadSheetOffline() {
 }
 
 (async function init() {
-  const me = await loadShell();
+  const me = await requireSession();
   if (!me) return;
+  await renderShell({
+    topbarEl: document.getElementById('topbar'),
+    sidebarEl: document.getElementById('sidebar'),
+    projectId,
+    active: 'viewer',
+    me,
+  });
 
   let sheet;
   let versions;

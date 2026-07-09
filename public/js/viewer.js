@@ -1,14 +1,7 @@
 import { syncProject, getCachedSheets, getCachedAsset } from '/js/offline-store.js';
+import { renderShell } from '/js/shell.js';
 
 const projectId = new URLSearchParams(window.location.search).get('projectId');
-document.getElementById('back-link').href = `/project.html?id=${projectId}`;
-
-async function loadShell() {
-  const me = await requireSession();
-  if (!me) return null;
-  document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
-  return me;
-}
 
 async function loadFilters() {
   const { project } = await api('GET', `/api/projects/${projectId}`);
@@ -50,7 +43,7 @@ function renderGrid(items) {
     a.className = 'sheet-card';
     a.href = `/sheet.html?projectId=${projectId}&sheetId=${s.sheet_id}`;
     a.innerHTML = `
-      <img src="${s.thumbSrc}" loading="lazy">
+      <div class="thumb-wrap"><img src="${s.thumbSrc}" loading="lazy"></div>
       <div class="meta">
         <div class="sheet-number">${s.sheet_number}</div>
         <div class="sheet-title">${s.title || ''}</div>
@@ -94,27 +87,19 @@ async function renderFromLiveApi() {
   );
 }
 
-function updateExportLinks() {
-  const discipline = document.getElementById('discipline-filter').value;
-  const qs = discipline ? `?discipline=${encodeURIComponent(discipline)}` : '';
-  document.getElementById('export-zip-link').href = `/api/projects/${projectId}/export/zip${qs}`;
-  document.getElementById('export-merged-link').href = `/api/projects/${projectId}/export/merged-pdf${qs}`;
-}
-
-document.getElementById('discipline-filter').addEventListener('change', () => {
-  renderFromCache();
-  updateExportLinks();
-});
+document.getElementById('discipline-filter').addEventListener('change', renderFromCache);
 document.getElementById('revision-filter').addEventListener('change', renderFromCache);
 
-document.getElementById('logout').addEventListener('click', async () => {
-  await api('POST', '/api/auth/logout');
-  window.location.href = '/login.html';
-});
-
 (async function init() {
-  const me = await loadShell();
+  const me = await requireSession();
   if (!me) return;
+  await renderShell({
+    topbarEl: document.getElementById('topbar'),
+    sidebarEl: document.getElementById('sidebar'),
+    projectId,
+    active: 'viewer',
+    me,
+  });
 
   try {
     await loadFilters();
@@ -122,7 +107,6 @@ document.getElementById('logout').addEventListener('click', async () => {
     // offline on first-ever load with no cached project metadata - filters just stay empty
   }
 
-  updateExportLinks();
   const cachedCount = await renderFromCache();
   if (cachedCount === 0) {
     try {

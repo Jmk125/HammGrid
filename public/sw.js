@@ -6,24 +6,27 @@
 
 // Bump this on every deploy that changes any precached file. It's the only
 // thing that forces already-visited browsers to drop a stale cache - see
-// the fetch handler below for why that alone used to not be enough.
-const CACHE_NAME = 'app-shell-v2';
+// the fetch handler below for why that alone used to not be enough. Also
+// note install() below fails closed: cache.addAll() rejects the whole
+// install if ANY url here 404s (e.g. a renamed/deleted page), so keep this
+// list in sync with public/ or the service worker stops updating entirely.
+const CACHE_NAME = 'app-shell-v3';
 
 const PRECACHE_URLS = [
   '/',
   '/login.html',
   '/dashboard.html',
-  '/project.html',
   '/viewer.html',
   '/sheet.html',
   '/documents.html',
   '/shares.html',
   '/activity.html',
+  '/project-settings.html',
   '/css/style.css',
   '/js/api.js',
   '/js/login.js',
   '/js/dashboard.js',
-  '/js/project.js',
+  '/js/shell.js',
   '/js/viewer.js',
   '/js/sheet.js',
   '/js/markups.js',
@@ -32,6 +35,7 @@ const PRECACHE_URLS = [
   '/js/pwa.js',
   '/js/shares.js',
   '/js/activity.js',
+  '/js/project-settings.js',
   '/vendor/pdfjs/pdf.min.mjs',
   '/vendor/pdfjs/pdf.worker.min.mjs',
   '/manifest.webmanifest',

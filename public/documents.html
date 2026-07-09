@@ -1,43 +1,41 @@
-<title>Documents — Drawing App</title>
+<title>HammGrid</title>
 <link rel="stylesheet" href="/css/style.css">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#0f2b46">
 <body>
-  <header>
-    <a href="/dashboard.html">Drawing App</a>
-    <div class="row">
-      <span id="whoami" class="muted"></span>
-      <button id="logout">Sign out</button>
-    </div>
-  </header>
-  <main>
-    <p><a id="back-link" href="#">&larr; Project</a></p>
-    <h1>Documents (RFIs &amp; Submittals)</h1>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+        <h1>Documents (RFIs &amp; Submittals)</h1>
 
-    <div class="card" id="new-doc-card" style="display:none;">
-      <h2>New document</h2>
-      <form id="new-doc-form" class="row">
-        <select id="doc-kind">
-          <option value="rfi">RFI</option>
-          <option value="submittal">Submittal</option>
-        </select>
-        <input id="doc-number" placeholder="Number (e.g. RFI-042)">
-        <input id="doc-title" placeholder="Title">
-        <input id="doc-date" type="date">
-        <input id="doc-status" placeholder="Status (optional)">
-        <input type="file" id="doc-file" accept="application/pdf" required>
-        <button class="primary" type="submit">Upload</button>
-      </form>
-    </div>
+        <div class="card" id="new-doc-card" style="display:none;">
+          <h2>New document</h2>
+          <form id="new-doc-form" class="row">
+            <select id="doc-kind">
+              <option value="rfi">RFI</option>
+              <option value="submittal">Submittal</option>
+            </select>
+            <input id="doc-number" placeholder="Number (e.g. RFI-042)">
+            <input id="doc-title" placeholder="Title">
+            <input id="doc-date" type="date">
+            <input id="doc-status" placeholder="Status (optional)">
+            <input type="file" id="doc-file" accept="application/pdf" required>
+            <button class="primary" type="submit">Upload</button>
+          </form>
+        </div>
 
-    <div class="card">
-      <table id="documents-table">
-        <thead><tr><th>Kind</th><th>Number</th><th>Title</th><th>Date</th><th>Status</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
+        <div class="card">
+          <table id="documents-table">
+            <thead><tr><th>Kind</th><th>Number</th><th>Title</th><th>Date</th><th>Status</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </main>
     </div>
-  </main>
+  </div>
   <script src="/js/api.js"></script>
-  <script src="/js/documents.js"></script>
+  <script type="module" src="/js/documents.js"></script>
   <script type="module" src="/js/pwa.js"></script>
 </body>

@@ -1,10 +1,17 @@
-const projectId = new URLSearchParams(window.location.search).get('projectId');
-document.getElementById('back-link').href = `/project.html?id=${projectId}`;
+import { renderShell } from '/js/shell.js';
 
-(async function load() {
+const projectId = new URLSearchParams(window.location.search).get('projectId');
+
+(async function init() {
   const me = await requireSession();
   if (!me) return;
-  document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
+  await renderShell({
+    topbarEl: document.getElementById('topbar'),
+    sidebarEl: document.getElementById('sidebar'),
+    projectId,
+    active: 'activity',
+    me,
+  });
 
   try {
     const { activity } = await api('GET', `/api/projects/${projectId}/activity`);
@@ -24,8 +31,3 @@ document.getElementById('back-link').href = `/project.html?id=${projectId}`;
     document.getElementById('error').style.display = 'block';
   }
 })();
-
-document.getElementById('logout').addEventListener('click', async () => {
-  await api('POST', '/api/auth/logout');
-  window.location.href = '/login.html';
-});

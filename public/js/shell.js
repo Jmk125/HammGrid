@@ -1,0 +1,135 @@
+// Shared top bar + sidebar shell for every project-context page (viewer,
+// sheet, documents, shares, activity, project-settings). Centralized here
+// instead of duplicated per-page HTML so nav/branding changes happen once.
+
+export function openModal(innerHtml) {
+  closeModal();
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `<div class="modal">${innerHtml}</div>`;
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) closeModal();
+  });
+  document.body.appendChild(backdrop);
+  return backdrop;
+}
+
+export function closeModal() {
+  document.querySelectorAll('.modal-backdrop').forEach((el) => el.remove());
+}
+
+function newRevisionModal(projectId) {
+  openModal(`
+    <h2>New revision</h2>
+    <div class="field">
+      <label>Title</label>
+      <input id="modal-rev-title" placeholder="e.g. Revision 0, ASI-014">
+    </div>
+    <div class="field">
+      <label>Source (optional)</label>
+      <input id="modal-rev-source" placeholder="e.g. ASI-014">
+    </div>
+    <div class="field">
+      <label>Date</label>
+      <input id="modal-rev-date" type="date">
+    </div>
+    <p class="error" id="modal-error" style="display:none;"></p>
+    <div class="modal-actions">
+      <button type="button" id="modal-cancel">Cancel</button>
+      <button class="primary" type="button" id="modal-create">Create</button>
+    </div>
+  `);
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  document.getElementById('modal-create').addEventListener('click', async () => {
+    const title = document.getElementById('modal-rev-title').value.trim();
+    if (!title) {
+      const err = document.getElementById('modal-error');
+      err.textContent = 'Title is required.';
+      err.style.display = 'block';
+      return;
+    }
+    const { revision } = await api('POST', `/api/projects/${projectId}/revisions`, {
+      title,
+      source: document.getElementById('modal-rev-source').value || null,
+      date: document.getElementById('modal-rev-date').value || null,
+    });
+    window.location.href = `/revision.html?projectId=${projectId}&revisionId=${revision.id}`;
+  });
+}
+
+function exportModal(projectId) {
+  openModal(`
+    <h2>Export drawings</h2>
+    <p class="muted">Downloads the current published set.</p>
+    <div class="row" style="flex-direction:column; align-items:stretch;">
+      <a href="/api/projects/${projectId}/export/zip"><button style="width:100%;">Download ZIP</button></a>
+      <a href="/api/projects/${projectId}/export/merged-pdf"><button style="width:100%;">Download merged PDF</button></a>
+    </div>
+    <div class="modal-actions">
+      <button type="button" id="modal-cancel">Close</button>
+    </div>
+  `);
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+}
+
+export async function renderShell({ topbarEl, sidebarEl, projectId, active, me }) {
+  const canManage = me.role === 'admin' || me.role === 'editor';
+
+  topbarEl.innerHTML = `
+    <div class="row" style="gap:6px;">
+      ${sidebarEl ? '<button class="sidebar-toggle" id="sidebar-toggle-btn" type="button">&#9776;</button>' : ''}
+      <a class="brand" href="/dashboard.html">HammGrid</a>
+    </div>
+    <div class="row">
+      ${projectId && canManage ? '<button class="primary" id="new-revision-btn" type="button">+ New Revision</button>' : ''}
+      <span id="whoami" class="muted"></span>
+      <button id="logout" type="button">Sign out</button>
+    </div>
+  `;
+  topbarEl.querySelector('#whoami').textContent = `${me.name} (${me.role})`;
+  topbarEl.querySelector('#logout').addEventListener('click', async () => {
+    await api('POST', '/api/auth/logout');
+    window.location.href = '/login.html';
+  });
+  const newRevBtn = topbarEl.querySelector('#new-revision-btn');
+  if (newRevBtn) newRevBtn.addEventListener('click', () => newRevisionModal(projectId));
+
+  if (!sidebarEl) return;
+
+  const items = [
+    { key: 'viewer', label: 'Sheets', href: `/viewer.html?projectId=${projectId}`, show: true },
+    { key: 'documents', label: 'Documents', href: `/documents.html?projectId=${projectId}`, show: true },
+    { key: 'invite', label: 'Invite', href: `/shares.html?projectId=${projectId}`, show: canManage },
+    { key: 'activity', label: 'Activity Log', href: `/activity.html?projectId=${projectId}`, show: me.role === 'admin' },
+    { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },
+    { key: 'settings', label: 'Project Settings', href: `/project-settings.html?projectId=${projectId}`, show: canManage },
+  ];
+
+  sidebarEl.innerHTML = `
+    <nav>
+      <a href="/dashboard.html">&larr; Back to projects</a>
+      ${items
+        .filter((i) => i.show)
+        .map((i) => `<a href="${i.href}" data-key="${i.key}" class="${i.key === active ? 'active' : ''}">${i.label}</a>`)
+        .join('')}
+    </nav>
+  `;
+
+  const exportLink = sidebarEl.querySelector('[data-key="export"]');
+  if (exportLink) {
+    exportLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      exportModal(projectId);
+    });
+  }
+
+  const toggleBtn = topbarEl.querySelector('#sidebar-toggle-btn');
+  if (toggleBtn) {
+    const collapsedKey = 'sidebar-collapsed';
+    if (localStorage.getItem(collapsedKey) === '1') sidebarEl.classList.add('collapsed');
+    toggleBtn.addEventListener('click', () => {
+      sidebarEl.classList.toggle('collapsed');
+      localStorage.setItem(collapsedKey, sidebarEl.classList.contains('collapsed') ? '1' : '0');
+    });
+  }
+}

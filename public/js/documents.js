@@ -1,11 +1,10 @@
+import { renderShell } from '/js/shell.js';
+
 const projectId = new URLSearchParams(window.location.search).get('projectId');
-document.getElementById('back-link').href = `/project.html?id=${projectId}`;
+let currentUser = null;
 
 async function load() {
-  const me = await requireSession();
-  if (!me) return;
-  document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
-  if (me.role === 'admin' || me.role === 'editor') {
+  if (currentUser.role === 'admin' || currentUser.role === 'editor') {
     document.getElementById('new-doc-card').style.display = '';
   }
 
@@ -24,11 +23,6 @@ async function load() {
     tbody.appendChild(tr);
   }
 }
-
-document.getElementById('logout').addEventListener('click', async () => {
-  await api('POST', '/api/auth/logout');
-  window.location.href = '/login.html';
-});
 
 document.getElementById('new-doc-form').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -50,4 +44,15 @@ document.getElementById('new-doc-form').addEventListener('submit', async (e) => 
   load();
 });
 
-load();
+(async function init() {
+  currentUser = await requireSession();
+  if (!currentUser) return;
+  await renderShell({
+    topbarEl: document.getElementById('topbar'),
+    sidebarEl: document.getElementById('sidebar'),
+    projectId,
+    active: 'documents',
+    me: currentUser,
+  });
+  await load();
+})();

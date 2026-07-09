@@ -29,4 +29,7 @@ addColumnIfMissing('sheet_versions', 'overlay_path', 'TEXT');
 addColumnIfMissing('markups', 'updated_at', 'TEXT');
 db.exec(`UPDATE markups SET updated_at = created_at WHERE updated_at IS NULL`);
 
+addColumnIfMissing('projects', 'location', 'TEXT');
+addColumnIfMissing('projects', 'size', 'TEXT');
+
 module.exports = db;

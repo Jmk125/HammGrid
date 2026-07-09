@@ -1,11 +1,8 @@
+import { renderShell } from '/js/shell.js';
+
 const projectId = new URLSearchParams(window.location.search).get('projectId');
-document.getElementById('back-link').href = `/project.html?id=${projectId}`;
 
 async function load() {
-  const me = await requireSession();
-  if (!me) return;
-  document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
-
   const { project } = await api('GET', `/api/projects/${projectId}`);
   const disciplineSelect = document.getElementById('share-discipline');
   for (const d of [...new Set(Object.values(project.discipline_prefix_map))].sort()) {
@@ -71,9 +68,15 @@ document.getElementById('new-share-form').addEventListener('submit', async (e) =
   await loadShares();
 });
 
-document.getElementById('logout').addEventListener('click', async () => {
-  await api('POST', '/api/auth/logout');
-  window.location.href = '/login.html';
-});
-
-load();
+(async function init() {
+  const me = await requireSession();
+  if (!me) return;
+  await renderShell({
+    topbarEl: document.getElementById('topbar'),
+    sidebarEl: document.getElementById('sidebar'),
+    projectId,
+    active: 'invite',
+    me,
+  });
+  await load();
+})();

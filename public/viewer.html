@@ -1,36 +1,31 @@
-<title>Sheets — Drawing App</title>
+<title>HammGrid</title>
 <link rel="stylesheet" href="/css/style.css">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#0f2b46">
 <body>
-  <header>
-    <a href="/dashboard.html">Drawing App</a>
-    <div class="row">
-      <span id="whoami" class="muted"></span>
-      <button id="logout">Sign out</button>
-    </div>
-  </header>
-  <main>
-    <p><a id="back-link" href="#">&larr; Project</a></p>
-    <h1 id="project-name"></h1>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+        <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+          <h1 id="project-name" style="margin:0;"></h1>
+          <div class="row">
+            <label>Discipline:
+              <select id="discipline-filter"><option value="">All</option></select>
+            </label>
+            <label>Revision:
+              <select id="revision-filter"><option value="">All (current set)</option></select>
+            </label>
+          </div>
+        </div>
 
-    <div class="card">
-      <div class="row">
-        <label>Discipline:
-          <select id="discipline-filter"><option value="">All</option></select>
-        </label>
-        <label>Revision:
-          <select id="revision-filter"><option value="">All (current set)</option></select>
-        </label>
-        <a id="export-zip-link" href="#"><button>Export ZIP</button></a>
-        <a id="export-merged-link" href="#"><button>Export merged PDF</button></a>
-      </div>
+        <div id="grid" class="grid"></div>
+        <p class="muted" id="empty-msg" style="display:none;">No sheets match these filters.</p>
+        <p class="muted" id="sync-status"></p>
+      </main>
     </div>
-
-    <div id="grid" class="grid"></div>
-    <p class="muted" id="empty-msg" style="display:none;">No sheets match these filters.</p>
-    <p class="muted" id="sync-status"></p>
-  </main>
+  </div>
   <script src="/js/api.js"></script>
   <script type="module" src="/js/viewer.js"></script>
   <script type="module" src="/js/pwa.js"></script>

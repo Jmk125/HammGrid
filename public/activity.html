@@ -1,27 +1,25 @@
-<title>Activity Log — Drawing App</title>
+<title>HammGrid</title>
 <link rel="stylesheet" href="/css/style.css">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#2563eb">
+<meta name="theme-color" content="#0f2b46">
 <body>
-  <header>
-    <a href="/dashboard.html">Drawing App</a>
-    <div class="row">
-      <span id="whoami" class="muted"></span>
-      <button id="logout">Sign out</button>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+        <h1>Activity Log</h1>
+        <p class="error" id="error" style="display:none;"></p>
+        <div class="card">
+          <table id="activity-table">
+            <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </main>
     </div>
-  </header>
-  <main>
-    <p><a id="back-link" href="#">&larr; Project</a></p>
-    <h1>Activity Log</h1>
-    <p class="error" id="error" style="display:none;"></p>
-    <div class="card">
-      <table id="activity-table">
-        <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Detail</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </main>
+  </div>
   <script src="/js/api.js"></script>
-  <script src="/js/activity.js"></script>
+  <script type="module" src="/js/activity.js"></script>
   <script type="module" src="/js/pwa.js"></script>
 </body>
