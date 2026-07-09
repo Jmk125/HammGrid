@@ -6,7 +6,18 @@ import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
-const RENDER_SCALE = 2.5; // PDF points -> canvas pixels; also used for measurement unit math
+const RENDER_SCALE = 2.5; // PDF points -> canvas pixels, for normal-sized sheets
+// Large-format sheets (ARCH E1/E and bigger, common for full-building or
+// civil/site plans) would otherwise render at 8000-16000+ px per side at
+// RENDER_SCALE - a canvas that large is exactly the kind of thing that
+// silently fails (blank canvas, or only partially painted) on memory-
+// constrained browsers, especially iPad Safari, which is the actual
+// field-use target per CLAUDE.md. Cap the longest side instead of always
+// multiplying blindly, same pattern already used server-side for OCR
+// rendering (see pyproc/ocr_region.py) after that exact failure mode hit a
+// large sheet there too.
+const MAX_RENDER_PX = 6000;
+let currentRenderScale = RENDER_SCALE; // set per-render below; measurement math must use this, not the constant, once large sheets scale it down
 
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
@@ -18,6 +29,8 @@ let allVersions = [];
 let displayedVersionId = null;
 let overlayActive = false;
 let overlayLayers = { old: null, new: null, showOld: true, showNew: true };
+let currentRenderTask = null;
+let userHasZoomedOrPanned = false;
 
 // ---------- Right pane: collapse + accordion sections ----------
 (function setupPaneToggle() {
@@ -39,10 +52,12 @@ document.querySelectorAll('.pane-section-header').forEach((header) => {
 
 // ---------- Zoom / pan (shared module - see zoomPan.js) ----------
 let zoomPan = null;
+let suppressInteractionFlag = false;
 
 function setupZoomPan() {
+  const wrapEl = document.getElementById('zoom-wrap');
   zoomPan = setupSharedZoomPan({
-    wrapEl: document.getElementById('zoom-wrap'),
+    wrapEl,
     innerEl: document.getElementById('zoom-pan-inner'),
     isPanBlocked: (e) => {
       if (markupsController && markupsController.isToolActive()) return true;
@@ -51,16 +66,32 @@ function setupZoomPan() {
       return tag !== 'svg' && tag !== 'canvas';
     },
     onChange: () => {
+      if (!suppressInteractionFlag) userHasZoomedOrPanned = true;
       if (markupsController) markupsController.repositionPopup();
     },
   });
+
+  // The initial fitToView() (in renderPdf) runs as soon as the page render
+  // resolves, but the wrap's actual on-screen size can still change after
+  // that - late-loading webfonts, the right pane's collapsed state applying
+  // from localStorage, etc. Re-fit whenever the wrap's size changes, but
+  // only until the user has actually touched zoom/pan themselves, so this
+  // never fights a deliberate manual zoom.
+  const resizeObserver = new ResizeObserver(() => {
+    if (userHasZoomedOrPanned) return;
+    const canvas = document.getElementById('pdf-canvas');
+    if (canvas.width > 0) fitToView();
+  });
+  resizeObserver.observe(wrapEl);
 }
 
 // Fits the whole rendered page inside the viewport on load / version switch,
 // instead of opening at native (very zoomed-in) resolution.
 function fitToView() {
   const canvas = document.getElementById('pdf-canvas');
+  suppressInteractionFlag = true;
   zoomPan.fitToView(canvas.width, canvas.height);
+  suppressInteractionFlag = false;
   if (markupsController) markupsController.repositionPopup();
 }
 
@@ -85,6 +116,14 @@ async function renderPdf(versionId) {
   const statusEl = document.getElementById('pdf-status');
   statusEl.textContent = 'Loading...';
   const canvas = document.getElementById('pdf-canvas');
+  const ctx = canvas.getContext('2d');
+  // Renders can take a while on complex large-format sheets - if the user
+  // switches versions again before this one finishes, the old render task
+  // must not paint over the new one. renderToken makes any in-flight render
+  // check "is this still the version we're supposed to be showing?" before
+  // touching the canvas or status text.
+  const renderToken = Symbol();
+  currentRenderTask = renderToken;
   try {
     const cachedFile = await getCachedAsset(versionId, 'pdf');
     const source = cachedFile
@@ -93,19 +132,36 @@ async function renderPdf(versionId) {
     const loadingTask = pdfjsLib.getDocument(source);
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale: RENDER_SCALE });
+    if (currentRenderTask !== renderToken) return; // superseded while loading
+
+    const unitViewport = page.getViewport({ scale: 1 });
+    const longestPt = Math.max(unitViewport.width, unitViewport.height);
+    currentRenderScale = Math.min(RENDER_SCALE, MAX_RENDER_PX / longestPt);
+    const viewport = page.getViewport({ scale: currentRenderScale });
     canvas.width = viewport.width;
     canvas.height = viewport.height;
-    const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     await page.render({ canvasContext: ctx, viewport }).promise;
+    if (currentRenderTask !== renderToken) return; // superseded while rendering
+
     statusEl.textContent = cachedFile ? '(from local cache)' : '';
     if (markupsController) markupsController.resync();
+    userHasZoomedOrPanned = false;
     fitToView();
   } catch (err) {
-    statusEl.textContent = `Failed to render PDF: ${err.message}`;
+    if (currentRenderTask !== renderToken) return; // a newer render already took over
+    // Clear rather than leave whatever partially painted before the failure -
+    // a blank canvas plus a visible error is much less confusing than a
+    // handful of stray lines that look like a rendering glitch.
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    statusEl.innerHTML = `Failed to render PDF: ${escapeHtml(err.message)} <button type="button" id="pdf-retry-btn">Retry</button>`;
+    document.getElementById('pdf-retry-btn').addEventListener('click', () => renderPdf(versionId));
   }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;');
 }
 
 async function showVersion(versionId) {
@@ -400,7 +456,7 @@ function getMeasureSvgPoint(evt) {
 }
 
 function pixelsToFeet(pixelDist) {
-  const inches = pixelDist / RENDER_SCALE / 72;
+  const inches = pixelDist / currentRenderScale / 72;
   return inches * scaleFeetPerInch;
 }
 
@@ -427,7 +483,7 @@ function polygonAreaFeet(pts) {
     area2 += p1.x * p2.y - p2.x * p1.y;
   }
   const pixelArea = Math.abs(area2) / 2;
-  const feetPerPixel = (1 / RENDER_SCALE / 72) * scaleFeetPerInch;
+  const feetPerPixel = (1 / currentRenderScale / 72) * scaleFeetPerInch;
   return pixelArea * feetPerPixel * feetPerPixel;
 }
 
