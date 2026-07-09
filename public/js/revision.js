@@ -99,11 +99,10 @@ function setupBoxZoomPan() {
   boxZoomPan = setupSharedZoomPan({
     wrapEl: document.getElementById('box-zoom-wrap'),
     innerEl: document.getElementById('box-zoom-pan-inner'),
-    // While a box still needs to be placed, a drag on the background should
-    // draw that box, not pan the view - only allow panning once both boxes
-    // exist (or over UI chrome, which isPanBlocked can't distinguish here
-    // since the canvas covers the whole image, so this is purely state-based).
-    isPanBlocked: () => nextDrawTarget() !== null,
+    // Left-click always draws a box; panning is on the right button instead
+    // of sharing the left button with drawing (that's what was causing pan
+    // and box-drawing to fight each other).
+    panButton: 2,
   });
 }
 
@@ -158,18 +157,31 @@ function nextDrawTarget() {
   return null;
 }
 
+// Mouse events give positions in displayed (CSS/zoomed) pixels, but the
+// canvas's own drawing coordinate system is its intrinsic width/height
+// (set to the image's natural resolution) - scale into that space so boxes
+// land in the right spot at any zoom level.
+function toCanvasCoords(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    x: (e.clientX - rect.left) * scaleX,
+    y: (e.clientY - rect.top) * scaleY,
+  };
+}
+
 const canvas = document.getElementById('box-canvas');
 canvas.addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return; // left-click draws; right-click pans (see setupBoxZoomPan)
   const target = nextDrawTarget();
   if (!target) return;
-  const rect = canvas.getBoundingClientRect();
-  drawing = { target, startX: e.clientX - rect.left, startY: e.clientY - rect.top };
+  const { x, y } = toCanvasCoords(e);
+  drawing = { target, startX: x, startY: y };
 });
 canvas.addEventListener('mousemove', (e) => {
   if (!drawing) return;
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
+  const { x, y } = toCanvasCoords(e);
   const liveRect = {
     x: Math.min(x, drawing.startX),
     y: Math.min(y, drawing.startY),
@@ -180,9 +192,7 @@ canvas.addEventListener('mousemove', (e) => {
 });
 window.addEventListener('mouseup', (e) => {
   if (!drawing) return;
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
+  const { x, y } = toCanvasCoords(e);
   const x0 = Math.min(x, drawing.startX);
   const y0 = Math.min(y, drawing.startY);
   const w = Math.abs(x - drawing.startX);
