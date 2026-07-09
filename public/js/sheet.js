@@ -65,9 +65,17 @@ function setupZoomPan() {
       const tag = e.target.tagName.toLowerCase();
       return tag !== 'svg' && tag !== 'canvas';
     },
-    onChange: () => {
+    onChange: (state) => {
       if (!suppressInteractionFlag) userHasZoomedOrPanned = true;
-      if (markupsController) markupsController.repositionPopup();
+      if (markupsController) {
+        markupsController.setZoomScale(state.scale);
+        markupsController.repositionPopup();
+      }
+      // Measurement's own overlay (points/lines already placed) also needs
+      // its stroke width / marker radius recomputed for the new scale - a
+      // scroll-zoom mid-measurement is possible even though drag-pan is
+      // blocked while a measure tool is active.
+      if (measureTool && measurePoints.length > 0) redrawMeasure();
     },
   });
 
@@ -496,20 +504,25 @@ function redrawMeasure(livePt) {
     return;
   }
 
+  // Zoom is a CSS transform on an ancestor div, outside the SVG's own
+  // coordinate system, so vector-effect="non-scaling-stroke" can't see it -
+  // divide by the current scale instead, same technique as markups.js, so
+  // these stay a constant size on screen regardless of zoom.
+  const scale = zoomPan ? zoomPan.state.scale : 1;
+
   const poly = measureSvgNs('polyline');
   poly.setAttribute('points', pts.map((p) => `${p.x},${p.y}`).join(' '));
   poly.setAttribute('stroke', '#f59e0b');
-  poly.setAttribute('stroke-width', 2);
-  poly.setAttribute('vector-effect', 'non-scaling-stroke');
+  poly.setAttribute('stroke-width', 2 / scale);
   poly.setAttribute('fill', 'none');
-  poly.setAttribute('stroke-dasharray', '5 3');
+  poly.setAttribute('stroke-dasharray', `${5 / scale} ${3 / scale}`);
   g.appendChild(poly);
 
   for (const p of pts) {
     const c = measureSvgNs('circle');
     c.setAttribute('cx', p.x);
     c.setAttribute('cy', p.y);
-    c.setAttribute('r', 4);
+    c.setAttribute('r', 4 / scale);
     c.setAttribute('fill', '#f59e0b');
     g.appendChild(c);
   }
@@ -558,8 +571,7 @@ function finishMeasurement() {
     const poly = measureSvgNs('polygon');
     poly.setAttribute('points', measurePoints.map((p) => `${p.x},${p.y}`).join(' '));
     poly.setAttribute('stroke', '#f59e0b');
-    poly.setAttribute('stroke-width', 2);
-    poly.setAttribute('vector-effect', 'non-scaling-stroke');
+    poly.setAttribute('stroke-width', 2 / (zoomPan ? zoomPan.state.scale : 1));
     poly.setAttribute('fill', '#f59e0b');
     poly.setAttribute('fill-opacity', '0.15');
     g.appendChild(poly);

@@ -74,6 +74,15 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
   let editingId = null;
   let handleDrag = null;
   let bodyDrag = null;
+  // Zoom is a CSS transform on an ancestor div, outside the SVG's own
+  // coordinate system - vector-effect="non-scaling-stroke" only cancels
+  // scaling from *inside* the SVG (viewBox, <g transform>), so it can't see
+  // that ancestor transform at all. Instead, stroke widths / handle radii
+  // are stored as the CONSTANT SCREEN SIZE the user wants (e.g. "2" really
+  // means "2px") and divided by the current zoom scale before being written
+  // as SVG attribute values, so the outer CSS scale cancels back out to the
+  // original constant size on screen.
+  let currentZoomScale = 1;
 
   const colorInput = document.getElementById('markup-color');
   const widthInput = document.getElementById('markup-width');
@@ -148,7 +157,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
     const { w, h } = vbSize();
     const rawColor = (m.style && m.style.color) || '#e11d48';
     const color = m.visibility === 'published' ? darkenHex(rawColor, 0.3) : rawColor;
-    const strokeWidth = (m.style && m.style.strokeWidth) || 2;
+    const strokeWidth = ((m.style && m.style.strokeWidth) || 2) / currentZoomScale;
     let node;
 
     if (m.type === 'line' || m.type === 'arrow') {
@@ -159,7 +168,6 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
       node.setAttribute('y2', m.geometry.y2 * h);
       node.setAttribute('stroke', color);
       node.setAttribute('stroke-width', strokeWidth);
-      node.setAttribute('vector-effect', 'non-scaling-stroke');
       node.style.pointerEvents = 'stroke';
       if (m.type === 'arrow') node.setAttribute('marker-end', `url(#${ensureArrowMarker(color)})`);
     } else if (m.type === 'rect') {
@@ -170,7 +178,6 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
       node.setAttribute('height', m.geometry.h * h);
       node.setAttribute('stroke', color);
       node.setAttribute('stroke-width', strokeWidth);
-      node.setAttribute('vector-effect', 'non-scaling-stroke');
       node.setAttribute('fill', '#ffffff');
       node.setAttribute('fill-opacity', '0.001');
       node.style.pointerEvents = 'all';
@@ -180,7 +187,6 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
       node.setAttribute('d', cloudPath(m.geometry.x * w, m.geometry.y * h, m.geometry.w * w, m.geometry.h * h, bumpSize));
       node.setAttribute('stroke', color);
       node.setAttribute('stroke-width', strokeWidth);
-      node.setAttribute('vector-effect', 'non-scaling-stroke');
       node.setAttribute('fill', '#ffffff');
       node.setAttribute('fill-opacity', '0.001');
       node.style.pointerEvents = 'all';
@@ -222,7 +228,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
       const c = el('circle');
       c.setAttribute('cx', px);
       c.setAttribute('cy', py);
-      c.setAttribute('r', 6);
+      c.setAttribute('r', 6 / currentZoomScale);
       c.classList.add('markup-handle');
       c.addEventListener('mousedown', (e) => {
         e.stopPropagation();
@@ -537,8 +543,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
     drawing = { type: activeTool, start: pt };
     previewEl = el(activeTool === 'line' || activeTool === 'arrow' ? 'line' : activeTool.startsWith('cloud') ? 'path' : 'rect');
     previewEl.setAttribute('stroke', colorInput.value);
-    previewEl.setAttribute('stroke-width', widthInput.value);
-    previewEl.setAttribute('vector-effect', 'non-scaling-stroke');
+    previewEl.setAttribute('stroke-width', Number(widthInput.value) / currentZoomScale);
     previewEl.setAttribute('fill', 'none');
     previewEl.setAttribute('stroke-dasharray', '4 2');
     svgEl.appendChild(previewEl);
@@ -652,6 +657,10 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
     },
     resync() {
       syncViewBox();
+      renderAll();
+    },
+    setZoomScale(scale) {
+      currentZoomScale = scale || 1;
       renderAll();
     },
     isToolActive() {
