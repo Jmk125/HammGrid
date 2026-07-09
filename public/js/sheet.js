@@ -2,6 +2,7 @@ import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { initMarkups } from '/js/markups.js';
 import { getCachedAsset, getCachedSheets } from '/js/offline-store.js';
 import { renderShell, openModal, closeModal } from '/js/shell.js';
+import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -36,72 +37,31 @@ document.querySelectorAll('.pane-section-header').forEach((header) => {
   });
 });
 
-// ---------- Zoom / pan ----------
-const zoomState = { scale: 1, x: 0, y: 0 };
+// ---------- Zoom / pan (shared module - see zoomPan.js) ----------
+let zoomPan = null;
 
-function applyZoomTransform() {
-  document.getElementById('zoom-pan-inner').style.transform =
-    `translate(${zoomState.x}px, ${zoomState.y}px) scale(${zoomState.scale})`;
-  if (markupsController) markupsController.repositionPopup();
+function setupZoomPan() {
+  zoomPan = setupSharedZoomPan({
+    wrapEl: document.getElementById('zoom-wrap'),
+    innerEl: document.getElementById('zoom-pan-inner'),
+    isPanBlocked: (e) => {
+      if (markupsController && markupsController.isToolActive()) return true;
+      if (measureTool) return true;
+      const tag = e.target.tagName.toLowerCase();
+      return tag !== 'svg' && tag !== 'canvas';
+    },
+    onChange: () => {
+      if (markupsController) markupsController.repositionPopup();
+    },
+  });
 }
 
 // Fits the whole rendered page inside the viewport on load / version switch,
 // instead of opening at native (very zoomed-in) resolution.
 function fitToView() {
   const canvas = document.getElementById('pdf-canvas');
-  const wrap = document.getElementById('zoom-wrap');
-  const rect = wrap.getBoundingClientRect();
-  if (!canvas.width || !rect.width) return;
-  const fitScale = Math.min(rect.width / canvas.width, rect.height / canvas.height) * 0.96;
-  zoomState.scale = fitScale;
-  zoomState.x = (rect.width - canvas.width * fitScale) / 2;
-  zoomState.y = (rect.height - canvas.height * fitScale) / 2;
-  applyZoomTransform();
-}
-
-function setupZoomPan() {
-  const wrap = document.getElementById('zoom-wrap');
-  wrap.addEventListener(
-    'wheel',
-    (e) => {
-      e.preventDefault();
-      if (e.shiftKey) {
-        zoomState.x -= e.deltaY;
-      } else {
-        const rect = wrap.getBoundingClientRect();
-        const cx = e.clientX - rect.left;
-        const cy = e.clientY - rect.top;
-        const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-        const newScale = Math.min(6, Math.max(0.1, zoomState.scale * factor));
-        zoomState.x = cx - (cx - zoomState.x) * (newScale / zoomState.scale);
-        zoomState.y = cy - (cy - zoomState.y) * (newScale / zoomState.scale);
-        zoomState.scale = newScale;
-      }
-      applyZoomTransform();
-    },
-    { passive: false }
-  );
-
-  let pan = null;
-  wrap.addEventListener('mousedown', (e) => {
-    if (e.button !== 0) return;
-    if (markupsController && markupsController.isToolActive()) return;
-    if (measureTool) return;
-    const tag = e.target.tagName.toLowerCase();
-    if (tag !== 'svg' && tag !== 'canvas') return;
-    pan = { startX: e.clientX, startY: e.clientY, origX: zoomState.x, origY: zoomState.y };
-    wrap.classList.add('panning');
-  });
-  window.addEventListener('mousemove', (e) => {
-    if (!pan) return;
-    zoomState.x = pan.origX + (e.clientX - pan.startX);
-    zoomState.y = pan.origY + (e.clientY - pan.startY);
-    applyZoomTransform();
-  });
-  window.addEventListener('mouseup', () => {
-    pan = null;
-    wrap.classList.remove('panning');
-  });
+  zoomPan.fitToView(canvas.width, canvas.height);
+  if (markupsController) markupsController.repositionPopup();
 }
 
 // ---------- Topbar sheet label ----------

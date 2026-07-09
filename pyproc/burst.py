@@ -19,6 +19,10 @@ import sys
 import fitz  # PyMuPDF
 from PIL import Image
 
+# See ocr_region.py for why this matters: MuPDF's internal diagnostics print
+# straight to stdout, which would corrupt the JSON this script emits.
+fitz.TOOLS.mupdf_display_errors(False)
+
 
 def render_page(doc, page_index, preview_px):
     page = doc[page_index]

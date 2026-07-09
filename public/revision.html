@@ -39,13 +39,23 @@
                 </label>
                 <button id="clear-boxes-btn">Clear boxes</button>
               </div>
-              <p class="muted">Drag to draw the <b>number box</b> first (red), then the <b>title box</b> (blue).</p>
-              <div class="box-draw-wrap" id="box-draw-wrap">
-                <img id="ref-image">
-                <canvas id="box-canvas"></canvas>
+              <p class="muted">Drag to draw the <b>number box</b> first (red), then the <b>title box</b> (blue). Scroll to zoom, drag the background to pan.</p>
+              <p class="tip">Tip: if a sheet label reads sideways (vertical text), draw the box from what is <b>top-left to bottom-right relative to the text itself</b> &mdash; i.e. tilt your head to read it, then start the box at that corner.</p>
+              <div class="zoom-wrap" id="box-zoom-wrap" style="height: 55vh;">
+                <div class="zoom-pan-inner" id="box-zoom-pan-inner">
+                  <div class="box-draw-wrap" id="box-draw-wrap">
+                    <img id="ref-image">
+                    <canvas id="box-canvas"></canvas>
+                  </div>
+                </div>
               </div>
               <div class="row" style="margin-top:8px;">
-                <button class="primary" id="run-ocr-btn">Run OCR on selected rows</button>
+                <button id="preview-read-btn">Preview read</button>
+                <span class="muted" id="preview-status"></span>
+              </div>
+              <div class="preview-result" id="preview-result" style="display:none;"></div>
+              <div class="row" style="margin-top:8px;">
+                <button class="primary" id="run-ocr-btn">Read Sheet Name &amp; Number on selected rows</button>
                 <span class="muted" id="ocr-status"></span>
               </div>
             </div>

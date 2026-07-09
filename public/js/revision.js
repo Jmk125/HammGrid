@@ -1,4 +1,5 @@
 import { renderShell, trackPendingJob, showToast } from '/js/shell.js';
+import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
@@ -91,14 +92,37 @@ document.getElementById('ref-sheet-select').addEventListener('change', () => {
 
 document.getElementById('ref-image').addEventListener('load', setupCanvas);
 
+// ---------- Zoom / pan (shared module - see zoomPan.js) ----------
+let boxZoomPan = null;
+
+function setupBoxZoomPan() {
+  boxZoomPan = setupSharedZoomPan({
+    wrapEl: document.getElementById('box-zoom-wrap'),
+    innerEl: document.getElementById('box-zoom-pan-inner'),
+    // While a box still needs to be placed, a drag on the background should
+    // draw that box, not pan the view - only allow panning once both boxes
+    // exist (or over UI chrome, which isPanBlocked can't distinguish here
+    // since the canvas covers the whole image, so this is purely state-based).
+    isPanBlocked: () => nextDrawTarget() !== null,
+  });
+}
+
 function setupCanvas() {
   const img = document.getElementById('ref-image');
   const canvas = document.getElementById('box-canvas');
-  canvas.width = img.clientWidth;
-  canvas.height = img.clientHeight;
-  canvas.style.width = img.clientWidth + 'px';
-  canvas.style.height = img.clientHeight + 'px';
+  // Size to the image's natural resolution (not clientWidth) so the CSS
+  // zoom transform on the wrapper - not the browser's max-width scaling -
+  // is what controls the displayed size, matching sheet.js's pattern.
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  img.style.width = w + 'px';
+  img.style.height = h + 'px';
+  canvas.width = w;
+  canvas.height = h;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
   redrawCanvas();
+  boxZoomPan.fitToView(w, h);
 }
 
 function redrawCanvas(liveRect) {
@@ -180,6 +204,38 @@ document.getElementById('clear-boxes-btn').addEventListener('click', () => {
   redrawCanvas();
 });
 
+document.getElementById('preview-read-btn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('preview-status');
+  const resultEl = document.getElementById('preview-result');
+  const select = document.getElementById('ref-sheet-select');
+  if (!boxes.number_box || !boxes.title_box) {
+    statusEl.textContent = 'Draw both boxes first.';
+    return;
+  }
+  if (!select.value) return;
+
+  statusEl.textContent = 'Reading...';
+  resultEl.style.display = 'none';
+  document.getElementById('preview-read-btn').disabled = true;
+  try {
+    const result = await api('POST', `/api/projects/${projectId}/revisions/${revisionId}/read-preview`, {
+      staged_sheet_id: Number(select.value),
+      number_box: boxes.number_box,
+      title_box: boxes.title_box,
+    });
+    statusEl.textContent = '';
+    resultEl.style.display = 'block';
+    resultEl.innerHTML = `
+      <div class="pr-row"><span class="pr-label">Number</span><span class="${result.number_confidence < CONFIDENCE_THRESHOLD ? 'low-conf' : ''}">${escapeAttr(result.number_text) || '(blank)'} &mdash; ${Math.round(result.number_confidence)}%</span></div>
+      <div class="pr-row"><span class="pr-label">Title</span><span class="${result.title_confidence < CONFIDENCE_THRESHOLD ? 'low-conf' : ''}">${escapeAttr(result.title_text) || '(blank)'} &mdash; ${Math.round(result.title_confidence)}%</span></div>
+    `;
+  } catch (err) {
+    statusEl.textContent = `Preview failed: ${err.message}`;
+  } finally {
+    document.getElementById('preview-read-btn').disabled = false;
+  }
+});
+
 function checkedIds() {
   return Array.from(document.querySelectorAll('.row-check:checked')).map((el) => Number(el.dataset.id));
 }
@@ -193,7 +249,7 @@ document.getElementById('run-ocr-btn').addEventListener('click', async () => {
   let ids = checkedIds();
   if (ids.length === 0) ids = stagedSheets.map((s) => s.id);
 
-  statusEl.textContent = `Running OCR on ${ids.length} sheet(s)...`;
+  statusEl.textContent = `Reading ${ids.length} sheet(s)...`;
   document.getElementById('run-ocr-btn').disabled = true;
   try {
     await api('POST', `/api/projects/${projectId}/revisions/${revisionId}/ocr`, {
@@ -202,10 +258,10 @@ document.getElementById('run-ocr-btn').addEventListener('click', async () => {
       title_box: boxes.title_box,
       staged_sheet_ids: ids,
     });
-    statusEl.textContent = `OCR complete for ${ids.length} sheet(s).`;
+    statusEl.textContent = `Done reading ${ids.length} sheet(s).`;
     await loadStaged();
   } catch (err) {
-    statusEl.textContent = `OCR failed: ${err.message}`;
+    statusEl.textContent = `Read failed: ${err.message}`;
   } finally {
     document.getElementById('run-ocr-btn').disabled = false;
   }
@@ -424,6 +480,7 @@ document.getElementById('publish-btn').addEventListener('click', async () => {
     active: 'settings',
     me,
   });
+  setupBoxZoomPan();
   await loadRevision();
   await loadStaged();
 })();

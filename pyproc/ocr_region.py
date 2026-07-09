@@ -22,13 +22,27 @@ import pytesseract
 from pytesseract import Output
 from PIL import Image
 
+# MuPDF prints its own diagnostics (e.g. "MuPDF error: limit error: Overly
+# large image") straight to stdout via its internal fprintf, not through a
+# Python exception - left enabled, that silently corrupts the JSON this
+# script prints, which is exactly what broke a large-format sheet upload.
+fitz.TOOLS.mupdf_display_errors(False)
+
 POINTS_PER_INCH = 72.0
+# Hard cap so a large-format sheet (E-size and bigger) can't blow past
+# MuPDF's internal "overly large image" limit at a fixed DPI - mirrors
+# burst.py's target-pixel-size approach instead of a blind DPI multiply.
+MAX_RENDER_PX = 6000
 
 
 def render_full_page(pdf_path, dpi):
     doc = fitz.open(pdf_path)
     page = doc[0]
-    zoom = dpi / POINTS_PER_INCH
+    rect = page.rect
+    longest_pt = max(rect.width, rect.height)
+    dpi_zoom = dpi / POINTS_PER_INCH
+    max_zoom = MAX_RENDER_PX / longest_pt if longest_pt > 0 else dpi_zoom
+    zoom = min(dpi_zoom, max_zoom)
     pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
     doc.close()
@@ -46,9 +60,7 @@ def crop_box(img, box):
     return img.crop((left, top, right, bottom))
 
 
-def ocr_crop(img):
-    if img is None:
-        return "", 0.0
+def _ocr_single(img):
     # Upscale small crops; tesseract does noticeably better above ~200px tall.
     if img.height < 200:
         scale = 200 / img.height
@@ -66,6 +78,27 @@ def ocr_crop(img):
     joined = " ".join(words).strip()
     avg_conf = sum(confidences) / len(confidences) if confidences else 0.0
     return joined, avg_conf
+
+
+def ocr_crop(img):
+    if img is None:
+        return "", 0.0
+
+    candidates = [img]
+    # A box drawn much taller than it is wide usually means the text inside
+    # it is rotated 90 degrees (some title blocks run the sheet number/name
+    # vertically along an edge) - try both rotations and keep whichever
+    # reads with higher confidence, rather than assuming horizontal text.
+    if img.height > img.width * 1.3:
+        candidates.append(img.rotate(-90, expand=True))
+        candidates.append(img.rotate(90, expand=True))
+
+    best_text, best_conf = "", -1.0
+    for candidate in candidates:
+        text, conf = _ocr_single(candidate)
+        if conf > best_conf:
+            best_text, best_conf = text, conf
+    return best_text, max(best_conf, 0.0)
 
 
 def main():

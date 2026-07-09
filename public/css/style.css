@@ -193,6 +193,16 @@ tr.ignored td { opacity: 0.5; }
 .box-draw-wrap { position: relative; display: inline-block; max-width: 100%; }
 .box-draw-wrap img { max-width: 100%; display: block; }
 .box-draw-wrap canvas { position: absolute; top: 0; left: 0; cursor: crosshair; }
+/* Inside the zoom/pan wrapper, the CSS transform controls displayed size -
+   the browser's own max-width scaling would fight it. */
+.zoom-pan-inner .box-draw-wrap, .zoom-pan-inner .box-draw-wrap img { max-width: none; }
+
+.tip { background: var(--warn-bg); border: 1px solid #f2d585; color: #7a5b06; padding: 8px 12px; border-radius: 6px; font-size: 13px; margin: 8px 0; }
+
+.preview-result { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-top: 8px; font-size: 13px; }
+.preview-result .pr-row { display: flex; gap: 8px; }
+.preview-result .pr-label { width: 60px; color: var(--muted); }
+.preview-result .low-conf { color: var(--danger); }
 
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 

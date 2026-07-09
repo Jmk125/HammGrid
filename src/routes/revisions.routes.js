@@ -160,6 +160,40 @@ router.get('/:revisionId/staged', requireAuth, (req, res) => {
   res.json({ staged_sheets: rows.map(withStagedFlags) });
 });
 
+// Dry-run: reads one sheet with the current box placement and returns the
+// text/confidence without touching staged_sheets, so the user can confirm the
+// boxes are placed correctly before running the batch.
+router.post('/:revisionId/read-preview', requireRole('admin', 'editor'), async (req, res) => {
+  const revision = getRevisionOr404(req, res);
+  if (!revision) return;
+
+  const { staged_sheet_id, number_box, title_box } = req.body;
+  if (!staged_sheet_id || !number_box || !title_box) {
+    return res.status(400).json({ error: 'staged_sheet_id, number_box and title_box are required' });
+  }
+
+  const staged = db
+    .prepare('SELECT * FROM staged_sheets WHERE id = ? AND revision_id = ?')
+    .get(staged_sheet_id, revision.id);
+  if (!staged) return res.status(404).json({ error: 'Staged sheet not found' });
+
+  try {
+    const result = await queue.enqueue(() =>
+      runPython(OCR_SCRIPT, [
+        staged.pdf_path,
+        JSON.stringify(number_box),
+        JSON.stringify(title_box),
+        '--tesseract-cmd',
+        config.tesseractPath,
+      ])
+    );
+    res.json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Read failed' });
+  }
+});
+
 router.post('/:revisionId/ocr', requireRole('admin', 'editor'), async (req, res) => {
   const revision = getRevisionOr404(req, res);
   if (!revision) return;
