@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS sheets (
   sheet_number TEXT NOT NULL,
   discipline TEXT,
   current_version_id INTEGER REFERENCES sheet_versions(id),
+  scale_feet_per_inch REAL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (project_id, sheet_number)
 );

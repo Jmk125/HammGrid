@@ -6,54 +6,60 @@
   <div class="topbar" id="topbar"></div>
   <div class="app-shell">
     <div class="sidebar" id="sidebar"></div>
-    <div class="shell-content">
-      <main class="wide">
-        <p><a id="back-link" href="#">&larr; Sheets</a></p>
-        <h1 id="sheet-number" style="margin-bottom:0;"></h1>
-        <p class="muted" id="sheet-title" style="margin-top:2px;"></p>
-
-        <div class="sheet-view-row">
-          <div class="sheet-canvas-area">
-            <div class="zoom-wrap" id="zoom-wrap">
-              <div class="version-badge" id="version-badge">
-                <button type="button" id="version-badge-btn">Current &#9662;</button>
-                <div class="version-dropdown" id="version-dropdown" style="display:none;"></div>
-              </div>
-              <div class="stale-watermark" id="stale-watermark" style="display:none;">NOT CURRENT VERSION</div>
-              <div class="zoom-pan-inner" id="zoom-pan-inner">
-                <div class="markup-stage">
-                  <canvas id="pdf-canvas"></canvas>
-                  <svg id="markup-svg"></svg>
-                </div>
-              </div>
-              <div class="markup-popup" id="markup-popup" style="display:none;"></div>
+    <div class="shell-content" style="padding: 0;">
+      <div class="sheet-view-row">
+        <div class="sheet-canvas-area">
+          <div class="zoom-wrap" id="zoom-wrap" style="height: calc(100vh - 53px); border-radius: 0;">
+            <div class="version-badge" id="version-badge">
+              <button type="button" id="version-badge-btn">Current &#9662;</button>
+              <div class="version-dropdown" id="version-dropdown" style="display:none;"></div>
             </div>
-            <p class="muted" id="pdf-status"></p>
-          </div>
-
-          <div class="sheet-pane" id="sheet-pane">
-            <button class="pane-toggle" id="pane-toggle-btn" type="button">&#9656;</button>
-            <div class="pane-body" id="pane-body">
-              <h3>Markup tools</h3>
-              <div class="tool-grid">
-                <button class="tool-btn" data-tool="select">Select</button>
-                <button class="tool-btn" data-tool="line">Line</button>
-                <button class="tool-btn" data-tool="arrow">Arrow</button>
-                <button class="tool-btn" data-tool="rect">Rectangle</button>
-                <button class="tool-btn" data-tool="cloud-small">Cloud S</button>
-                <button class="tool-btn" data-tool="cloud-large">Cloud L</button>
-                <button class="tool-btn" data-tool="text">Text</button>
+            <div class="stale-watermark" id="stale-watermark" style="display:none;">NOT CURRENT VERSION</div>
+            <div class="zoom-pan-inner" id="zoom-pan-inner">
+              <div class="markup-stage">
+                <canvas id="pdf-canvas"></canvas>
+                <svg id="markup-svg"></svg>
               </div>
-              <div class="field"><label>Color</label><input type="color" id="markup-color" value="#e11d48"></div>
-              <div class="field"><label>Line width</label><input type="number" id="markup-width" value="2" min="1" max="10"></div>
-              <label id="publish-default-wrap" style="display:none;"><input type="checkbox" id="markup-publish-default"> Draw as published</label>
+            </div>
+            <div class="markup-popup" id="markup-popup" style="display:none;"></div>
+          </div>
+          <p class="muted" id="pdf-status" style="padding: 4px 12px;"></p>
+        </div>
 
-              <h3 style="margin-top:16px;">Version history</h3>
-              <ul class="version-list" id="version-list"></ul>
+        <div class="sheet-pane" id="sheet-pane">
+          <button class="pane-toggle" id="pane-toggle-btn" type="button">&#9656;</button>
+          <div class="pane-body" id="pane-body">
+            <div class="pane-section" id="section-markup">
+              <button class="pane-section-header" type="button" data-section="markup">
+                <span>Markup Tools</span>
+                <span class="chevron">&#9662;</span>
+              </button>
+              <div class="pane-section-body">
+                <div class="icon-tool-grid" id="tool-grid"></div>
+                <div class="field"><label>Color</label><input type="color" id="markup-color" value="#e11d48"></div>
+                <div class="field"><label>Line width</label><input type="number" id="markup-width" value="2" min="1" max="10"></div>
+                <label id="publish-default-wrap" style="display:none;"><input type="checkbox" id="markup-publish-default"> Draw as published</label>
+              </div>
+            </div>
+
+            <div class="pane-section" id="section-measure">
+              <button class="pane-section-header" type="button" data-section="measure">
+                <span>Measure</span>
+                <span class="chevron">&#9662;</span>
+              </button>
+              <div class="pane-section-body">
+                <div class="field">
+                  <label>Scale</label>
+                  <select id="scale-select"></select>
+                </div>
+                <div class="icon-tool-grid" id="measure-tool-grid"></div>
+                <div class="measure-result" id="measure-result" style="display:none;"></div>
+                <button type="button" id="measure-clear-btn" style="width:100%;">Clear</button>
+              </div>
             </div>
           </div>
         </div>
-      </main>
+      </div>
     </div>
   </div>
   <script src="/js/api.js"></script>

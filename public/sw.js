@@ -10,7 +10,7 @@
 // note install() below fails closed: cache.addAll() rejects the whole
 // install if ANY url here 404s (e.g. a renamed/deleted page), so keep this
 // list in sync with public/ or the service worker stops updating entirely.
-const CACHE_NAME = 'app-shell-v3';
+const CACHE_NAME = 'app-shell-v4';
 
 const PRECACHE_URLS = [
   '/',
@@ -22,6 +22,7 @@ const PRECACHE_URLS = [
   '/shares.html',
   '/activity.html',
   '/project-settings.html',
+  '/document-view.html',
   '/css/style.css',
   '/js/api.js',
   '/js/login.js',
@@ -36,6 +37,7 @@ const PRECACHE_URLS = [
   '/js/shares.js',
   '/js/activity.js',
   '/js/project-settings.js',
+  '/js/document-view.js',
   '/vendor/pdfjs/pdf.min.mjs',
   '/vendor/pdfjs/pdf.worker.min.mjs',
   '/manifest.webmanifest',

@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router({ mergeParams: true });
 
@@ -47,6 +47,21 @@ router.get('/:sheetId', requireAuth, (req, res) => {
     .all(sheet.id);
 
   res.json({ sheet, versions });
+});
+
+router.patch('/:sheetId', requireRole('admin', 'editor'), (req, res) => {
+  const sheet = db
+    .prepare('SELECT * FROM sheets WHERE id = ? AND project_id = ?')
+    .get(req.params.sheetId, req.params.projectId);
+  if (!sheet) return res.status(404).json({ error: 'Not found' });
+
+  const { scale_feet_per_inch } = req.body;
+  db.prepare('UPDATE sheets SET scale_feet_per_inch = ? WHERE id = ?').run(
+    scale_feet_per_inch === undefined ? sheet.scale_feet_per_inch : scale_feet_per_inch,
+    sheet.id
+  );
+  const updated = db.prepare('SELECT * FROM sheets WHERE id = ?').get(sheet.id);
+  res.json({ sheet: updated });
 });
 
 module.exports = router;

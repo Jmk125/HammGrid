@@ -5,10 +5,11 @@ import { renderShell, openModal, closeModal } from '/js/shell.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
+const RENDER_SCALE = 2.5; // PDF points -> canvas pixels; also used for measurement unit math
+
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
 const sheetId = params.get('sheetId');
-document.getElementById('back-link').href = `/viewer.html?projectId=${projectId}`;
 
 let markupsController = null;
 let currentSheet = null;
@@ -17,7 +18,7 @@ let displayedVersionId = null;
 let overlayActive = false;
 let overlayLayers = { old: null, new: null, showOld: true, showNew: true };
 
-// ---------- Right pane collapse ----------
+// ---------- Right pane: collapse + accordion sections ----------
 (function setupPaneToggle() {
   const pane = document.getElementById('sheet-pane');
   const btn = document.getElementById('pane-toggle-btn');
@@ -29,6 +30,12 @@ let overlayLayers = { old: null, new: null, showOld: true, showNew: true };
   });
 })();
 
+document.querySelectorAll('.pane-section-header').forEach((header) => {
+  header.addEventListener('click', () => {
+    header.closest('.pane-section').classList.toggle('collapsed');
+  });
+});
+
 // ---------- Zoom / pan ----------
 const zoomState = { scale: 1, x: 0, y: 0 };
 
@@ -36,6 +43,20 @@ function applyZoomTransform() {
   document.getElementById('zoom-pan-inner').style.transform =
     `translate(${zoomState.x}px, ${zoomState.y}px) scale(${zoomState.scale})`;
   if (markupsController) markupsController.repositionPopup();
+}
+
+// Fits the whole rendered page inside the viewport on load / version switch,
+// instead of opening at native (very zoomed-in) resolution.
+function fitToView() {
+  const canvas = document.getElementById('pdf-canvas');
+  const wrap = document.getElementById('zoom-wrap');
+  const rect = wrap.getBoundingClientRect();
+  if (!canvas.width || !rect.width) return;
+  const fitScale = Math.min(rect.width / canvas.width, rect.height / canvas.height) * 0.96;
+  zoomState.scale = fitScale;
+  zoomState.x = (rect.width - canvas.width * fitScale) / 2;
+  zoomState.y = (rect.height - canvas.height * fitScale) / 2;
+  applyZoomTransform();
 }
 
 function setupZoomPan() {
@@ -51,7 +72,7 @@ function setupZoomPan() {
         const cx = e.clientX - rect.left;
         const cy = e.clientY - rect.top;
         const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-        const newScale = Math.min(6, Math.max(0.25, zoomState.scale * factor));
+        const newScale = Math.min(6, Math.max(0.1, zoomState.scale * factor));
         zoomState.x = cx - (cx - zoomState.x) * (newScale / zoomState.scale);
         zoomState.y = cy - (cy - zoomState.y) * (newScale / zoomState.scale);
         zoomState.scale = newScale;
@@ -65,6 +86,7 @@ function setupZoomPan() {
   wrap.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     if (markupsController && markupsController.isToolActive()) return;
+    if (measureTool) return;
     const tag = e.target.tagName.toLowerCase();
     if (tag !== 'svg' && tag !== 'canvas') return;
     pan = { startX: e.clientX, startY: e.clientY, origX: zoomState.x, origY: zoomState.y };
@@ -82,11 +104,23 @@ function setupZoomPan() {
   });
 }
 
+// ---------- Topbar sheet label ----------
+function insertSheetLabel(sheet, title) {
+  let label = document.querySelector('.sheet-label');
+  if (!label) {
+    label = document.createElement('div');
+    label.className = 'sheet-label';
+    label.innerHTML = '<span class="num"></span><span class="title"></span>';
+    document.querySelector('#topbar > .row:first-child').appendChild(label);
+  }
+  label.querySelector('.num').textContent = sheet.sheet_number;
+  label.querySelector('.title').textContent = title || '';
+}
+
 // ---------- PDF rendering ----------
 // Reads the PDF from OPFS if this version has been synced - no network in
 // the path of viewing a sheet, per CLAUDE.md - falling back to the
 // authenticated network endpoint for versions that were never synced.
-// Render scale bumped + explicit smoothing for a cleaner image under zoom.
 async function renderPdf(versionId) {
   const statusEl = document.getElementById('pdf-status');
   statusEl.textContent = 'Loading...';
@@ -99,7 +133,7 @@ async function renderPdf(versionId) {
     const loadingTask = pdfjsLib.getDocument(source);
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(1);
-    const viewport = page.getViewport({ scale: 2.5 });
+    const viewport = page.getViewport({ scale: RENDER_SCALE });
     canvas.width = viewport.width;
     canvas.height = viewport.height;
     const ctx = canvas.getContext('2d');
@@ -108,6 +142,7 @@ async function renderPdf(versionId) {
     await page.render({ canvasContext: ctx, viewport }).promise;
     statusEl.textContent = cachedFile ? '(from local cache)' : '';
     if (markupsController) markupsController.resync();
+    fitToView();
   } catch (err) {
     statusEl.textContent = `Failed to render PDF: ${err.message}`;
   }
@@ -120,10 +155,11 @@ async function showVersion(versionId) {
   updateVersionBadge();
 }
 
-// ---------- Version badge + watermark + history list ----------
+// ---------- Version badge + watermark ----------
 function updateVersionBadge() {
   const v = allVersions.find((x) => x.id === displayedVersionId);
   document.getElementById('version-badge-btn').innerHTML = `${v ? v.revision_title : 'Current'} &#9662;`;
+  insertSheetLabel(currentSheet, v ? v.title : '');
 
   const dropdown = document.getElementById('version-dropdown');
   dropdown.innerHTML = '';
@@ -153,25 +189,6 @@ document.getElementById('version-badge-btn').addEventListener('click', (e) => {
 document.addEventListener('click', () => {
   document.getElementById('version-dropdown').style.display = 'none';
 });
-
-function renderVersionList() {
-  const list = document.getElementById('version-list');
-  list.innerHTML = '';
-  for (const v of allVersions) {
-    const li = document.createElement('li');
-    const isCurrent = v.id === currentSheet.current_version_id;
-    const a = document.createElement('a');
-    a.href = '#';
-    a.className = isCurrent ? 'current' : '';
-    a.textContent = `${v.revision_title}${isCurrent ? ' (current)' : ''}`;
-    a.addEventListener('click', (e) => {
-      e.preventDefault();
-      showVersion(v.id);
-    });
-    li.appendChild(a);
-    list.appendChild(li);
-  }
-}
 
 // ---------- Overlay (replaces the main canvas view in place) ----------
 function loadImage(src) {
@@ -236,19 +253,22 @@ async function computeOverlay() {
   }
   ctx.putImageData(out, 0, 0);
   statusEl.textContent = '';
+  fitToView();
 }
 
 function enterOverlay(oldVersionId, newVersionId) {
   overlayActive = true;
   overlayLayers = { old: oldVersionId, new: newVersionId, showOld: true, showNew: true };
   document.getElementById('markup-svg').style.display = 'none';
+  clearMeasure();
 
   let bar = document.getElementById('overlay-controls-bar');
   if (!bar) {
     bar = document.createElement('div');
     bar.id = 'overlay-controls-bar';
     bar.className = 'card';
-    document.getElementById('sheet-title').insertAdjacentElement('afterend', bar);
+    bar.style.margin = '10px 12px 0';
+    document.querySelector('.sheet-canvas-area').insertBefore(bar, document.getElementById('zoom-wrap'));
   }
   bar.innerHTML = `
     <div class="overlay-controls">
@@ -356,6 +376,281 @@ async function pickOverlayTarget(otherSheet) {
   }
 }
 
+// ---------- Measure ----------
+const STANDARD_SCALES = [
+  { label: '1/16" = 1\'-0"', feetPerInch: 16 },
+  { label: '1/8" = 1\'-0"', feetPerInch: 8 },
+  { label: '3/16" = 1\'-0"', feetPerInch: 16 / 3 },
+  { label: '1/4" = 1\'-0"', feetPerInch: 4 },
+  { label: '3/8" = 1\'-0"', feetPerInch: 8 / 3 },
+  { label: '1/2" = 1\'-0"', feetPerInch: 2 },
+  { label: '3/4" = 1\'-0"', feetPerInch: 4 / 3 },
+  { label: '1" = 1\'-0"', feetPerInch: 1 },
+  { label: '1 1/2" = 1\'-0"', feetPerInch: 2 / 3 },
+  { label: '3" = 1\'-0"', feetPerInch: 1 / 3 },
+  { label: '1" = 10\'-0"', feetPerInch: 10 },
+  { label: '1" = 20\'-0"', feetPerInch: 20 },
+  { label: '1" = 30\'-0"', feetPerInch: 30 },
+  { label: '1" = 40\'-0"', feetPerInch: 40 },
+  { label: '1" = 50\'-0"', feetPerInch: 50 },
+  { label: '1" = 60\'-0"', feetPerInch: 60 },
+  { label: '1" = 100\'-0"', feetPerInch: 100 },
+];
+
+const MEASURE_ICONS = {
+  line: '<svg viewBox="0 0 20 20"><line x1="2" y1="18" x2="18" y2="2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="5" y1="15" x2="7" y2="17" stroke="currentColor" stroke-width="1.5"/><line x1="9" y1="11" x2="11" y2="13" stroke="currentColor" stroke-width="1.5"/><line x1="13" y1="7" x2="15" y2="9" stroke="currentColor" stroke-width="1.5"/></svg>',
+  perimeter:
+    '<svg viewBox="0 0 20 20"><polyline points="2,16 7,6 12,14 18,4" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  area: '<svg viewBox="0 0 20 20"><polygon points="3,16 3,7 10,3 17,8 15,16" stroke="currentColor" stroke-width="2" fill="currentColor" fill-opacity="0.2"/></svg>',
+};
+
+let measureTool = null;
+let measurePoints = [];
+let scaleFeetPerInch = null;
+
+function measureSvgNs(tag) {
+  return document.createElementNS('http://www.w3.org/2000/svg', tag);
+}
+
+function ensureMeasureLayer() {
+  const svg = document.getElementById('markup-svg');
+  let g = svg.querySelector('#measure-layer');
+  if (!g) {
+    g = measureSvgNs('g');
+    g.id = 'measure-layer';
+    svg.appendChild(g);
+  }
+  return g;
+}
+
+function clearMeasure() {
+  measurePoints = [];
+  ensureMeasureLayer().innerHTML = '';
+  document.getElementById('measure-result').style.display = 'none';
+}
+
+function getMeasureSvgPoint(evt) {
+  const svg = document.getElementById('markup-svg');
+  const rect = svg.getBoundingClientRect();
+  const vb = svg.viewBox.baseVal;
+  return {
+    x: ((evt.clientX - rect.left) / rect.width) * vb.width,
+    y: ((evt.clientY - rect.top) / rect.height) * vb.height,
+  };
+}
+
+function pixelsToFeet(pixelDist) {
+  const inches = pixelDist / RENDER_SCALE / 72;
+  return inches * scaleFeetPerInch;
+}
+
+function formatFeetInches(feetDecimal) {
+  const totalInches = Math.round(feetDecimal * 12);
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches % 12;
+  return `${feet}'-${inches}"`;
+}
+
+function polylineLengthFeet(pts) {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) {
+    total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  }
+  return pixelsToFeet(total);
+}
+
+function polygonAreaFeet(pts) {
+  let area2 = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p1 = pts[i];
+    const p2 = pts[(i + 1) % pts.length];
+    area2 += p1.x * p2.y - p2.x * p1.y;
+  }
+  const pixelArea = Math.abs(area2) / 2;
+  const feetPerPixel = (1 / RENDER_SCALE / 72) * scaleFeetPerInch;
+  return pixelArea * feetPerPixel * feetPerPixel;
+}
+
+function redrawMeasure(livePt) {
+  const g = ensureMeasureLayer();
+  g.innerHTML = '';
+  const pts = livePt ? [...measurePoints, livePt] : measurePoints;
+  if (pts.length === 0) return;
+
+  const poly = measureSvgNs('polyline');
+  poly.setAttribute('points', pts.map((p) => `${p.x},${p.y}`).join(' '));
+  poly.setAttribute('stroke', '#f59e0b');
+  poly.setAttribute('stroke-width', 2);
+  poly.setAttribute('fill', 'none');
+  poly.setAttribute('stroke-dasharray', '5 3');
+  g.appendChild(poly);
+
+  for (const p of pts) {
+    const c = measureSvgNs('circle');
+    c.setAttribute('cx', p.x);
+    c.setAttribute('cy', p.y);
+    c.setAttribute('r', 4);
+    c.setAttribute('fill', '#f59e0b');
+    g.appendChild(c);
+  }
+}
+
+function stopMeasureTool() {
+  measureTool = null;
+  document.querySelectorAll('#measure-tool-grid .tool-btn').forEach((b) => b.classList.remove('active'));
+}
+
+function finishMeasurement() {
+  const resultEl = document.getElementById('measure-result');
+  if (measureTool === 'perimeter' && measurePoints.length >= 2) {
+    const feet = polylineLengthFeet(measurePoints);
+    resultEl.textContent = `Length: ${feet.toFixed(1)} ft (${formatFeetInches(feet)})`;
+    resultEl.style.display = 'block';
+  } else if (measureTool === 'area' && measurePoints.length >= 3) {
+    const areaFt = polygonAreaFeet(measurePoints);
+    const perimFt = polylineLengthFeet([...measurePoints, measurePoints[0]]);
+    resultEl.textContent = `Area: ${areaFt.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF, Perimeter: ${perimFt.toFixed(1)} ft`;
+    resultEl.style.display = 'block';
+    const g = ensureMeasureLayer();
+    g.innerHTML = '';
+    const poly = measureSvgNs('polygon');
+    poly.setAttribute('points', measurePoints.map((p) => `${p.x},${p.y}`).join(' '));
+    poly.setAttribute('stroke', '#f59e0b');
+    poly.setAttribute('stroke-width', 2);
+    poly.setAttribute('fill', '#f59e0b');
+    poly.setAttribute('fill-opacity', '0.15');
+    g.appendChild(poly);
+  }
+  stopMeasureTool();
+}
+
+function setupMeasureInteraction() {
+  const svg = document.getElementById('markup-svg');
+  svg.addEventListener('click', (e) => {
+    if (!measureTool || e.target.id !== 'markup-svg') return;
+    const pt = getMeasureSvgPoint(e);
+
+    if (measureTool === 'line') {
+      measurePoints.push(pt);
+      redrawMeasure();
+      if (measurePoints.length === 2) {
+        const feet = polylineLengthFeet(measurePoints);
+        const resultEl = document.getElementById('measure-result');
+        resultEl.textContent = `Length: ${feet.toFixed(1)} ft (${formatFeetInches(feet)})`;
+        resultEl.style.display = 'block';
+        stopMeasureTool();
+      }
+      return;
+    }
+
+    if (measurePoints.length > 2) {
+      const last = measurePoints[measurePoints.length - 1];
+      if (Math.hypot(pt.x - last.x, pt.y - last.y) < 6) {
+        finishMeasurement();
+        return;
+      }
+    }
+    measurePoints.push(pt);
+    redrawMeasure();
+  });
+
+  svg.addEventListener('mousemove', (e) => {
+    if (!measureTool || measurePoints.length === 0) return;
+    redrawMeasure(getMeasureSvgPoint(e));
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && measureTool && measureTool !== 'line') finishMeasurement();
+    if (e.key === 'Escape' && measureTool) {
+      clearMeasure();
+      stopMeasureTool();
+    }
+  });
+}
+
+function setupMeasureTools() {
+  const grid = document.getElementById('measure-tool-grid');
+  const defs = [
+    { tool: 'line', title: 'Line measurement' },
+    { tool: 'perimeter', title: 'Perimeter (polyline)' },
+    { tool: 'area', title: 'Area (polygon)' },
+  ];
+  for (const def of defs) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tool-btn tool-icon-btn';
+    btn.dataset.tool = def.tool;
+    btn.title = def.title;
+    btn.innerHTML = MEASURE_ICONS[def.tool];
+    btn.addEventListener('click', () => {
+      if (overlayActive) return;
+      if (!scaleFeetPerInch) {
+        alert('Set a scale first.');
+        return;
+      }
+      const turningOn = measureTool !== def.tool;
+      clearMeasure();
+      if (markupsController) markupsController.forceSelectTool();
+      measureTool = turningOn ? def.tool : null;
+      grid.querySelectorAll('.tool-btn').forEach((b) => b.classList.toggle('active', b.dataset.tool === measureTool));
+    });
+    grid.appendChild(btn);
+  }
+
+  document.getElementById('measure-clear-btn').addEventListener('click', () => {
+    clearMeasure();
+    stopMeasureTool();
+  });
+
+  setupMeasureInteraction();
+}
+
+function setupScaleSelect(sheet) {
+  const select = document.getElementById('scale-select');
+  select.innerHTML =
+    '<option value="">Select scale...</option>' +
+    STANDARD_SCALES.map((s, i) => `<option value="${i}">${s.label}</option>`).join('') +
+    '<option value="custom">Custom...</option>';
+
+  scaleFeetPerInch = sheet.scale_feet_per_inch || null;
+  if (scaleFeetPerInch) {
+    const idx = STANDARD_SCALES.findIndex((s) => Math.abs(s.feetPerInch - scaleFeetPerInch) < 0.0001);
+    if (idx >= 0) {
+      select.value = String(idx);
+    } else {
+      const opt = document.createElement('option');
+      opt.value = 'saved';
+      opt.textContent = `Custom (1"=${scaleFeetPerInch}')`;
+      select.insertBefore(opt, select.lastElementChild);
+      select.value = 'saved';
+    }
+  }
+
+  select.addEventListener('change', async () => {
+    const val = select.value;
+    if (val === '') {
+      scaleFeetPerInch = null;
+    } else if (val === 'custom') {
+      const input = prompt('Enter feet represented by 1 inch on the printed sheet (e.g. 4 for 1/4"=1\'-0"):');
+      const parsed = parseFloat(input);
+      if (!parsed || parsed <= 0) {
+        select.value = '';
+        return;
+      }
+      scaleFeetPerInch = parsed;
+    } else if (val === 'saved') {
+      // keep existing scaleFeetPerInch
+    } else {
+      scaleFeetPerInch = STANDARD_SCALES[Number(val)].feetPerInch;
+    }
+    try {
+      await api('PATCH', `/api/projects/${projectId}/sheets/${sheetId}`, { scale_feet_per_inch: scaleFeetPerInch });
+    } catch (err) {
+      // read-only role or offline - scale still usable locally this session, just won't persist
+    }
+  });
+}
+
 // ---------- Offline fallback ----------
 async function loadSheetOffline() {
   const cachedSheets = await getCachedSheets(projectId);
@@ -367,6 +662,7 @@ async function loadSheetOffline() {
       sheet_number: cached.sheet_number,
       discipline: cached.discipline,
       current_version_id: cached.current_version_id,
+      scale_feet_per_inch: null,
     },
     versions: [
       {
@@ -386,6 +682,7 @@ async function loadSheetOffline() {
 
   let sheet;
   let versions;
+  let offlineMode = false;
   try {
     ({ sheet, versions } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}`));
   } catch (err) {
@@ -402,51 +699,36 @@ async function loadSheetOffline() {
       return;
     }
     ({ sheet, versions } = offline);
-    currentSheet = sheet;
-    allVersions = versions;
-    displayedVersionId = sheet.current_version_id;
-    document.getElementById('sheet-number').textContent = sheet.sheet_number;
-    renderVersionList();
-    updateVersionBadge();
-    setupZoomPan();
-    markupsController = initMarkups({
-      sheetId,
-      me,
-      svgEl: document.getElementById('markup-svg'),
-      canvasEl: document.getElementById('pdf-canvas'),
-      documents: [],
-    });
-    await renderPdf(displayedVersionId);
-    await markupsController.load();
-    return;
+    offlineMode = true;
   }
 
   currentSheet = sheet;
   allVersions = versions;
   displayedVersionId = sheet.current_version_id;
 
-  await renderShell({
-    topbarEl: document.getElementById('topbar'),
-    sidebarEl: document.getElementById('sidebar'),
-    projectId,
-    active: 'viewer',
-    me,
-    onOverlayClick: openOverlayPicker,
-  });
+  if (!offlineMode) {
+    await renderShell({
+      topbarEl: document.getElementById('topbar'),
+      sidebarEl: document.getElementById('sidebar'),
+      projectId,
+      active: 'viewer',
+      me,
+      onOverlayClick: openOverlayPicker,
+    });
+  }
 
-  document.getElementById('sheet-number').textContent = sheet.sheet_number;
-  const current = versions.find((v) => v.id === sheet.current_version_id);
-  document.getElementById('sheet-title').textContent = current ? current.title : '';
-
-  renderVersionList();
   updateVersionBadge();
   setupZoomPan();
+  setupScaleSelect(sheet);
+  setupMeasureTools();
 
   let documents = [];
-  try {
-    ({ documents } = await api('GET', `/api/projects/${projectId}/documents`));
-  } catch (err) {
-    // offline - markup linking dropdown just won't have options this session
+  if (!offlineMode) {
+    try {
+      ({ documents } = await api('GET', `/api/projects/${projectId}/documents`));
+    } catch (err) {
+      // offline - markup linking dropdown just won't have options this session
+    }
   }
 
   markupsController = initMarkups({
@@ -455,6 +737,12 @@ async function loadSheetOffline() {
     svgEl: document.getElementById('markup-svg'),
     canvasEl: document.getElementById('pdf-canvas'),
     documents,
+    onToolChange: (tool) => {
+      if (tool !== 'select') {
+        clearMeasure();
+        stopMeasureTool();
+      }
+    },
   });
 
   await renderPdf(displayedVersionId);

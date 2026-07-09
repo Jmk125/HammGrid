@@ -32,4 +32,6 @@ db.exec(`UPDATE markups SET updated_at = created_at WHERE updated_at IS NULL`);
 addColumnIfMissing('projects', 'location', 'TEXT');
 addColumnIfMissing('projects', 'size', 'TEXT');
 
+addColumnIfMissing('sheets', 'scale_feet_per_inch', 'REAL');
+
 module.exports = db;

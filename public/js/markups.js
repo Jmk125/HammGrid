@@ -3,6 +3,19 @@ import { getCachedMarkupsForSheet } from '/js/offline-store.js';
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CLOUD_BUMP_SIZE = { 'cloud-small': 14, 'cloud-large': 30 };
 
+const TOOL_ICONS = {
+  line: '<svg viewBox="0 0 20 20"><line x1="3" y1="17" x2="17" y2="3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  arrow:
+    '<svg viewBox="0 0 20 20"><line x1="3" y1="17" x2="15" y2="5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 5 L15 5 L15 12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  rect: '<svg viewBox="0 0 20 20"><rect x="3" y="5" width="14" height="10" stroke="currentColor" stroke-width="2" fill="none"/></svg>',
+  cloud:
+    '<svg viewBox="0 0 20 20"><path d="M5 14c-1.7 0-3-1.3-3-3 0-1.5 1.1-2.7 2.5-3-0.1-0.3-0.1-0.6-0.1-0.9 0-1.9 1.6-3.5 3.5-3.5 1.2 0 2.3 0.6 2.9 1.6 0.4-0.2 0.9-0.3 1.4-0.3 1.7 0 3.1 1.3 3.2 3 1.5 0.3 2.6 1.6 2.6 3.1 0 1.7-1.3 3-3 3H5z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/></svg>',
+  text: '<svg viewBox="0 0 20 20"><text x="4" y="15" font-size="14" font-weight="700" fill="currentColor" font-family="sans-serif">T</text></svg>',
+};
+
+const OPEN_DOC_ICON =
+  '<svg viewBox="0 0 20 20"><path d="M8 4H4v12h12v-4M11 3h6v6M17 3l-8 8" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
 function el(tag) {
   return document.createElementNS(SVG_NS, tag);
 }
@@ -52,7 +65,7 @@ function cloudPath(x, y, w, h, bumpSize) {
   return d + 'Z';
 }
 
-export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
+export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolChange }) {
   let activeTool = 'select';
   let markups = [];
   let drawing = null;
@@ -297,7 +310,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
       return;
     }
     const perm = permissions(m);
-    if (!perm.canEdit && !perm.canPublish && !perm.canDelete) {
+    if (!perm.canEdit && !perm.canPublish && !perm.canDelete && !m.linked_document_id) {
       popupEl.style.display = 'none';
       return;
     }
@@ -318,6 +331,18 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
   function renderPopupButtons(m) {
     const perm = permissions(m);
     popupEl.innerHTML = '';
+
+    if (m.linked_document_id) {
+      const openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.title = 'Open linked document';
+      openBtn.innerHTML = OPEN_DOC_ICON;
+      openBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        window.open(`/document-view.html?documentId=${m.linked_document_id}`, '_blank');
+      });
+      popupEl.appendChild(openBtn);
+    }
 
     if (perm.canEdit) {
       const linkBtn = document.createElement('button');
@@ -437,10 +462,34 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
     deselect();
     document.querySelectorAll('.tool-btn').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
     svgEl.style.cursor = tool === 'select' ? 'default' : 'crosshair';
+    if (onToolChange) onToolChange(tool);
   }
 
-  document.querySelectorAll('.tool-btn').forEach((btn) => {
-    btn.addEventListener('click', () => activateTool(btn.dataset.tool));
+  // Icon buttons built here (not static HTML) since the SVG markup is
+  // sizeable and this module already owns all tool-related state/behavior.
+  const TOOL_DEFS = [
+    { tool: 'line', icon: TOOL_ICONS.line, title: 'Line' },
+    { tool: 'arrow', icon: TOOL_ICONS.arrow, title: 'Arrow' },
+    { tool: 'rect', icon: TOOL_ICONS.rect, title: 'Rectangle' },
+    { tool: 'cloud-small', icon: TOOL_ICONS.cloud, badge: 'S', title: 'Cloud (small)' },
+    { tool: 'cloud-large', icon: TOOL_ICONS.cloud, badge: 'L', title: 'Cloud (large)' },
+    { tool: 'text', icon: TOOL_ICONS.text, title: 'Text' },
+  ];
+  const toolGrid = document.getElementById('tool-grid');
+  for (const def of TOOL_DEFS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tool-btn tool-icon-btn';
+    btn.dataset.tool = def.tool;
+    btn.title = def.title;
+    btn.innerHTML = def.icon + (def.badge ? `<span class="badge">${def.badge}</span>` : '');
+    btn.addEventListener('click', () => {
+      activateTool(activeTool === def.tool ? 'select' : def.tool);
+    });
+    toolGrid.appendChild(btn);
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') activateTool('select');
   });
   activateTool('select');
 
@@ -608,5 +657,8 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
       return !!selectedId;
     },
     repositionPopup: positionPopup,
+    forceSelectTool() {
+      activateTool('select');
+    },
   };
 }
