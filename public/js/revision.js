@@ -1,9 +1,8 @@
-import { renderShell } from '/js/shell.js';
+import { renderShell, trackPendingJob, showToast } from '/js/shell.js';
 
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
 const revisionId = params.get('revisionId');
-document.getElementById('back-link').href = `/project-settings.html?projectId=${projectId}`;
 
 const NUMBER_PATTERN = /^[A-Z]{1,2}-?\d+(\.\d+)?$/i;
 const CONFIDENCE_THRESHOLD = 70;
@@ -20,18 +19,32 @@ function needsAttention(s) {
 let stagedSheets = [];
 let boxes = { number_box: null, title_box: null };
 let drawing = null; // {startX, startY} while dragging
+let revisionTitle = '';
 
+// ---------- Accordion ----------
+document.querySelectorAll('.pane-section-header').forEach((header) => {
+  header.addEventListener('click', () => {
+    header.closest('.pane-section').classList.toggle('collapsed');
+  });
+});
+
+// ---------- Topbar label ----------
+function insertRevisionLabel(revision) {
+  const leftRow = document.querySelector('#topbar > .row:first-child');
+  const label = document.createElement('div');
+  label.className = 'sheet-label';
+  label.innerHTML = `<span class="num">${revision.title}</span><span class="pill ${revision.status}">${revision.status}</span>`;
+  leftRow.appendChild(label);
+}
 
 async function loadRevision() {
   const { revision } = await api('GET', `/api/projects/${projectId}/revisions/${revisionId}`);
-  document.getElementById('revision-title').textContent = revision.title;
-  const statusEl = document.getElementById('revision-status');
-  statusEl.textContent = revision.status;
-  statusEl.className = `pill ${revision.status}`;
+  revisionTitle = revision.title;
+  insertRevisionLabel(revision);
 
   const isDraft = revision.status === 'draft';
-  document.getElementById('upload-card').style.display = isDraft ? '' : 'none';
-  document.getElementById('box-card').style.display = isDraft ? '' : 'none';
+  document.getElementById('section-upload').style.display = isDraft ? '' : 'none';
+  document.getElementById('section-box').style.display = isDraft ? '' : 'none';
   document.getElementById('publish-btn').style.display = isDraft ? '' : 'none';
   return revision;
 }
@@ -276,27 +289,116 @@ document.getElementById('select-all').addEventListener('change', (e) => {
   document.querySelectorAll('.row-check').forEach((el) => (el.checked = e.target.checked));
 });
 
-document.getElementById('upload-btn').addEventListener('click', async () => {
-  const input = document.getElementById('file-input');
-  if (!input.files.length) return;
-  const statusEl = document.getElementById('upload-status');
-  statusEl.textContent = `Uploading ${input.files.length} file(s)...`;
-  const formData = new FormData();
-  for (const file of input.files) formData.append('files', file);
-  try {
-    const res = await fetch(`/api/projects/${projectId}/revisions/${revisionId}/upload`, {
-      method: 'POST',
-      body: formData,
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Upload failed');
-    statusEl.textContent = `Added ${data.staged_sheet_ids.length} sheet(s).`;
-    input.value = '';
-    await loadStaged();
-  } catch (err) {
-    statusEl.textContent = `Upload failed: ${err.message}`;
-  }
+// ---------- Drag-and-drop upload with per-file progress ----------
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+const uploadList = document.getElementById('upload-list');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
 });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const files = Array.from(e.dataTransfer.files).filter(
+    (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+  );
+  if (files.length) handleFiles(files);
+});
+fileInput.addEventListener('change', () => {
+  handleFiles(Array.from(fileInput.files));
+  fileInput.value = '';
+});
+
+async function handleFiles(files) {
+  for (const file of files) {
+    await uploadOneFile(file);
+  }
+  await loadStaged();
+}
+
+function uploadOneFile(file) {
+  return new Promise((resolve) => {
+    const row = document.createElement('div');
+    row.className = 'upload-row';
+    row.innerHTML = `
+      <div class="upload-row-name" title="${escapeAttr(file.name)}">${escapeAttr(file.name)}</div>
+      <div class="upload-row-bar"><div class="upload-row-fill"></div></div>
+      <div class="upload-row-status">Uploading...</div>
+    `;
+    uploadList.appendChild(row);
+    const fill = row.querySelector('.upload-row-fill');
+    const status = row.querySelector('.upload-row-status');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/projects/${projectId}/revisions/${revisionId}/upload`);
+    xhr.upload.addEventListener('progress', (e) => {
+      if (e.lengthComputable) fill.style.width = `${(e.loaded / e.total) * 100}%`;
+    });
+    xhr.addEventListener('load', async () => {
+      let data = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch (err) {
+        // ignore
+      }
+      if (xhr.status !== 202) {
+        status.textContent = `Failed: ${(data && data.error) || xhr.statusText}`;
+        status.classList.add('error');
+        resolve();
+        return;
+      }
+      fill.style.width = '100%';
+      status.textContent = 'Processing...';
+      await pollJob(data.job_id, status, file.name);
+      resolve();
+    });
+    xhr.addEventListener('error', () => {
+      status.textContent = 'Upload failed (network error)';
+      status.classList.add('error');
+      resolve();
+    });
+    xhr.send(formData);
+  });
+}
+
+async function pollJob(jobId, statusEl, fileName) {
+  // Track it in case the user navigates away before this resolves - a job
+  // that outlives this page still gets surfaced as a toast on whichever
+  // HammGrid page the user next loads (see shell.js checkPendingJobs()).
+  trackPendingJob({ jobId, projectId, revisionId, label: `"${fileName}" in ${revisionTitle}` });
+
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 1500));
+    let job;
+    try {
+      ({ job } = await api('GET', `/api/projects/${projectId}/revisions/${revisionId}/upload-jobs/${jobId}`));
+    } catch (err) {
+      statusEl.textContent = 'Lost track of job status';
+      statusEl.classList.add('error');
+      return;
+    }
+    if (job.status === 'done') {
+      statusEl.textContent = 'Done';
+      statusEl.classList.add('done');
+      showToast(`"${fileName}" finished processing.`, 'success');
+      await loadStaged();
+      return;
+    }
+    if (job.status === 'error') {
+      statusEl.textContent = `Failed: ${job.error}`;
+      statusEl.classList.add('error');
+      showToast(`"${fileName}" failed: ${job.error}`, 'error');
+      return;
+    }
+  }
+}
 
 document.getElementById('publish-btn').addEventListener('click', async () => {
   const errorEl = document.getElementById('publish-error');

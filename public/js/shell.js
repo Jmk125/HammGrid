@@ -18,6 +18,71 @@ export function closeModal() {
   document.querySelectorAll('.modal-backdrop').forEach((el) => el.remove());
 }
 
+// ---------- Toasts + cross-page background job notifications ----------
+// There's no push/background-sync infrastructure here (deliberately - it's
+// unreliable on iOS Safari, the actual field-use target per CLAUDE.md), so
+// "notify me after I navigate away" is approximated: any upload/burst job
+// gets tracked in localStorage, and every page that calls renderShell() (or
+// dashboard's own init) checks pending jobs once on load. If the user never
+// reloads/navigates while a job finishes, they won't see a toast until they
+// do - a real but honest limitation of not having true background push.
+const PENDING_JOBS_KEY = 'hammgrid-pending-jobs';
+
+export function trackPendingJob(job) {
+  const jobs = JSON.parse(localStorage.getItem(PENDING_JOBS_KEY) || '[]');
+  jobs.push(job);
+  localStorage.setItem(PENDING_JOBS_KEY, JSON.stringify(jobs));
+}
+
+export function untrackPendingJob(jobId) {
+  const jobs = JSON.parse(localStorage.getItem(PENDING_JOBS_KEY) || '[]');
+  localStorage.setItem(PENDING_JOBS_KEY, JSON.stringify(jobs.filter((j) => j.jobId !== jobId)));
+}
+
+function getToastContainer() {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    document.body.appendChild(container);
+  }
+  return container;
+}
+
+export function showToast(message, type = 'info') {
+  const container = getToastContainer();
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('visible'));
+  setTimeout(() => {
+    toast.classList.remove('visible');
+    setTimeout(() => toast.remove(), 300);
+  }, 6000);
+}
+
+export async function checkPendingJobs() {
+  const jobs = JSON.parse(localStorage.getItem(PENDING_JOBS_KEY) || '[]');
+  for (const job of jobs) {
+    try {
+      const { job: status } = await api(
+        'GET',
+        `/api/projects/${job.projectId}/revisions/${job.revisionId}/upload-jobs/${job.jobId}`
+      );
+      if (status.status === 'done') {
+        showToast(`${job.label} finished processing.`, 'success');
+        untrackPendingJob(job.jobId);
+      } else if (status.status === 'error') {
+        showToast(`${job.label} failed: ${status.error}`, 'error');
+        untrackPendingJob(job.jobId);
+      }
+    } catch (err) {
+      untrackPendingJob(job.jobId); // job expired/server restarted - stop tracking it
+    }
+  }
+}
+
 function newRevisionModal(projectId) {
   openModal(`
     <h2>New revision</h2>
@@ -74,6 +139,7 @@ function exportModal(projectId) {
 
 export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, onOverlayClick }) {
   const canManage = me.role === 'admin' || me.role === 'editor';
+  checkPendingJobs();
 
   topbarEl.innerHTML = `
     <div class="row" style="gap:6px;">

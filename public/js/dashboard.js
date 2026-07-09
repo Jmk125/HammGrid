@@ -1,4 +1,4 @@
-import { openModal, closeModal } from '/js/shell.js';
+import { openModal, closeModal, checkPendingJobs } from '/js/shell.js';
 
 let me;
 
@@ -82,4 +82,5 @@ async function loadProjects() {
   if (!me) return;
   renderTopbar();
   await loadProjects();
+  checkPendingJobs();
 })();

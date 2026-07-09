@@ -8,64 +8,78 @@
     <div class="sidebar" id="sidebar"></div>
     <div class="shell-content">
       <main class="wide">
-    <p><a id="back-link" href="#">&larr; Project Settings</a></p>
-    <h1 id="revision-title"></h1>
-    <p><span id="revision-status" class="pill"></span></p>
+        <div class="accordion">
+          <div class="pane-section" id="section-upload">
+            <button class="pane-section-header" type="button" data-section="upload">
+              <span>1. Upload Sheets</span>
+              <span class="chevron">&#9662;</span>
+            </button>
+            <div class="pane-section-body">
+              <div class="drop-zone" id="drop-zone">
+                <div class="drop-zone-title">Drag &amp; drop PDFs here</div>
+                <div>or click to browse</div>
+                <input type="file" id="file-input" accept="application/pdf" multiple style="display:none;">
+              </div>
+              <div class="upload-list" id="upload-list"></div>
+            </div>
+          </div>
 
-    <div class="card" id="upload-card">
-      <h2>1. Upload sheets</h2>
-      <div class="row">
-        <input type="file" id="file-input" accept="application/pdf" multiple>
-        <button class="primary" id="upload-btn">Upload &amp; burst</button>
-      </div>
-      <p class="muted" id="upload-status"></p>
-    </div>
+          <div class="pane-section" id="section-box">
+            <button class="pane-section-header" type="button" data-section="box">
+              <span>2. Draw Number &amp; Title Box</span>
+              <span class="chevron">&#9662;</span>
+            </button>
+            <div class="pane-section-body">
+              <div class="row">
+                <label>Reference sheet:
+                  <select id="ref-sheet-select"></select>
+                </label>
+                <label>Scope:
+                  <input id="scope-input" value="default" style="width:120px;">
+                </label>
+                <button id="clear-boxes-btn">Clear boxes</button>
+              </div>
+              <p class="muted">Drag to draw the <b>number box</b> first (red), then the <b>title box</b> (blue).</p>
+              <div class="box-draw-wrap" id="box-draw-wrap">
+                <img id="ref-image">
+                <canvas id="box-canvas"></canvas>
+              </div>
+              <div class="row" style="margin-top:8px;">
+                <button class="primary" id="run-ocr-btn">Run OCR on selected rows</button>
+                <span class="muted" id="ocr-status"></span>
+              </div>
+            </div>
+          </div>
 
-    <div class="card" id="box-card">
-      <h2>2. Draw number &amp; title box</h2>
-      <div class="row">
-        <label>Reference sheet:
-          <select id="ref-sheet-select"></select>
-        </label>
-        <label>Scope:
-          <input id="scope-input" value="default" style="width:120px;">
-        </label>
-        <button id="clear-boxes-btn">Clear boxes</button>
-      </div>
-      <p class="muted">Drag to draw the <b>number box</b> first (red), then the <b>title box</b> (blue).</p>
-      <div class="box-draw-wrap" id="box-draw-wrap">
-        <img id="ref-image">
-        <canvas id="box-canvas"></canvas>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <button class="primary" id="run-ocr-btn">Run OCR on selected rows</button>
-        <span class="muted" id="ocr-status"></span>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2>3. Review</h2>
-      <table id="staged-table">
-        <thead>
-          <tr>
-            <th><input type="checkbox" id="select-all"></th>
-            <th>Thumb</th>
-            <th>Number</th>
-            <th>Title</th>
-            <th>Discipline</th>
-            <th>Status</th>
-            <th>Match sheet id</th>
-            <th>Confidence</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-      <p class="error" id="publish-error" style="display:none;"></p>
-      <div class="row" style="margin-top:12px;">
-        <button class="primary" id="publish-btn">Publish revision</button>
-      </div>
-    </div>
+          <div class="pane-section" id="section-review">
+            <button class="pane-section-header" type="button" data-section="review">
+              <span>3. Review</span>
+              <span class="chevron">&#9662;</span>
+            </button>
+            <div class="pane-section-body">
+              <table id="staged-table">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" id="select-all"></th>
+                    <th>Thumb</th>
+                    <th>Number</th>
+                    <th>Title</th>
+                    <th>Discipline</th>
+                    <th>Status</th>
+                    <th>Match sheet id</th>
+                    <th>Confidence</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+              <p class="error" id="publish-error" style="display:none;"></p>
+              <div class="row" style="margin-top:12px;">
+                <button class="primary" id="publish-btn">Publish revision</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </main>
     </div>
   </div>

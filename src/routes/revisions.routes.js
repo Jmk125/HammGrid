@@ -9,6 +9,15 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { runPython } = require('../lib/pyRunner');
 const queue = require('../lib/queue');
 const { computeMatch, needsAttention } = require('../lib/matching');
+const jobStore = require('../lib/jobStore');
+
+// Burst walks every page sequentially (PyMuPDF render + thumbnail + preview),
+// so a large multi-hundred-page upload can legitimately take a while. This
+// used to default to pyRunner's 2-minute timeout, which is exactly what was
+// killing large uploads with a generic "failed to process" error - 30
+// minutes is safe now that this runs in the background rather than blocking
+// the request.
+const BURST_TIMEOUT_MS = 30 * 60 * 1000;
 
 const router = express.Router({ mergeParams: true });
 
@@ -80,44 +89,43 @@ router.get('/:revisionId', requireAuth, (req, res) => {
   res.json({ revision });
 });
 
-router.post('/:revisionId/upload', requireRole('admin', 'editor'), upload.array('files'), async (req, res) => {
+// One file per request (not batched) so the client can show real per-file
+// progress and so one huge file in a batch can't stall the others. Responds
+// as soon as the file is saved and hands burst off to the background -
+// the client polls /upload-jobs/:jobId for completion, and the job keeps
+// running server-side even if the client navigates away or disconnects.
+router.post('/:revisionId/upload', requireRole('admin', 'editor'), upload.single('file'), (req, res) => {
   const revision = getRevisionOr404(req, res);
   if (!revision) return;
   if (revision.status !== 'draft') {
     return res.status(400).json({ error: 'Revision is already published' });
   }
-  if (!req.files || req.files.length === 0) {
-    return res.status(400).json({ error: 'No PDF files uploaded' });
+  if (!req.file) {
+    return res.status(400).json({ error: 'No PDF file uploaded' });
   }
 
-  const maxOrderRow = db
-    .prepare('SELECT COALESCE(MAX(upload_order), 0) AS maxOrder FROM staged_sheets WHERE revision_id = ?')
-    .get(revision.id);
-  let nextOrder = maxOrderRow.maxOrder;
+  const jobId = jobStore.createJob();
+  res.status(202).json({ job_id: jobId });
 
-  const insertStmt = db.prepare(
-    `INSERT INTO staged_sheets (revision_id, upload_order, pdf_path, thumb_path, preview_path, page_width_pt, page_height_pt)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  );
+  (async () => {
+    try {
+      const maxOrderRow = db
+        .prepare('SELECT COALESCE(MAX(upload_order), 0) AS maxOrder FROM staged_sheets WHERE revision_id = ?')
+        .get(revision.id);
+      let nextOrder = maxOrderRow.maxOrder;
 
-  const createdIds = [];
-  try {
-    for (const file of req.files) {
-      const batchDir = path.join(
-        config.storageDir,
-        'staging',
-        String(revision.id),
-        crypto.randomUUID().slice(0, 8)
+      const batchDir = path.join(config.storageDir, 'staging', String(revision.id), crypto.randomUUID().slice(0, 8));
+      const pages = await queue.enqueue(() =>
+        runPython(BURST_SCRIPT, [req.file.path, batchDir], { timeout: BURST_TIMEOUT_MS })
       );
-      let pages;
-      try {
-        pages = await queue.enqueue(() => runPython(BURST_SCRIPT, [file.path, batchDir]));
-      } finally {
-        fs.unlink(file.path, () => {});
-      }
+
+      const insertStmt = db.prepare(
+        `INSERT INTO staged_sheets (revision_id, upload_order, pdf_path, thumb_path, preview_path, page_width_pt, page_height_pt)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      );
       for (const page of pages) {
         nextOrder += 1;
-        const result = insertStmt.run(
+        insertStmt.run(
           revision.id,
           nextOrder,
           page.pdf_path,
@@ -126,15 +134,21 @@ router.post('/:revisionId/upload', requireRole('admin', 'editor'), upload.array(
           page.page_width_pt,
           page.page_height_pt
         );
-        createdIds.push(result.lastInsertRowid);
       }
+      jobStore.completeJob(jobId);
+    } catch (err) {
+      console.error('Background upload processing failed', err);
+      jobStore.failJob(jobId, 'Failed to process this PDF');
+    } finally {
+      fs.unlink(req.file.path, () => {});
     }
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'Failed to process uploaded PDF(s)' });
-  }
+  })();
+});
 
-  res.status(201).json({ staged_sheet_ids: createdIds });
+router.get('/:revisionId/upload-jobs/:jobId', requireAuth, (req, res) => {
+  const job = jobStore.getJob(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Not found' });
+  res.json({ job });
 });
 
 router.get('/:revisionId/staged', requireAuth, (req, res) => {
