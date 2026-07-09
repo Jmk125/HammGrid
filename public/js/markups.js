@@ -159,6 +159,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
       node.setAttribute('y2', m.geometry.y2 * h);
       node.setAttribute('stroke', color);
       node.setAttribute('stroke-width', strokeWidth);
+      node.setAttribute('vector-effect', 'non-scaling-stroke');
       node.style.pointerEvents = 'stroke';
       if (m.type === 'arrow') node.setAttribute('marker-end', `url(#${ensureArrowMarker(color)})`);
     } else if (m.type === 'rect') {
@@ -169,6 +170,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
       node.setAttribute('height', m.geometry.h * h);
       node.setAttribute('stroke', color);
       node.setAttribute('stroke-width', strokeWidth);
+      node.setAttribute('vector-effect', 'non-scaling-stroke');
       node.setAttribute('fill', '#ffffff');
       node.setAttribute('fill-opacity', '0.001');
       node.style.pointerEvents = 'all';
@@ -178,6 +180,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
       node.setAttribute('d', cloudPath(m.geometry.x * w, m.geometry.y * h, m.geometry.w * w, m.geometry.h * h, bumpSize));
       node.setAttribute('stroke', color);
       node.setAttribute('stroke-width', strokeWidth);
+      node.setAttribute('vector-effect', 'non-scaling-stroke');
       node.setAttribute('fill', '#ffffff');
       node.setAttribute('fill-opacity', '0.001');
       node.style.pointerEvents = 'all';
@@ -535,6 +538,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
     previewEl = el(activeTool === 'line' || activeTool === 'arrow' ? 'line' : activeTool.startsWith('cloud') ? 'path' : 'rect');
     previewEl.setAttribute('stroke', colorInput.value);
     previewEl.setAttribute('stroke-width', widthInput.value);
+    previewEl.setAttribute('vector-effect', 'non-scaling-stroke');
     previewEl.setAttribute('fill', 'none');
     previewEl.setAttribute('stroke-dasharray', '4 2');
     svgEl.appendChild(previewEl);

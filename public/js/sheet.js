@@ -491,12 +491,16 @@ function redrawMeasure(livePt) {
   const g = ensureMeasureLayer();
   g.innerHTML = '';
   const pts = livePt ? [...measurePoints, livePt] : measurePoints;
-  if (pts.length === 0) return;
+  if (pts.length === 0) {
+    updateLiveResult(pts);
+    return;
+  }
 
   const poly = measureSvgNs('polyline');
   poly.setAttribute('points', pts.map((p) => `${p.x},${p.y}`).join(' '));
   poly.setAttribute('stroke', '#f59e0b');
   poly.setAttribute('stroke-width', 2);
+  poly.setAttribute('vector-effect', 'non-scaling-stroke');
   poly.setAttribute('fill', 'none');
   poly.setAttribute('stroke-dasharray', '5 3');
   g.appendChild(poly);
@@ -509,6 +513,34 @@ function redrawMeasure(livePt) {
     c.setAttribute('fill', '#f59e0b');
     g.appendChild(c);
   }
+  updateLiveResult(pts);
+}
+
+// Single source of truth for the result box - called on every point placed
+// AND on every mousemove while measuring, so the number visibly updates as
+// the user moves the mouse, not just once at the very end.
+function updateLiveResult(pts) {
+  const resultEl = document.getElementById('measure-result');
+  if (measureTool === 'line' || measureTool === 'perimeter') {
+    if (pts.length < 2) {
+      resultEl.style.display = 'none';
+      return;
+    }
+    const feet = measureTool === 'line' ? polylineLengthFeet(pts.slice(0, 2)) : polylineLengthFeet(pts);
+    resultEl.textContent = `Length: ${feet.toFixed(1)} ft (${formatFeetInches(feet)})`;
+    resultEl.style.display = 'block';
+  } else if (measureTool === 'area') {
+    if (pts.length < 3) {
+      resultEl.style.display = 'none';
+      return;
+    }
+    const areaFt = polygonAreaFeet(pts);
+    const perimFt = polylineLengthFeet([...pts, pts[0]]);
+    resultEl.textContent = `Area: ${areaFt.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF, Perimeter: ${perimFt.toFixed(1)} ft`;
+    resultEl.style.display = 'block';
+  } else {
+    resultEl.style.display = 'none';
+  }
 }
 
 function stopMeasureTool() {
@@ -517,22 +549,17 @@ function stopMeasureTool() {
 }
 
 function finishMeasurement() {
-  const resultEl = document.getElementById('measure-result');
   if (measureTool === 'perimeter' && measurePoints.length >= 2) {
-    const feet = polylineLengthFeet(measurePoints);
-    resultEl.textContent = `Length: ${feet.toFixed(1)} ft (${formatFeetInches(feet)})`;
-    resultEl.style.display = 'block';
+    updateLiveResult(measurePoints);
   } else if (measureTool === 'area' && measurePoints.length >= 3) {
-    const areaFt = polygonAreaFeet(measurePoints);
-    const perimFt = polylineLengthFeet([...measurePoints, measurePoints[0]]);
-    resultEl.textContent = `Area: ${areaFt.toLocaleString(undefined, { maximumFractionDigits: 0 })} SF, Perimeter: ${perimFt.toFixed(1)} ft`;
-    resultEl.style.display = 'block';
+    updateLiveResult(measurePoints);
     const g = ensureMeasureLayer();
     g.innerHTML = '';
     const poly = measureSvgNs('polygon');
     poly.setAttribute('points', measurePoints.map((p) => `${p.x},${p.y}`).join(' '));
     poly.setAttribute('stroke', '#f59e0b');
     poly.setAttribute('stroke-width', 2);
+    poly.setAttribute('vector-effect', 'non-scaling-stroke');
     poly.setAttribute('fill', '#f59e0b');
     poly.setAttribute('fill-opacity', '0.15');
     g.appendChild(poly);
@@ -542,33 +569,38 @@ function finishMeasurement() {
 
 function setupMeasureInteraction() {
   const svg = document.getElementById('markup-svg');
-  svg.addEventListener('click', (e) => {
-    if (!measureTool || e.target.id !== 'markup-svg') return;
-    const pt = getMeasureSvgPoint(e);
+  // Capture phase + unconditional on target: an existing markup (even an
+  // invisible fill-opacity:0.001 hit-area) sits on top of the drawing and
+  // calls stopPropagation() on its own click handler, which was silently
+  // swallowing every measurement click that happened to land on or near one
+  // - including the just-placed point marker itself. Capturing here means
+  // this runs before any per-markup listener ever gets the event.
+  svg.addEventListener(
+    'click',
+    (e) => {
+      if (!measureTool) return;
+      e.stopPropagation();
+      const pt = getMeasureSvgPoint(e);
 
-    if (measureTool === 'line') {
-      measurePoints.push(pt);
-      redrawMeasure();
-      if (measurePoints.length === 2) {
-        const feet = polylineLengthFeet(measurePoints);
-        const resultEl = document.getElementById('measure-result');
-        resultEl.textContent = `Length: ${feet.toFixed(1)} ft (${formatFeetInches(feet)})`;
-        resultEl.style.display = 'block';
-        stopMeasureTool();
-      }
-      return;
-    }
-
-    if (measurePoints.length > 2) {
-      const last = measurePoints[measurePoints.length - 1];
-      if (Math.hypot(pt.x - last.x, pt.y - last.y) < 6) {
-        finishMeasurement();
+      if (measureTool === 'line') {
+        measurePoints.push(pt);
+        redrawMeasure();
+        if (measurePoints.length === 2) stopMeasureTool();
         return;
       }
-    }
-    measurePoints.push(pt);
-    redrawMeasure();
-  });
+
+      if (measurePoints.length > 2) {
+        const last = measurePoints[measurePoints.length - 1];
+        if (Math.hypot(pt.x - last.x, pt.y - last.y) < 6) {
+          finishMeasurement();
+          return;
+        }
+      }
+      measurePoints.push(pt);
+      redrawMeasure();
+    },
+    true
+  );
 
   svg.addEventListener('mousemove', (e) => {
     if (!measureTool || measurePoints.length === 0) return;

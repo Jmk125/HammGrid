@@ -26,12 +26,21 @@ async function loadFilters() {
   }
 }
 
+let lastItems = [];
+
 function renderGrid(items) {
+  lastItems = items;
   const discipline = document.getElementById('discipline-filter').value;
   const revisionId = document.getElementById('revision-filter').value;
+  const search = document.getElementById('search-filter').value.trim().toLowerCase();
   let filtered = items;
   if (discipline) filtered = filtered.filter((s) => s.discipline === discipline);
   if (revisionId) filtered = filtered.filter((s) => String(s.revision_id) === revisionId);
+  if (search) {
+    filtered = filtered.filter(
+      (s) => s.sheet_number.toLowerCase().includes(search) || (s.title || '').toLowerCase().includes(search)
+    );
+  }
   filtered.sort((a, b) => a.sheet_number.localeCompare(b.sheet_number));
 
   const grid = document.getElementById('grid');
@@ -89,6 +98,9 @@ async function renderFromLiveApi() {
 
 document.getElementById('discipline-filter').addEventListener('change', renderFromCache);
 document.getElementById('revision-filter').addEventListener('change', renderFromCache);
+// Search filters the already-loaded list client-side - no need to re-hit
+// cache/API on every keystroke like the dropdowns do.
+document.getElementById('search-filter').addEventListener('input', () => renderGrid(lastItems));
 
 (async function init() {
   const me = await requireSession();
