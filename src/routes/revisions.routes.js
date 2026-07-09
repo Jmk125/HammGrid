@@ -145,6 +145,11 @@ router.post('/:revisionId/upload', requireRole('admin', 'editor'), upload.single
   })();
 });
 
+// Generic job-status lookup, backed by the single shared jobStore Map - not
+// upload-specific despite the URL, so the read/OCR job (below) polls this
+// same route too instead of needing its own. Keeping one route also means
+// shell.js's cross-page "job finished" toast tracking (hardcoded to this
+// path) works for read jobs without any changes there.
 router.get('/:revisionId/upload-jobs/:jobId', requireAuth, (req, res) => {
   const job = jobStore.getJob(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Not found' });
@@ -194,7 +199,11 @@ router.post('/:revisionId/read-preview', requireRole('admin', 'editor'), async (
   }
 });
 
-router.post('/:revisionId/ocr', requireRole('admin', 'editor'), async (req, res) => {
+// Reads run one sheet at a time through the shared queue (Pi RAM constraint),
+// so a 200-sheet batch can take minutes - this is a background job (same
+// pattern as upload) with incremental progress instead of one long blocking
+// request, so the client can show a real progress bar rather than a spinner.
+router.post('/:revisionId/ocr', requireRole('admin', 'editor'), (req, res) => {
   const revision = getRevisionOr404(req, res);
   if (!revision) return;
   if (revision.status !== 'draft') {
@@ -224,53 +233,59 @@ router.post('/:revisionId/ocr', requireRole('admin', 'editor'), async (req, res)
     );
   }
 
-  const project = db.prepare('SELECT discipline_prefix_map FROM projects WHERE id = ?').get(revision.project_id);
-  const prefixMap = JSON.parse(project.discipline_prefix_map);
+  const jobId = jobStore.createJob();
+  jobStore.updateProgress(jobId, 0, staged_sheet_ids.length);
+  res.status(202).json({ job_id: jobId });
 
-  const updateStmt = db.prepare(
-    `UPDATE staged_sheets SET
-       region_scope = ?, ocr_number = ?, ocr_number_confidence = ?,
-       ocr_title = ?, ocr_title_confidence = ?, discipline = ?,
-       match_status = ?, match_sheet_id = ?
-     WHERE id = ?`
-  );
+  (async () => {
+    const project = db.prepare('SELECT discipline_prefix_map FROM projects WHERE id = ?').get(revision.project_id);
+    const prefixMap = JSON.parse(project.discipline_prefix_map);
 
-  const updated = [];
-  try {
-    for (const id of staged_sheet_ids) {
-      const staged = db.prepare('SELECT * FROM staged_sheets WHERE id = ? AND revision_id = ?').get(id, revision.id);
-      if (!staged) continue;
+    const updateStmt = db.prepare(
+      `UPDATE staged_sheets SET
+         region_scope = ?, ocr_number = ?, ocr_number_confidence = ?,
+         ocr_title = ?, ocr_title_confidence = ?, discipline = ?,
+         match_status = ?, match_sheet_id = ?
+       WHERE id = ?`
+    );
 
-      const ocr = await queue.enqueue(() =>
-        runPython(OCR_SCRIPT, [
-          staged.pdf_path,
-          JSON.stringify(number_box),
-          JSON.stringify(title_box),
-          '--tesseract-cmd',
-          config.tesseractPath,
-        ])
-      );
-      const match = computeMatch(db, revision.project_id, ocr.number_text, ocr.title_text, prefixMap);
+    let done = 0;
+    try {
+      for (const id of staged_sheet_ids) {
+        const staged = db.prepare('SELECT * FROM staged_sheets WHERE id = ? AND revision_id = ?').get(id, revision.id);
+        if (staged) {
+          const ocr = await queue.enqueue(() =>
+            runPython(OCR_SCRIPT, [
+              staged.pdf_path,
+              JSON.stringify(number_box),
+              JSON.stringify(title_box),
+              '--tesseract-cmd',
+              config.tesseractPath,
+            ])
+          );
+          const match = computeMatch(db, revision.project_id, ocr.number_text, ocr.title_text, prefixMap);
 
-      updateStmt.run(
-        scope,
-        ocr.number_text,
-        ocr.number_confidence,
-        ocr.title_text,
-        ocr.title_confidence,
-        match.discipline,
-        match.match_status,
-        match.match_sheet_id,
-        id
-      );
-      updated.push(id);
+          updateStmt.run(
+            scope,
+            ocr.number_text,
+            ocr.number_confidence,
+            ocr.title_text,
+            ocr.title_confidence,
+            match.discipline,
+            match.match_status,
+            match.match_sheet_id,
+            id
+          );
+        }
+        done += 1;
+        jobStore.updateProgress(jobId, done, staged_sheet_ids.length);
+      }
+      jobStore.completeJob(jobId);
+    } catch (err) {
+      console.error('Background read job failed', err);
+      jobStore.failJob(jobId, err.message || 'Read failed');
     }
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ error: 'OCR failed', updated });
-  }
-
-  res.json({ updated });
+  })();
 });
 
 router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, res) => {

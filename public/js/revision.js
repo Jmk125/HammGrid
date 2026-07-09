@@ -252,6 +252,8 @@ function checkedIds() {
 
 document.getElementById('run-ocr-btn').addEventListener('click', async () => {
   const statusEl = document.getElementById('ocr-status');
+  const barEl = document.getElementById('ocr-progress-bar');
+  const fillEl = document.getElementById('ocr-progress-fill');
   if (!boxes.number_box || !boxes.title_box) {
     statusEl.textContent = 'Draw both boxes first.';
     return;
@@ -259,23 +261,60 @@ document.getElementById('run-ocr-btn').addEventListener('click', async () => {
   let ids = checkedIds();
   if (ids.length === 0) ids = stagedSheets.map((s) => s.id);
 
-  statusEl.textContent = `Reading ${ids.length} sheet(s)...`;
+  statusEl.textContent = `Starting read of ${ids.length} sheet(s)...`;
+  barEl.style.display = 'block';
+  fillEl.style.width = '0%';
   document.getElementById('run-ocr-btn').disabled = true;
   try {
-    await api('POST', `/api/projects/${projectId}/revisions/${revisionId}/ocr`, {
+    const { job_id } = await api('POST', `/api/projects/${projectId}/revisions/${revisionId}/ocr`, {
       scope: document.getElementById('scope-input').value || 'default',
       number_box: boxes.number_box,
       title_box: boxes.title_box,
       staged_sheet_ids: ids,
     });
-    statusEl.textContent = `Done reading ${ids.length} sheet(s).`;
-    await loadStaged();
+    await pollOcrJob(job_id, ids.length, statusEl, fillEl);
   } catch (err) {
     statusEl.textContent = `Read failed: ${err.message}`;
   } finally {
     document.getElementById('run-ocr-btn').disabled = false;
+    barEl.style.display = 'none';
   }
 });
+
+async function pollOcrJob(jobId, total, statusEl, fillEl) {
+  // Same "outlives the page" tracking as upload jobs - if the user navigates
+  // away mid-batch, they still get a toast once it's actually done.
+  trackPendingJob({ jobId, projectId, revisionId, label: `Reading ${total} sheet(s) in ${revisionTitle}` });
+
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 1000));
+    let job;
+    try {
+      // Same generic job-status route the upload job uses - see the server
+      // comment on that route for why this isn't a separate endpoint.
+      ({ job } = await api('GET', `/api/projects/${projectId}/revisions/${revisionId}/upload-jobs/${jobId}`));
+    } catch (err) {
+      statusEl.textContent = 'Lost track of job status';
+      return;
+    }
+    const done = job.progress ? job.progress.current : 0;
+    fillEl.style.width = `${Math.round((done / total) * 100)}%`;
+    statusEl.textContent = `Reading ${done} / ${total} sheet(s)...`;
+
+    if (job.status === 'done') {
+      statusEl.textContent = `Done reading ${total} sheet(s).`;
+      showToast(`Finished reading ${total} sheet(s) in "${revisionTitle}".`, 'success');
+      await loadStaged();
+      return;
+    }
+    if (job.status === 'error') {
+      statusEl.textContent = `Read failed: ${job.error}`;
+      showToast(`Reading sheets in "${revisionTitle}" failed: ${job.error}`, 'error');
+      await loadStaged();
+      return;
+    }
+  }
+}
 
 function renderStagedTable() {
   const tbody = document.querySelector('#staged-table tbody');
@@ -306,6 +345,7 @@ function renderStagedTable() {
         `<span class="muted">#${s.ocr_number_confidence ?? '-'} / T${s.ocr_title_confidence ?? '-'}</span>`
       )
     );
+    tr.appendChild(td(`<button class="view-btn">View</button>`));
     tr.appendChild(td(`<button class="danger remove-btn">Remove</button>`));
 
     tr.querySelector('.f-number').addEventListener('change', (e) => patchField(s.id, 'corrected_number', e.target.value));
@@ -316,9 +356,28 @@ function renderStagedTable() {
     );
     tr.querySelector('select.f-status').addEventListener('change', (e) => patchField(s.id, 'match_status', e.target.value));
     tr.querySelector('.remove-btn').addEventListener('click', () => removeSheet(s.id));
+    tr.querySelector('.view-btn').addEventListener('click', () =>
+      window.open(`/api/staged-sheets/${s.id}/pdf`, '_blank')
+    );
+    tr.querySelector('.row-check').addEventListener('change', syncRefSheetToSelection);
 
     tbody.appendChild(tr);
   }
+}
+
+// When the user checks rows meaning to redraw/re-read just those sheets, jump
+// the box-drawing reference image to the first checked one automatically -
+// otherwise they have to hunt for it in the dropdown themselves.
+function syncRefSheetToSelection() {
+  const ids = checkedIds();
+  if (ids.length === 0) return;
+  const select = document.getElementById('ref-sheet-select');
+  const firstId = String(ids[0]);
+  if (select.value === firstId) return;
+  if (!Array.from(select.options).some((o) => o.value === firstId)) return;
+  select.value = firstId;
+  boxes = { number_box: null, title_box: null };
+  loadRefImage();
 }
 
 function statusSelect(s) {
@@ -353,6 +412,7 @@ async function removeSheet(id) {
 
 document.getElementById('select-all').addEventListener('change', (e) => {
   document.querySelectorAll('.row-check').forEach((el) => (el.checked = e.target.checked));
+  syncRefSheetToSelection();
 });
 
 // ---------- Drag-and-drop upload with per-file progress ----------

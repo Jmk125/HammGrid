@@ -221,6 +221,7 @@ tr.ignored td { opacity: 0.5; }
   color: var(--text);
   display: block;
   position: relative;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 .sheet-card .thumb-wrap {
   overflow: hidden;
@@ -233,14 +234,13 @@ tr.ignored td { opacity: 0.5; }
   aspect-ratio: 4/3;
   object-fit: contain;
   background: #f0f0f0;
-  transition: transform 0.18s ease;
 }
 .sheet-card:hover {
   z-index: 5;
-  box-shadow: 0 8px 24px rgba(15,43,70,0.25);
+  box-shadow: 0 10px 26px rgba(15,43,70,0.25);
   border-color: var(--accent);
+  transform: translateY(-4px);
 }
-.sheet-card:hover img { transform: scale(1.6); }
 .sheet-card .meta { padding: 6px 8px; }
 .sheet-card .sheet-number { font-weight: 700; font-size: 13px; }
 .sheet-card .sheet-title { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

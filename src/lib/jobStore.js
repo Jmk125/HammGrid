@@ -9,8 +9,13 @@ const MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
 
 function createJob() {
   const id = crypto.randomUUID();
-  jobs.set(id, { id, status: 'processing', error: null, createdAt: Date.now() });
+  jobs.set(id, { id, status: 'processing', error: null, progress: null, createdAt: Date.now() });
   return id;
+}
+
+function updateProgress(id, current, total) {
+  const job = jobs.get(id);
+  if (job) job.progress = { current, total };
 }
 
 function completeJob(id) {
@@ -37,4 +42,4 @@ setInterval(() => {
   }
 }, 10 * 60 * 1000).unref();
 
-module.exports = { createJob, completeJob, failJob, getJob };
+module.exports = { createJob, updateProgress, completeJob, failJob, getJob };

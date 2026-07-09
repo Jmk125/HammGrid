@@ -9,6 +9,9 @@ const router = express.Router();
 
 // Per CLAUDE.md: A->Architectural, S->Structural, C->Civil, P->Plumbing,
 // M/H->Mechanical, E->Electrical, T->Technology, FP->Fire Protection.
+// L->Landscaping added per field usage (2026-07) - not in the original spec
+// list but is an editable-per-project map anyway, so this is just a better
+// default, same as any other entry here.
 const DEFAULT_DISCIPLINE_MAP = {
   A: 'Architectural',
   S: 'Structural',
@@ -19,6 +22,7 @@ const DEFAULT_DISCIPLINE_MAP = {
   E: 'Electrical',
   T: 'Technology',
   FP: 'Fire Protection',
+  L: 'Landscaping',
 };
 
 function parseProject(project) {
