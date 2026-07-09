@@ -72,7 +72,7 @@ function exportModal(projectId) {
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
 }
 
-export async function renderShell({ topbarEl, sidebarEl, projectId, active, me }) {
+export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, onOverlayClick }) {
   const canManage = me.role === 'admin' || me.role === 'editor';
 
   topbarEl.innerHTML = `
@@ -81,6 +81,7 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me }
       <a class="brand" href="/dashboard.html">HammGrid</a>
     </div>
     <div class="row">
+      ${onOverlayClick ? '<button id="overlay-btn" type="button">Overlay</button>' : ''}
       ${projectId && canManage ? '<button class="primary" id="new-revision-btn" type="button">+ New Revision</button>' : ''}
       <span id="whoami" class="muted"></span>
       <button id="logout" type="button">Sign out</button>
@@ -93,6 +94,8 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me }
   });
   const newRevBtn = topbarEl.querySelector('#new-revision-btn');
   if (newRevBtn) newRevBtn.addEventListener('click', () => newRevisionModal(projectId));
+  const overlayBtn = topbarEl.querySelector('#overlay-btn');
+  if (overlayBtn) overlayBtn.addEventListener('click', onOverlayClick);
 
   if (!sidebarEl) return;
 

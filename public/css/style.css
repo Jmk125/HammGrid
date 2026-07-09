@@ -291,7 +291,7 @@ tr.ignored td { opacity: 0.5; }
 .pdf-viewer-wrap canvas { max-width: 100%; box-shadow: 0 2px 10px rgba(0,0,0,0.4); }
 
 .markup-stage { position: relative; display: inline-block; }
-.markup-stage canvas { max-width: 100%; box-shadow: 0 2px 10px rgba(0,0,0,0.4); display: block; }
+.markup-stage canvas { display: block; }
 .markup-stage svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 
 .tool-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -303,3 +303,145 @@ tr.ignored td { opacity: 0.5; }
 .version-list li { padding: 6px 0; border-bottom: 1px solid var(--border); }
 .version-list a { text-decoration: none; color: var(--accent); }
 .version-list .current { font-weight: 700; }
+
+/* ---------- Sheet view: canvas area + right pane ---------- */
+.sheet-view-row { display: flex; align-items: flex-start; gap: 0; }
+
+.sheet-canvas-area { flex: 1; min-width: 0; }
+
+.zoom-wrap {
+  position: relative;
+  overflow: hidden;
+  background: #525659;
+  border-radius: 8px;
+  height: 72vh;
+  cursor: grab;
+  user-select: none;
+}
+.zoom-wrap.panning { cursor: grabbing; }
+.zoom-pan-inner {
+  position: absolute;
+  top: 0; left: 0;
+  transform-origin: 0 0;
+}
+.zoom-pan-inner .markup-stage canvas { box-shadow: 0 2px 10px rgba(0,0,0,0.4); }
+
+.version-badge {
+  position: absolute;
+  top: 10px; left: 10px;
+  z-index: 10;
+}
+.version-badge button {
+  background: rgba(15,43,70,0.85);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.version-dropdown {
+  position: absolute;
+  top: 34px; left: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  min-width: 200px;
+  max-height: 260px;
+  overflow-y: auto;
+  z-index: 11;
+}
+.version-dropdown a {
+  display: block;
+  padding: 8px 12px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+.version-dropdown a:last-child { border-bottom: none; }
+.version-dropdown a:hover { background: var(--bg); }
+.version-dropdown a.current { font-weight: 700; color: var(--accent); }
+
+.stale-watermark {
+  position: absolute;
+  top: 10px; right: 10px;
+  z-index: 10;
+  background: rgba(220,38,38,0.9);
+  color: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  pointer-events: none;
+}
+
+.markup-popup {
+  position: absolute;
+  z-index: 15;
+  background: var(--navy);
+  border-radius: 6px;
+  padding: 4px;
+  display: flex;
+  gap: 2px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+}
+.markup-popup button {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.markup-popup button:hover { background: rgba(255,255,255,0.15); }
+
+/* ---------- Right pane (markup tools + version history) ---------- */
+.sheet-pane {
+  width: 260px;
+  flex-shrink: 0;
+  position: relative;
+  transition: width 0.15s ease;
+}
+.sheet-pane.collapsed { width: 28px; }
+.sheet-pane .pane-body {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  margin-left: 10px;
+}
+.sheet-pane.collapsed .pane-body { display: none; }
+.pane-toggle {
+  position: absolute;
+  top: 8px; left: -2px;
+  width: 22px; height: 22px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 11px;
+  z-index: 2;
+}
+.sheet-pane.collapsed .pane-toggle { left: 0; }
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.tool-grid .tool-btn { width: 100%; }
+
+/* ---------- SVG markup selection/edit handles ---------- */
+.markup-selected { outline: 2px dashed var(--accent); outline-offset: 2px; }
+.markup-handle { fill: #fff; stroke: var(--accent); stroke-width: 2; cursor: pointer; }
+
+/* ---------- Overlay picker ---------- */
+.overlay-picker-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+.overlay-picker-group-label { padding: 6px 10px; font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; background: var(--bg); }
+.overlay-picker-item { padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 13px; }
+.overlay-picker-item:hover { background: var(--accent-light); }
+
+.overlay-controls { display: flex; gap: 16px; align-items: center; margin-bottom: 10px; }

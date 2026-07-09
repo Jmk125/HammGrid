@@ -9,58 +9,49 @@
     <div class="shell-content">
       <main class="wide">
         <p><a id="back-link" href="#">&larr; Sheets</a></p>
-        <h1 id="sheet-number"></h1>
-        <p class="muted" id="sheet-title"></p>
+        <h1 id="sheet-number" style="margin-bottom:0;"></h1>
+        <p class="muted" id="sheet-title" style="margin-top:2px;"></p>
 
-        <div class="row" id="markup-toolbar">
-          <button class="tool-btn" data-tool="select">Select</button>
-          <button class="tool-btn" data-tool="line">Line</button>
-          <button class="tool-btn" data-tool="arrow">Arrow</button>
-          <button class="tool-btn" data-tool="rect">Rectangle</button>
-          <button class="tool-btn" data-tool="cloud">Cloud</button>
-          <button class="tool-btn" data-tool="text">Text</button>
-          <label>Color: <input type="color" id="markup-color" value="#e11d48"></label>
-          <label>Width: <input type="number" id="markup-width" value="2" min="1" max="10" style="width:50px;"></label>
-          <label id="publish-default-wrap" style="display:none;"><input type="checkbox" id="markup-publish-default"> Draw as published</label>
-        </div>
-
-        <div class="row" style="align-items: flex-start;">
-          <div style="flex: 1; min-width: 0;">
-            <div class="pdf-viewer-wrap">
-              <div class="markup-stage">
-                <canvas id="pdf-canvas"></canvas>
-                <svg id="markup-svg"></svg>
+        <div class="sheet-view-row">
+          <div class="sheet-canvas-area">
+            <div class="zoom-wrap" id="zoom-wrap">
+              <div class="version-badge" id="version-badge">
+                <button type="button" id="version-badge-btn">Current &#9662;</button>
+                <div class="version-dropdown" id="version-dropdown" style="display:none;"></div>
               </div>
+              <div class="stale-watermark" id="stale-watermark" style="display:none;">NOT CURRENT VERSION</div>
+              <div class="zoom-pan-inner" id="zoom-pan-inner">
+                <div class="markup-stage">
+                  <canvas id="pdf-canvas"></canvas>
+                  <svg id="markup-svg"></svg>
+                </div>
+              </div>
+              <div class="markup-popup" id="markup-popup" style="display:none;"></div>
             </div>
             <p class="muted" id="pdf-status"></p>
           </div>
-          <div class="card" style="width: 260px; flex-shrink: 0;">
-            <h3>Version history</h3>
-            <ul class="version-list" id="version-list"></ul>
-            <h3>Markups</h3>
-            <ul class="markup-list" id="markup-list"></ul>
-          </div>
-        </div>
 
-        <div class="card" id="compare-card" style="display:none;">
-          <h2>Compare versions</h2>
-          <div class="row">
-            <label>Old (red):
-              <select id="compare-old"></select>
-            </label>
-            <label>New (cyan):
-              <select id="compare-new"></select>
-            </label>
-            <button id="compare-reset">Reset alignment</button>
+          <div class="sheet-pane" id="sheet-pane">
+            <button class="pane-toggle" id="pane-toggle-btn" type="button">&#9656;</button>
+            <div class="pane-body" id="pane-body">
+              <h3>Markup tools</h3>
+              <div class="tool-grid">
+                <button class="tool-btn" data-tool="select">Select</button>
+                <button class="tool-btn" data-tool="line">Line</button>
+                <button class="tool-btn" data-tool="arrow">Arrow</button>
+                <button class="tool-btn" data-tool="rect">Rectangle</button>
+                <button class="tool-btn" data-tool="cloud-small">Cloud S</button>
+                <button class="tool-btn" data-tool="cloud-large">Cloud L</button>
+                <button class="tool-btn" data-tool="text">Text</button>
+              </div>
+              <div class="field"><label>Color</label><input type="color" id="markup-color" value="#e11d48"></div>
+              <div class="field"><label>Line width</label><input type="number" id="markup-width" value="2" min="1" max="10"></div>
+              <label id="publish-default-wrap" style="display:none;"><input type="checkbox" id="markup-publish-default"> Draw as published</label>
+
+              <h3 style="margin-top:16px;">Version history</h3>
+              <ul class="version-list" id="version-list"></ul>
+            </div>
           </div>
-          <p class="muted">Drag the image to shift. Use the scale slider to nudge size. Unchanged lines are black; removed content is red; added content is cyan.</p>
-          <div class="row">
-            <label>Scale: <input type="range" id="compare-scale" min="0.9" max="1.1" step="0.002" value="1"></label>
-          </div>
-          <div class="pdf-viewer-wrap">
-            <canvas id="compare-canvas"></canvas>
-          </div>
-          <p class="muted" id="compare-status"></p>
         </div>
       </main>
     </div>

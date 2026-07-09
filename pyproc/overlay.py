@@ -1,13 +1,14 @@
 """
-Composite a red/cyan overlay of two single-sheet PDFs for revision comparison.
+Composite a blue/red overlay of two single-sheet PDFs for revision comparison.
 
-Old page -> red channel, new page -> cyan (green+blue) channels, so: unchanged
-lines are black, blank background is white, content removed since the old
-version is red, content added in the new version is cyan.
+Old page -> blue, new page -> red, so: unchanged lines are black, blank
+background is white, content removed since the old version is blue, content
+added in the new version is red. (R = g_old, G = min(g_old, g_new), B = g_new
+- must match the client-side formula in public/js/sheet.js exactly.)
 
 No auto-alignment/rotation: assumes both pages are already registered (same
 title block size/position), matching the "default = perfectly aligned"
-assumption in CLAUDE.md. Interactive shift/scale nudging happens client-side.
+assumption in CLAUDE.md.
 
 Usage:
     python overlay.py <old_pdf> <new_pdf> <output_webp> [--size 1800]
@@ -19,7 +20,7 @@ import json
 import sys
 
 import fitz  # PyMuPDF
-from PIL import Image
+from PIL import Image, ImageChops
 
 POINTS_PER_INCH = 72.0
 
@@ -58,7 +59,8 @@ def main():
     old_padded = pad_to(old_img, width, height)
     new_padded = pad_to(new_img, width, height)
 
-    composite = Image.merge("RGB", (new_padded, old_padded, old_padded))
+    shared = ImageChops.darker(old_padded, new_padded)
+    composite = Image.merge("RGB", (old_padded, shared, new_padded))
     composite.save(args.output, "WEBP", quality=85)
 
     json.dump({"ok": True}, sys.stdout)

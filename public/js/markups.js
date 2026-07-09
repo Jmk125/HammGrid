@@ -1,10 +1,17 @@
 import { getCachedMarkupsForSheet } from '/js/offline-store.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
-const TYPE_LABELS = { line: 'Line', arrow: 'Arrow', rect: 'Rectangle', cloud: 'Cloud', text: 'Text' };
+const CLOUD_BUMP_SIZE = { 'cloud-small': 14, 'cloud-large': 30 };
 
 function el(tag) {
   return document.createElementNS(SVG_NS, tag);
+}
+
+function darkenHex(hex, amount) {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex || '#e11d48');
+  if (!m) return hex;
+  const [r, g, b] = [m[1], m[2], m[3]].map((h) => Math.round(parseInt(h, 16) * (1 - amount)));
+  return `#${[r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
 }
 
 function pointOnRectPerimeter(x, y, w, h, d) {
@@ -17,10 +24,12 @@ function pointOnRectPerimeter(x, y, w, h, d) {
   return { x, y: y + h - d };
 }
 
-function cloudPath(x, y, w, h) {
-  const bumpSize = Math.max(10, Math.min(w, h) / 6);
-  const perimeter = 2 * (w + h);
-  const bumps = Math.max(6, Math.round(perimeter / bumpSize));
+// Bump size is fixed regardless of box size (small/large tool choice), so
+// segments look consistent like a real revision cloud - only the bump COUNT
+// varies with the drawn box's perimeter, never the bump size itself.
+function cloudPath(x, y, w, h, bumpSize) {
+  const perimeter = 2 * (Math.max(w, 1) + Math.max(h, 1));
+  const bumps = Math.max(4, Math.round(perimeter / bumpSize));
   const points = [];
   for (let i = 0; i <= bumps; i++) {
     points.push(pointOnRectPerimeter(x, y, w, h, (perimeter * i) / bumps));
@@ -48,10 +57,15 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
   let markups = [];
   let drawing = null;
   let previewEl = null;
+  let selectedId = null;
+  let editingId = null;
+  let handleDrag = null;
+  let bodyDrag = null;
 
   const colorInput = document.getElementById('markup-color');
   const widthInput = document.getElementById('markup-width');
   const publishDefaultInput = document.getElementById('markup-publish-default');
+  const popupEl = document.getElementById('markup-popup');
 
   if (me.role === 'admin' || me.role === 'editor') {
     document.getElementById('publish-default-wrap').style.display = '';
@@ -73,6 +87,10 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
       x: ((evt.clientX - rect.left) / rect.width) * w,
       y: ((evt.clientY - rect.top) / rect.height) * h,
     };
+  }
+
+  function findMarkup(id) {
+    return markups.find((m) => m.id === id);
   }
 
   function ensureArrowMarker(color) {
@@ -98,9 +116,25 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
     return id;
   }
 
+  function bounds(m) {
+    const { w, h } = vbSize();
+    if (m.type === 'line' || m.type === 'arrow') {
+      const x1 = m.geometry.x1 * w;
+      const y1 = m.geometry.y1 * h;
+      const x2 = m.geometry.x2 * w;
+      const y2 = m.geometry.y2 * h;
+      return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) };
+    }
+    if (m.type === 'text') {
+      return { x: m.geometry.x * w, y: m.geometry.y * h - 16, w: 10, h: 16 };
+    }
+    return { x: m.geometry.x * w, y: m.geometry.y * h, w: m.geometry.w * w, h: m.geometry.h * h };
+  }
+
   function renderMarkupEl(m) {
     const { w, h } = vbSize();
-    const color = (m.style && m.style.color) || '#e11d48';
+    const rawColor = (m.style && m.style.color) || '#e11d48';
+    const color = m.visibility === 'published' ? darkenHex(rawColor, 0.3) : rawColor;
     const strokeWidth = (m.style && m.style.strokeWidth) || 2;
     let node;
 
@@ -112,6 +146,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
       node.setAttribute('y2', m.geometry.y2 * h);
       node.setAttribute('stroke', color);
       node.setAttribute('stroke-width', strokeWidth);
+      node.style.pointerEvents = 'stroke';
       if (m.type === 'arrow') node.setAttribute('marker-end', `url(#${ensureArrowMarker(color)})`);
     } else if (m.type === 'rect') {
       node = el('rect');
@@ -119,15 +154,20 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
       node.setAttribute('y', m.geometry.y * h);
       node.setAttribute('width', m.geometry.w * w);
       node.setAttribute('height', m.geometry.h * h);
-      node.setAttribute('fill', 'none');
       node.setAttribute('stroke', color);
       node.setAttribute('stroke-width', strokeWidth);
+      node.setAttribute('fill', '#ffffff');
+      node.setAttribute('fill-opacity', '0.001');
+      node.style.pointerEvents = 'all';
     } else if (m.type === 'cloud') {
+      const bumpSize = (m.style && m.style.bumpSize) || CLOUD_BUMP_SIZE['cloud-small'];
       node = el('path');
-      node.setAttribute('d', cloudPath(m.geometry.x * w, m.geometry.y * h, m.geometry.w * w, m.geometry.h * h));
-      node.setAttribute('fill', 'none');
+      node.setAttribute('d', cloudPath(m.geometry.x * w, m.geometry.y * h, m.geometry.w * w, m.geometry.h * h, bumpSize));
       node.setAttribute('stroke', color);
       node.setAttribute('stroke-width', strokeWidth);
+      node.setAttribute('fill', '#ffffff');
+      node.setAttribute('fill-opacity', '0.001');
+      node.style.pointerEvents = 'all';
     } else if (m.type === 'text') {
       node = el('text');
       node.setAttribute('x', m.geometry.x * w);
@@ -135,98 +175,266 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
       node.setAttribute('fill', color);
       node.setAttribute('font-size', (m.style && m.style.fontSize) || 20);
       node.textContent = m.geometry.text || '';
+      node.style.pointerEvents = 'all';
     }
 
     node.dataset.markupId = m.id;
-    node.style.cursor = m.linked_document_id ? 'pointer' : 'default';
-    if (m.visibility === 'private' && m.type !== 'text') {
-      node.setAttribute('stroke-dasharray', '5 3');
-    }
-    node.style.opacity = m.visibility === 'private' ? '0.65' : '1';
+    node.style.cursor = editingId === m.id ? 'move' : 'pointer';
+    node.style.opacity = m.visibility === 'published' ? '1' : '0.75';
+    if (m.id === selectedId) node.classList.add('markup-selected');
+
+    node.addEventListener('mousedown', (e) => {
+      if (editingId === m.id) {
+        e.stopPropagation();
+        startBodyDrag(m, e);
+      }
+    });
     node.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (m.linked_document_id) window.open(`/api/documents/${m.linked_document_id}/pdf`, '_blank');
+      if (editingId === m.id) return;
+      selectMarkup(m.id);
     });
     return node;
   }
 
-  function renderAll() {
-    svgEl.querySelectorAll('[data-markup-id]').forEach((n) => n.remove());
-    for (const m of markups) svgEl.appendChild(renderMarkupEl(m));
-    renderList();
+  function renderHandles(m) {
+    const group = el('g');
+    group.dataset.handlesFor = m.id;
+    const { w, h } = vbSize();
+
+    function handleAt(px, py, onDrag) {
+      const c = el('circle');
+      c.setAttribute('cx', px);
+      c.setAttribute('cy', py);
+      c.setAttribute('r', 6);
+      c.classList.add('markup-handle');
+      c.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        handleDrag = { markup: m, onDrag };
+      });
+      group.appendChild(c);
+    }
+
+    if (m.type === 'line' || m.type === 'arrow') {
+      handleAt(m.geometry.x1 * w, m.geometry.y1 * h, (pt) => {
+        m.geometry.x1 = pt.x / w;
+        m.geometry.y1 = pt.y / h;
+      });
+      handleAt(m.geometry.x2 * w, m.geometry.y2 * h, (pt) => {
+        m.geometry.x2 = pt.x / w;
+        m.geometry.y2 = pt.y / h;
+      });
+    } else if (m.type === 'rect' || m.type === 'cloud') {
+      const corners = [
+        ['x', 'y'],
+        ['x2', 'y'],
+        ['x', 'y2'],
+        ['x2', 'y2'],
+      ];
+      const g = m.geometry;
+      const cornerPts = {
+        x: g.x,
+        y: g.y,
+        x2: g.x + g.w,
+        y2: g.y + g.h,
+      };
+      for (const [cxKey, cyKey] of corners) {
+        handleAt(cornerPts[cxKey] * w, cornerPts[cyKey] * h, (pt) => {
+          const nx = pt.x / w;
+          const ny = pt.y / h;
+          const fixedX = cxKey === 'x' ? g.x + g.w : g.x;
+          const fixedY = cyKey === 'y' ? g.y + g.h : g.y;
+          g.x = Math.min(nx, fixedX);
+          g.y = Math.min(ny, fixedY);
+          g.w = Math.abs(nx - fixedX);
+          g.h = Math.abs(ny - fixedY);
+        });
+      }
+    } else if (m.type === 'text') {
+      handleAt(m.geometry.x * w, m.geometry.y * h, (pt) => {
+        m.geometry.x = pt.x / w;
+        m.geometry.y = pt.y / h;
+      });
+    }
+
+    return group;
   }
 
-  function renderList() {
-    const list = document.getElementById('markup-list');
-    list.innerHTML = '';
-    for (const m of markups) {
-      const li = document.createElement('li');
-      const header = document.createElement('div');
-      header.innerHTML = `<span class="pill ${m.visibility}">${m.visibility}</span> ${TYPE_LABELS[m.type]} &mdash; ${m.author_name}`;
-      li.appendChild(header);
+  function startBodyDrag(m, evt) {
+    const start = getSvgPoint(evt);
+    bodyDrag = { markup: m, start, origGeometry: JSON.parse(JSON.stringify(m.geometry)) };
+  }
 
-      const canManage = m.author_id === me.id || me.role === 'admin';
-      const canPublish = (me.role === 'editor' || me.role === 'admin') && m.visibility === 'private';
+  function renderAll() {
+    svgEl.querySelectorAll('[data-markup-id], [data-handles-for]').forEach((n) => n.remove());
+    for (const m of markups) svgEl.appendChild(renderMarkupEl(m));
+    if (editingId) {
+      const m = findMarkup(editingId);
+      if (m) svgEl.appendChild(renderHandles(m));
+    }
+    positionPopup();
+  }
 
-      const linkSelect = document.createElement('select');
-      linkSelect.innerHTML =
-        '<option value="">No linked document</option>' +
-        documents
-          .map(
-            (d) =>
-              `<option value="${d.id}" ${d.id === m.linked_document_id ? 'selected' : ''}>${d.kind.toUpperCase()} ${d.number || ''} ${d.title || ''}</option>`
-          )
-          .join('');
-      linkSelect.disabled = !canManage;
-      linkSelect.addEventListener('change', async () => {
+  function permissions(m) {
+    const isAuthor = m.author_id === me.id;
+    const isAdmin = me.role === 'admin';
+    const isEditor = me.role === 'editor';
+    return {
+      canEdit: isAuthor || isAdmin,
+      canPublish: isEditor || isAdmin,
+      canDelete: isAuthor || isAdmin,
+    };
+  }
+
+  function positionPopup() {
+    if (!selectedId) {
+      popupEl.style.display = 'none';
+      return;
+    }
+    const m = findMarkup(selectedId);
+    if (!m) {
+      popupEl.style.display = 'none';
+      return;
+    }
+    const perm = permissions(m);
+    if (!perm.canEdit && !perm.canPublish && !perm.canDelete) {
+      popupEl.style.display = 'none';
+      return;
+    }
+
+    const b = bounds(m);
+    const { w: vbW, h: vbH } = vbSize();
+    const rect = svgEl.getBoundingClientRect();
+    const parentRect = svgEl.closest('.zoom-wrap').getBoundingClientRect();
+    const screenX = rect.left - parentRect.left + ((b.x + b.w / 2) / vbW) * rect.width;
+    const screenY = rect.top - parentRect.top + ((b.y + b.h) / vbH) * rect.height;
+    popupEl.style.left = `${screenX}px`;
+    popupEl.style.top = `${screenY + 8}px`;
+    popupEl.style.transform = 'translateX(-50%)';
+    popupEl.style.display = 'flex';
+    renderPopupButtons(m);
+  }
+
+  function renderPopupButtons(m) {
+    const perm = permissions(m);
+    popupEl.innerHTML = '';
+
+    if (perm.canEdit) {
+      const linkBtn = document.createElement('button');
+      linkBtn.type = 'button';
+      linkBtn.textContent = m.linked_document_id ? 'Change link' : 'Link doc';
+      linkBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleLinkPicker(m);
+      });
+      popupEl.appendChild(linkBtn);
+    }
+
+    if (perm.canPublish) {
+      const pubBtn = document.createElement('button');
+      pubBtn.type = 'button';
+      pubBtn.textContent = m.visibility === 'published' ? 'Unpublish' : 'Publish';
+      pubBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
         const { markup } = await api('PATCH', `/api/markups/${m.id}`, {
-          linked_document_id: linkSelect.value ? Number(linkSelect.value) : null,
+          visibility: m.visibility === 'published' ? 'private' : 'published',
         });
         Object.assign(m, markup);
         renderAll();
       });
-      li.appendChild(linkSelect);
+      popupEl.appendChild(pubBtn);
+    }
 
-      const actions = document.createElement('div');
-      actions.className = 'row';
-      if (canPublish) {
-        const btn = document.createElement('button');
-        btn.textContent = 'Publish';
-        btn.addEventListener('click', async () => {
-          const { markup } = await api('PATCH', `/api/markups/${m.id}`, { visibility: 'published' });
-          Object.assign(m, markup);
-          renderAll();
-        });
-        actions.appendChild(btn);
-      }
-      if (canManage) {
-        const del = document.createElement('button');
-        del.className = 'danger';
-        del.textContent = 'Delete';
-        del.addEventListener('click', async () => {
-          if (!confirm('Delete this markup?')) return;
-          await api('DELETE', `/api/markups/${m.id}`);
-          markups = markups.filter((x) => x.id !== m.id);
-          renderAll();
-        });
-        actions.appendChild(del);
-      }
-      if (actions.children.length) li.appendChild(actions);
+    if (perm.canEdit) {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.textContent = editingId === m.id ? 'Done' : 'Edit';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        editingId = editingId === m.id ? null : m.id;
+        if (editingId) {
+          colorInput.value = (m.style && m.style.color) || '#e11d48';
+          widthInput.value = (m.style && m.style.strokeWidth) || 2;
+        }
+        renderAll();
+      });
+      popupEl.appendChild(editBtn);
+    }
 
-      list.appendChild(li);
+    if (perm.canDelete) {
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.textContent = 'Delete';
+      delBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Delete this markup?')) return;
+        await api('DELETE', `/api/markups/${m.id}`);
+        markups = markups.filter((x) => x.id !== m.id);
+        selectedId = null;
+        editingId = null;
+        renderAll();
+      });
+      popupEl.appendChild(delBtn);
     }
   }
 
-  async function createMarkup(type, geometry) {
-    const style = { color: colorInput.value, strokeWidth: Number(widthInput.value) };
+  function toggleLinkPicker(m) {
+    const existing = popupEl.querySelector('select.link-picker');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    const select = document.createElement('select');
+    select.className = 'link-picker';
+    select.innerHTML =
+      '<option value="">No linked document</option>' +
+      documents
+        .map(
+          (d) =>
+            `<option value="${d.id}" ${d.id === m.linked_document_id ? 'selected' : ''}>${d.kind.toUpperCase()} ${d.number || ''} ${d.title || ''}</option>`
+        )
+        .join('');
+    select.addEventListener('click', (e) => e.stopPropagation());
+    select.addEventListener('change', async () => {
+      const { markup } = await api('PATCH', `/api/markups/${m.id}`, {
+        linked_document_id: select.value ? Number(select.value) : null,
+      });
+      Object.assign(m, markup);
+      select.remove();
+      renderAll();
+    });
+    popupEl.appendChild(select);
+  }
+
+  function selectMarkup(id) {
+    selectedId = id;
+    editingId = null;
+    renderAll();
+  }
+
+  function deselect() {
+    if (!selectedId && !editingId) return;
+    selectedId = null;
+    editingId = null;
+    renderAll();
+  }
+
+  async function createMarkup(type, geometry, extraStyle) {
+    const style = { color: colorInput.value, strokeWidth: Number(widthInput.value), ...extraStyle };
     const visibility = publishDefaultInput.checked ? 'published' : 'private';
-    const { markup } = await api('POST', `/api/sheets/${sheetId}/markups`, { type, geometry, style, visibility });
+    const { markup } = await api('POST', `/api/sheets/${sheetId}/markups`, {
+      type: type === 'cloud-small' || type === 'cloud-large' ? 'cloud' : type,
+      geometry,
+      style,
+      visibility,
+    });
     markups.push(markup);
     renderAll();
   }
 
   function activateTool(tool) {
     activeTool = tool;
+    deselect();
     document.querySelectorAll('.tool-btn').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
     svgEl.style.cursor = tool === 'select' ? 'default' : 'crosshair';
   }
@@ -236,8 +444,33 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
   });
   activateTool('select');
 
+  // Live style edits while a markup is selected/being edited, in addition to
+  // setting the default for the next newly-drawn markup.
+  colorInput.addEventListener('change', async () => {
+    if (!editingId) return;
+    const m = findMarkup(editingId);
+    if (!m) return;
+    m.style = { ...m.style, color: colorInput.value };
+    const { markup } = await api('PATCH', `/api/markups/${m.id}`, { style: m.style });
+    Object.assign(m, markup);
+    renderAll();
+  });
+  widthInput.addEventListener('change', async () => {
+    if (!editingId) return;
+    const m = findMarkup(editingId);
+    if (!m) return;
+    m.style = { ...m.style, strokeWidth: Number(widthInput.value) };
+    const { markup } = await api('PATCH', `/api/markups/${m.id}`, { style: m.style });
+    Object.assign(m, markup);
+    renderAll();
+  });
+
+  svgEl.addEventListener('click', (e) => {
+    if (e.target === svgEl) deselect();
+  });
+
   svgEl.addEventListener('mousedown', async (e) => {
-    if (activeTool === 'select') return;
+    if (activeTool === 'select' || e.target !== svgEl) return;
     const pt = getSvgPoint(e);
 
     if (activeTool === 'text') {
@@ -250,7 +483,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
     }
 
     drawing = { type: activeTool, start: pt };
-    previewEl = el(activeTool === 'line' || activeTool === 'arrow' ? 'line' : activeTool === 'cloud' ? 'path' : 'rect');
+    previewEl = el(activeTool === 'line' || activeTool === 'arrow' ? 'line' : activeTool.startsWith('cloud') ? 'path' : 'rect');
     previewEl.setAttribute('stroke', colorInput.value);
     previewEl.setAttribute('stroke-width', widthInput.value);
     previewEl.setAttribute('fill', 'none');
@@ -272,8 +505,8 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
       const y = Math.min(pt.y, start.y);
       const w = Math.abs(pt.x - start.x);
       const h = Math.abs(pt.y - start.y);
-      if (type === 'cloud') {
-        previewEl.setAttribute('d', cloudPath(x, y, w, h));
+      if (type.startsWith('cloud')) {
+        previewEl.setAttribute('d', cloudPath(x, y, w, h, CLOUD_BUMP_SIZE[type]));
       } else {
         previewEl.setAttribute('x', x);
         previewEl.setAttribute('y', y);
@@ -283,7 +516,46 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
     }
   });
 
+  window.addEventListener('mousemove', (e) => {
+    if (handleDrag) {
+      const pt = getSvgPoint(e);
+      handleDrag.onDrag(pt);
+      renderAll();
+    } else if (bodyDrag) {
+      const pt = getSvgPoint(e);
+      const { w, h } = vbSize();
+      const dx = (pt.x - bodyDrag.start.x) / w;
+      const dy = (pt.y - bodyDrag.start.y) / h;
+      const g = bodyDrag.origGeometry;
+      const m = bodyDrag.markup;
+      if (m.type === 'line' || m.type === 'arrow') {
+        m.geometry = { x1: g.x1 + dx, y1: g.y1 + dy, x2: g.x2 + dx, y2: g.y2 + dy };
+      } else if (m.type === 'text') {
+        m.geometry = { ...g, x: g.x + dx, y: g.y + dy };
+      } else {
+        m.geometry = { ...g, x: g.x + dx, y: g.y + dy };
+      }
+      renderAll();
+    }
+  });
+
   window.addEventListener('mouseup', async (e) => {
+    if (handleDrag) {
+      const m = handleDrag.markup;
+      handleDrag = null;
+      const { markup } = await api('PATCH', `/api/markups/${m.id}`, { geometry: m.geometry });
+      Object.assign(m, markup);
+      renderAll();
+      return;
+    }
+    if (bodyDrag) {
+      const m = bodyDrag.markup;
+      bodyDrag = null;
+      const { markup } = await api('PATCH', `/api/markups/${m.id}`, { geometry: m.geometry });
+      Object.assign(m, markup);
+      renderAll();
+      return;
+    }
     if (!drawing) return;
     const pt = getSvgPoint(e);
     const { type, start } = drawing;
@@ -309,7 +581,8 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
       }
       geometry = { x: x0 / w, y: y0 / h, w: bw / w, h: bh / h };
     }
-    await createMarkup(type, geometry);
+    const extraStyle = type.startsWith('cloud') ? { bumpSize: CLOUD_BUMP_SIZE[type] } : undefined;
+    await createMarkup(type, geometry, extraStyle);
     activateTool('select');
   });
 
@@ -320,7 +593,6 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
         const { markups: loaded } = await api('GET', `/api/sheets/${sheetId}/markups`);
         markups = loaded;
       } catch (err) {
-        // Offline: fall back to whatever markups synced during the last visit.
         markups = await getCachedMarkupsForSheet(sheetId);
       }
       renderAll();
@@ -329,5 +601,12 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents }) {
       syncViewBox();
       renderAll();
     },
+    isToolActive() {
+      return activeTool !== 'select';
+    },
+    hasSelection() {
+      return !!selectedId;
+    },
+    repositionPopup: positionPopup,
   };
 }
