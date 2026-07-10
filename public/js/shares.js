@@ -3,17 +3,7 @@ import { renderShell, openModal, closeModal } from '/js/shell.js';
 const projectId = new URLSearchParams(window.location.search).get('projectId');
 let allFolders = [];
 
-function escapeHtml(str) {
-  return String(str || '').replace(/[&<>'"]/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    "'": '&#39;',
-    '"': '&quot;',
-  })[c]);
-}
-
-function escapeHtml(str) {
+function escapeShareHtml(str) {
   return String(str || '').replace(/[&<>'"]/g, (c) => ({
     '&': '&amp;',
     '<': '&lt;',
@@ -67,14 +57,14 @@ async function loadShares() {
     const status = s.revoked ? 'inactive' : expired ? 'expired' : 'active';
     const tr = document.createElement('tr');
     tr.innerHTML = `
-      <td>${escapeHtml(s.name) || '<span class="muted">Unnamed</span>'}</td>
-      <td>${escapeHtml(s.scope)}${s.snapshot_revision_title ? ` (${escapeHtml(s.snapshot_revision_title)})` : ''}</td>
-      <td>${escapeHtml(s.discipline_filter) || 'All'}</td>
-      <td>${escapeHtml(s.expires_at) || 'Never'}</td>
-      <td>${escapeHtml(s.created_by_name)}</td>
+      <td>${escapeShareHtml(s.name) || '<span class="muted">Unnamed</span>'}</td>
+      <td>${escapeShareHtml(s.scope)}${s.snapshot_revision_title ? ` (${escapeShareHtml(s.snapshot_revision_title)})` : ''}</td>
+      <td>${escapeShareHtml(s.discipline_filter) || 'All'}</td>
+      <td>${escapeShareHtml(s.expires_at) || 'Never'}</td>
+      <td>${escapeShareHtml(s.created_by_name)}</td>
       <td><span class="pill ${status === 'active' ? 'new' : 'suspicious'}">${status}</span></td>
       <td>${s.allow_personal_markups ? 'Personal markups' : 'View only'}${s.allow_documents ? ' + docs' : ''}</td>
-      <td><input readonly value="${escapeHtml(url)}" style="width:260px" onclick="this.select()"></td>
+      <td><input readonly value="${escapeShareHtml(url)}" style="width:260px" onclick="this.select()"></td>
       <td class="row"></td>`;
 
     const actions = tr.lastElementChild;
@@ -150,7 +140,7 @@ function editPermissions(share) {
     <label><input type="checkbox" id="edit-personal" ${share.allow_personal_markups ? 'checked' : ''}> Allow personal markups</label>
     <label><input type="checkbox" id="edit-documents" ${share.allow_documents ? 'checked' : ''}> Allow documents</label>
     <div class="field"><label>Allowed document folders</label>
-      <select id="edit-folders" multiple size="8">${allFolders.map((f) => `<option value="${f.id}" ${folderIds.includes(f.id) ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select>
+      <select id="edit-folders" multiple size="8">${allFolders.map((f) => `<option value="${f.id}" ${folderIds.includes(f.id) ? 'selected' : ''}>${escapeShareHtml(f.name)}</option>`).join('')}</select>
     </div>
     <div class="row"><button id="save-permissions" class="primary">Save</button><button id="cancel-permissions">Cancel</button></div>
   `);
