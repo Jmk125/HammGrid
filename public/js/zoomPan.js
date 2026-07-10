@@ -70,5 +70,53 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
     wrapEl.classList.remove('panning');
   });
 
+  // Two-finger pinch-to-zoom (iPad Safari etc.). Deliberately only handles
+  // the exactly-2-touches case - single-finger touch is left completely
+  // alone here so it keeps synthesizing mouse events for markup drawing /
+  // box drawing / drag-pan exactly as before, with zero risk of double-
+  // firing. The CSS touch-action: pan-x pan-y on .zoom-wrap (see style.css)
+  // is what actually stops Safari's native "zoom the whole page" gesture -
+  // preventDefault() here alone is often too late, since Safari can start
+  // recognizing its own pinch gesture before this handler even runs.
+  function touchDistance(touches) {
+    return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+  }
+  function touchMidpoint(touches) {
+    return { x: (touches[0].clientX + touches[1].clientX) / 2, y: (touches[0].clientY + touches[1].clientY) / 2 };
+  }
+
+  let pinch = null; // { startDist, startScale }
+  wrapEl.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length !== 2) return;
+      e.preventDefault();
+      pinch = { startDist: touchDistance(e.touches), startScale: state.scale };
+    },
+    { passive: false }
+  );
+  wrapEl.addEventListener(
+    'touchmove',
+    (e) => {
+      if (e.touches.length !== 2 || !pinch) return;
+      e.preventDefault();
+      const rect = wrapEl.getBoundingClientRect();
+      const mid = touchMidpoint(e.touches);
+      const cx = mid.x - rect.left;
+      const cy = mid.y - rect.top;
+      const newScale = Math.min(6, Math.max(0.1, pinch.startScale * (touchDistance(e.touches) / pinch.startDist)));
+      state.x = cx - (cx - state.x) * (newScale / state.scale);
+      state.y = cy - (cy - state.y) * (newScale / state.scale);
+      state.scale = newScale;
+      apply();
+    },
+    { passive: false }
+  );
+  function endPinch(e) {
+    if (e.touches.length < 2) pinch = null;
+  }
+  wrapEl.addEventListener('touchend', endPinch);
+  wrapEl.addEventListener('touchcancel', endPinch);
+
   return { fitToView, apply, state };
 }
