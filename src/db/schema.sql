@@ -116,7 +116,10 @@ CREATE TABLE IF NOT EXISTS markups (
   type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect')),
   geometry TEXT NOT NULL,
   style TEXT NOT NULL DEFAULT '{}',
-  linked_document_id INTEGER REFERENCES documents(id),
+  -- ON DELETE SET NULL: deleting a linked document should just unlink it
+  -- from any markups (with a warning shown client-side first), not block
+  -- the delete outright.
+  linked_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

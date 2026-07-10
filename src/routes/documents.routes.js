@@ -56,7 +56,8 @@ router.get('/', requireAuth, (req, res) => {
   const documents = db
     .prepare(
       `SELECT d.id, d.folder_id, d.name, d.created_at,
-              dv.id AS current_version_id, dv.revision_name, dv.issue_date, dv.created_at AS version_created_at
+              dv.id AS current_version_id, dv.revision_name, dv.issue_date, dv.created_at AS version_created_at,
+              (SELECT COUNT(DISTINCT m.sheet_id) FROM markups m WHERE m.linked_document_id = d.id) AS linked_sheet_count
        FROM documents d
        LEFT JOIN document_versions dv ON dv.id = d.current_version_id
        WHERE d.project_id = ?

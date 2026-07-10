@@ -84,7 +84,7 @@ function renderTable() {
     tr.innerHTML = `
       <td><svg viewBox="0 0 20 20" class="doc-icon"><path d="M2 5a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5z" fill="currentColor"/></svg></td>
       <td class="doc-row-name"><a href="#" class="folder-link">${escapeHtml(f.name)}</a></td>
-      <td></td><td></td><td></td>
+      <td></td><td></td><td></td><td></td>
       <td>${canManage ? '<button class="danger folder-delete">Delete</button>' : ''}</td>
     `;
     tr.querySelector('.folder-link').addEventListener('click', (e) => {
@@ -94,14 +94,15 @@ function renderTable() {
     const delBtn = tr.querySelector('.folder-delete');
     if (delBtn) {
       delBtn.addEventListener('click', async () => {
-        if (!confirm(`Delete folder "${f.name}" and everything inside it? This cannot be undone.`)) return;
-        try {
-          await api('DELETE', `/api/document-folders/${f.id}`);
-          await loadAll();
-          render();
-        } catch (err) {
-          alert(err.message);
-        }
+        const { linked_markup_count } = await api('GET', `/api/document-folders/${f.id}/links`);
+        const warning =
+          linked_markup_count > 0
+            ? ` ${linked_markup_count} markup(s) on drawings link to documents inside it - those links will be removed too.`
+            : '';
+        if (!confirm(`Delete folder "${f.name}" and everything inside it? This cannot be undone.${warning}`)) return;
+        await api('DELETE', `/api/document-folders/${f.id}`);
+        await loadAll();
+        render();
       });
     }
     tbody.appendChild(tr);
@@ -115,6 +116,7 @@ function renderTable() {
       <td>${escapeHtml(d.revision_name) || '<span class="muted">Original</span>'}</td>
       <td>${escapeHtml(d.issue_date) || ''}</td>
       <td class="muted">${formatDateTime(d.version_created_at)}</td>
+      <td>${d.linked_sheet_count > 0 ? `<button class="link-btn">${d.linked_sheet_count} sheet${d.linked_sheet_count === 1 ? '' : 's'}</button>` : '<span class="muted">—</span>'}</td>
       <td class="row" style="gap:6px; flex-wrap:nowrap;">
         <button class="versions-btn">Versions</button>
         ${canManage ? '<button class="issue-rev-btn">Issue revision</button>' : ''}
@@ -122,23 +124,53 @@ function renderTable() {
       </td>
     `;
     tr.querySelector('.versions-btn').addEventListener('click', () => openVersionsModal(d));
+    const linkBtn = tr.querySelector('.link-btn');
+    if (linkBtn) linkBtn.addEventListener('click', () => openLinksModal(d));
     const issueBtn = tr.querySelector('.issue-rev-btn');
     if (issueBtn) issueBtn.addEventListener('click', () => openIssueRevisionModal(d));
     const delBtn = tr.querySelector('.doc-delete-btn');
     if (delBtn) {
       delBtn.addEventListener('click', async () => {
-        if (!confirm(`Delete "${d.name}" and all its revisions? This cannot be undone.`)) return;
-        try {
-          await api('DELETE', `/api/documents/${d.id}`);
-          await loadAll();
-          render();
-        } catch (err) {
-          alert(err.message);
-        }
+        const warning =
+          d.linked_sheet_count > 0
+            ? ` It's linked from markups on ${d.linked_sheet_count} sheet(s) - those links will be removed too.`
+            : '';
+        if (!confirm(`Delete "${d.name}" and all its revisions? This cannot be undone.${warning}`)) return;
+        await api('DELETE', `/api/documents/${d.id}`);
+        await loadAll();
+        render();
       });
     }
     tbody.appendChild(tr);
   }
+}
+
+async function openLinksModal(d) {
+  const { sheets } = await api('GET', `/api/documents/${d.id}/links`);
+  openModal(`
+    <h2>${escapeHtml(d.name)} — linked drawings</h2>
+    <p class="muted">Sheets with a markup linking to this document.</p>
+    <div class="doc-picker-list">
+      ${sheets
+        .map(
+          (s) => `
+        <div class="doc-picker-row sheet-link-row" data-project="${s.project_id}" data-sheet="${s.id}">
+          <span style="flex:1;">
+            <b>${escapeHtml(s.sheet_number)}</b>
+            <span class="muted">${escapeHtml(s.discipline) || ''} — ${s.markup_count} markup${s.markup_count === 1 ? '' : 's'}</span>
+          </span>
+        </div>`
+        )
+        .join('')}
+    </div>
+    <div class="modal-actions"><button type="button" id="modal-cancel">Close</button></div>
+  `);
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  document.querySelectorAll('.sheet-link-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      window.open(`/sheet.html?projectId=${row.dataset.project}&sheetId=${row.dataset.sheet}`, '_blank');
+    });
+  });
 }
 
 async function openVersionsModal(d) {

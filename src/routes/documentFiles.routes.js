@@ -57,19 +57,35 @@ router.delete('/:id', requireRole('admin', 'editor'), (req, res) => {
   const document = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
   if (!document) return res.status(404).json({ error: 'Not found' });
 
+  // Deleting a document that's still linked from markups no longer fails -
+  // markups.linked_document_id ON DELETE SET NULL clears those links
+  // automatically (the client warns about this beforehand instead).
   const paths = db.prepare('SELECT pdf_path FROM document_versions WHERE document_id = ?').all(document.id);
-  try {
-    db.prepare('DELETE FROM documents WHERE id = ?').run(document.id);
-  } catch (err) {
-    if (err.code && err.code.startsWith('SQLITE_CONSTRAINT')) {
-      return res.status(400).json({ error: 'This document is linked to one or more markups - unlink them first' });
-    }
-    throw err;
-  }
+  db.prepare('DELETE FROM documents WHERE id = ?').run(document.id);
   for (const p of paths) {
     if (p.pdf_path) fs.rm(p.pdf_path, { force: true }, () => {});
   }
   res.json({ ok: true });
+});
+
+// Which sheets have a markup linking to this document, and how many -
+// lets the user jump straight to a drawing from the document's own page,
+// and lets the delete-confirmation warn with a real count beforehand.
+router.get('/:id/links', requireAuth, (req, res) => {
+  const document = db.prepare('SELECT id FROM documents WHERE id = ?').get(req.params.id);
+  if (!document) return res.status(404).json({ error: 'Not found' });
+
+  const sheets = db
+    .prepare(
+      `SELECT s.id, s.sheet_number, s.discipline, s.project_id, COUNT(m.id) AS markup_count
+       FROM markups m
+       JOIN sheets s ON s.id = m.sheet_id
+       WHERE m.linked_document_id = ?
+       GROUP BY s.id
+       ORDER BY s.sheet_number`
+    )
+    .all(document.id);
+  res.json({ sheets });
 });
 
 module.exports = router;

@@ -139,4 +139,47 @@ addColumnIfMissing('sheets', 'scale_feet_per_inch', 'REAL');
 db.exec('CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_documents_current_version ON documents(current_version_id)');
 
+// markups.linked_document_id needs the same ON DELETE SET NULL fix as
+// documents.current_version_id above, and for the same reason: deleting a
+// document that's still linked from a markup should just clear the link
+// (warned about client-side first), not be rejected outright.
+(function ensureMarkupsLinkedDocumentSetNull() {
+  const fk = db.prepare('PRAGMA foreign_key_list(markups)').all().find((f) => f.from === 'linked_document_id');
+  if (!fk || fk.on_delete === 'SET NULL') return;
+
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE markups_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+        author_id INTEGER NOT NULL REFERENCES users(id),
+        visibility TEXT NOT NULL CHECK (visibility IN ('private', 'published')) DEFAULT 'private',
+        type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect')),
+        geometry TEXT NOT NULL,
+        style TEXT NOT NULL DEFAULT '{}',
+        linked_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+    db.exec(`
+      INSERT INTO markups_new (id, sheet_id, author_id, visibility, type, geometry, style, linked_document_id, created_at, updated_at)
+      SELECT id, sheet_id, author_id, visibility, type, geometry, style, linked_document_id, created_at, updated_at FROM markups
+    `);
+    db.exec('DROP TABLE markups');
+    db.exec('ALTER TABLE markups_new RENAME TO markups');
+    const violations = db.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length) {
+      throw new Error(`markups table rebuild left ${violations.length} dangling reference(s): ${JSON.stringify(violations)}`);
+    }
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+  console.log('Rebuilt markups table to add ON DELETE SET NULL on linked_document_id.');
+})();
+
+db.exec('CREATE INDEX IF NOT EXISTS idx_markups_sheet ON markups(sheet_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_markups_linked_document ON markups(linked_document_id)');
+
 module.exports = db;
