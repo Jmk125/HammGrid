@@ -1,19 +1,32 @@
+<!DOCTYPE html>
 <title>Shared Drawings</title>
 <link rel="stylesheet" href="/css/style.css">
 <body>
   <div class="topbar">
     <span class="brand">HammGrid &mdash; Shared Set</span>
+    <span id="scope-info" class="muted"></span>
   </div>
-  <main>
-    <h1 id="project-name"></h1>
-    <p class="muted" id="scope-info"></p>
-    <div class="row">
-      <a id="zip-link" href="#"><button>Download all (ZIP)</button></a>
-      <a id="merged-link" href="#"><button>Download merged PDF</button></a>
+  <div class="app-shell">
+    <div class="sidebar" id="share-sidebar">
+      <a href="#" class="active" data-section="drawings">Drawings</a>
+      <div id="shared-doc-nav" style="display:none;"></div>
     </div>
-    <p class="error" id="error" style="display:none;"></p>
-    <div id="grid" class="grid"></div>
-  </main>
+    <div class="shell-content">
+      <main class="wide">
+        <h1 id="project-name"></h1>
+        <div class="row" id="drawing-actions">
+          <a id="zip-link" href="#"><button>Download all (ZIP)</button></a>
+          <a id="merged-link" href="#"><button>Download merged PDF</button></a>
+        </div>
+        <p class="error" id="error" style="display:none;"></p>
+        <section id="drawings-section"><div id="grid" class="grid"></div></section>
+        <section id="documents-section" style="display:none;">
+          <h2>Shared documents</h2>
+          <div id="documents-list" class="card"></div>
+        </section>
+      </main>
+    </div>
+  </div>
   <script src="/js/api.js"></script>
   <script src="/js/share.js"></script>
 </body>
