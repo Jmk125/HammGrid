@@ -159,30 +159,70 @@ function updateNewPermissionsButton() {
 function renderDocumentAccessTree(state) {
   const folderIds = new Set(state.document_folder_ids || []);
   const docIds = new Set(state.document_ids || []);
-  const folderRows = allFolders.map((f) => `
-    <label style="display:block; margin-left:${f.parent_folder_id ? 24 : 0}px;">
-      <input type="checkbox" class="perm-folder" value="${f.id}" ${folderIds.has(f.id) ? 'checked' : ''}> 📁 ${escapeShareHtml(f.name)}
-    </label>`).join('');
-  const docRows = allDocuments.map((d) => `
-    <label style="display:block; margin-left:32px;">
-      <input type="checkbox" class="perm-doc" value="${d.id}" ${docIds.has(d.id) ? 'checked' : ''}> ${escapeShareHtml(d.name)}
-    </label>`).join('');
-  return folderRows + docRows;
+  const foldersByParent = new Map();
+  for (const f of allFolders) {
+    const key = f.parent_folder_id || 0;
+    if (!foldersByParent.has(key)) foldersByParent.set(key, []);
+    foldersByParent.get(key).push(f);
+  }
+  const docsByFolder = new Map();
+  for (const d of allDocuments) {
+    const key = d.folder_id || 0;
+    if (!docsByFolder.has(key)) docsByFolder.set(key, []);
+    docsByFolder.get(key).push(d);
+  }
+
+  function renderDocs(folderId, depth) {
+    return (docsByFolder.get(folderId) || []).map((d) => `
+      <label class="permission-tree-row permission-tree-doc" style="--depth:${depth};">
+        <input type="checkbox" class="perm-doc" value="${d.id}" data-doc-folder="${folderId}" ${docIds.has(d.id) ? 'checked' : ''}>
+        <span class="permission-tree-icon">📄</span>
+        <span class="permission-tree-label">${escapeShareHtml(d.name)}</span>
+      </label>`).join('');
+  }
+
+  function renderFolders(parentId, depth) {
+    return (foldersByParent.get(parentId) || []).map((f) => `
+      <details class="permission-tree-folder" open data-folder-node="${f.id}">
+        <summary class="permission-tree-row" style="--depth:${depth};">
+          <input type="checkbox" class="perm-folder" value="${f.id}" data-parent-folder="${parentId}" ${folderIds.has(f.id) ? 'checked' : ''}>
+          <span class="permission-tree-icon">📁</span>
+          <span class="permission-tree-label">${escapeShareHtml(f.name)}</span>
+        </summary>
+        ${renderFolders(f.id, depth + 1)}
+        ${renderDocs(f.id, depth + 1)}
+      </details>`).join('');
+  }
+
+  const rootDocs = renderDocs(0, 0);
+  const tree = `${renderFolders(0, 0)}${rootDocs}`;
+  return tree || '<p class="muted">No document folders or files exist yet.</p>';
+}
+
+function setDocumentDescendants(backdrop, folderId, checked) {
+  const childFolders = [...backdrop.querySelectorAll(`.perm-folder[data-parent-folder="${folderId}"]`)];
+  const childDocs = [...backdrop.querySelectorAll(`.perm-doc[data-doc-folder="${folderId}"]`)];
+  for (const cb of childFolders) {
+    cb.checked = checked;
+    setDocumentDescendants(backdrop, Number(cb.value), checked);
+  }
+  for (const cb of childDocs) cb.checked = checked;
 }
 
 function editPermissions(source, onSave) {
   const state = permissionState(source);
   const backdrop = openModal(`
-    <h2>Share permissions</h2>
-    <label><input type="checkbox" checked disabled> Live Drawings</label>
-    <p class="muted">Shared links always include drawings and published markups.</p>
-    <label><input type="checkbox" id="edit-personal" ${state.allow_personal_markups ? 'checked' : ''}> Personal Markups</label>
-    <label><input type="checkbox" id="edit-documents" ${state.allow_documents ? 'checked' : ''}> Documents</label>
-    <div id="document-permissions" class="card" style="margin-top:10px; ${state.allow_documents ? '' : 'display:none;'}">
-      <label><input type="checkbox" id="all-docs"> All documents/folders</label>
-      <div style="max-height:320px; overflow:auto; margin-top:8px;">${renderDocumentAccessTree(state)}</div>
+    <div class="permission-modal">
+      <h2>Share permissions</h2>
+      <div class="permission-option locked"><input type="checkbox" checked disabled><span><b>Live Drawings</b><small>Always included, with all published markups visible.</small></span></div>
+      <label class="permission-option"><input type="checkbox" id="edit-personal" ${state.allow_personal_markups ? 'checked' : ''}><span><b>Personal Markups</b><small>Allow this invited viewer to add private markups on shared drawings.</small></span></label>
+      <label class="permission-option"><input type="checkbox" id="edit-documents" ${state.allow_documents ? 'checked' : ''}><span><b>Documents</b><small>Grant access to selected document folders or files.</small></span></label>
+      <div id="document-permissions" class="permission-documents" style="${state.allow_documents ? '' : 'display:none;'}">
+        <label class="permission-tree-row permission-tree-all"><input type="checkbox" id="all-docs"><span class="permission-tree-icon">🗂️</span><span class="permission-tree-label">All documents/folders</span></label>
+        <div class="permission-tree">${renderDocumentAccessTree(state)}</div>
+      </div>
+      <div class="row"><button id="save-permissions" class="primary">Save</button><button id="cancel-permissions">Cancel</button></div>
     </div>
-    <div class="row"><button id="save-permissions" class="primary">Save</button><button id="cancel-permissions">Cancel</button></div>
   `);
   const docsToggle = backdrop.querySelector('#edit-documents');
   docsToggle.addEventListener('change', () => {
@@ -190,6 +230,12 @@ function editPermissions(source, onSave) {
   });
   backdrop.querySelector('#all-docs').addEventListener('change', (e) => {
     backdrop.querySelectorAll('.perm-folder,.perm-doc').forEach((cb) => { cb.checked = e.target.checked; });
+  });
+  backdrop.querySelectorAll('.perm-folder').forEach((cb) => {
+    cb.addEventListener('change', () => setDocumentDescendants(backdrop, Number(cb.value), cb.checked));
+  });
+  backdrop.querySelectorAll('.permission-tree-folder summary input').forEach((input) => {
+    input.addEventListener('click', (e) => e.stopPropagation());
   });
   backdrop.querySelector('#cancel-permissions').addEventListener('click', closeModal);
   backdrop.querySelector('#save-permissions').addEventListener('click', async () => {

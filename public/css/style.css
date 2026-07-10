@@ -633,3 +633,65 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .upload-row-status { width: 150px; flex-shrink: 0; color: var(--muted); }
 .upload-row-status.done { color: var(--ok); }
 .upload-row-status.error { color: var(--danger); }
+
+/* ---------- Share permissions modal ---------- */
+.permission-modal { min-width: min(720px, 92vw); }
+.permission-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+.permission-option.locked { background: var(--bg); cursor: default; }
+.permission-option input { margin-top: 3px; }
+.permission-option b { display: block; color: var(--text); }
+.permission-option small { display: block; color: var(--muted); margin-top: 2px; line-height: 1.35; }
+.permission-documents {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  margin: 12px 0 16px;
+  overflow: hidden;
+}
+.permission-tree {
+  max-height: 360px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 6px 0;
+}
+.permission-tree-folder { display: block; }
+.permission-tree-folder > summary { list-style: none; }
+.permission-tree-folder > summary::-webkit-details-marker { display: none; }
+.permission-tree-folder > summary::before {
+  content: '▾';
+  width: 14px;
+  color: var(--muted);
+  display: inline-flex;
+  justify-content: center;
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+.permission-tree-folder[open] > summary::before { transform: rotate(0deg); }
+.permission-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px calc(12px + (var(--depth, 0) * 22px));
+  margin: 0;
+  min-height: 36px;
+}
+.permission-tree-row:hover { background: var(--accent-light); }
+.permission-tree-all {
+  --depth: 0;
+  font-weight: 700;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.permission-tree-doc { color: var(--text); }
+.permission-tree-icon { width: 22px; text-align: center; flex: 0 0 auto; }
+.permission-tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
