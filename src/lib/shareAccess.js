@@ -58,6 +58,85 @@ function getShareSheets(share) {
   return rows;
 }
 
+
+function parseShareDocumentIds(share) {
+  try {
+    return JSON.parse(share.document_ids || '[]').map(Number).filter(Boolean);
+  } catch (e) {
+    return [];
+  }
+}
+
+function parseShareFolderIds(share) {
+  try {
+    return JSON.parse(share.document_folder_ids || '[]').map(Number).filter(Boolean);
+  } catch (e) {
+    return [];
+  }
+}
+
+function getAllowedDocumentFolderIds(share) {
+  if (!share.allow_documents) return [];
+  const roots = parseShareFolderIds(share);
+  if (!roots.length) return [];
+  const seen = new Set();
+  const queue = [...roots];
+  const getChildren = db.prepare('SELECT id FROM document_folders WHERE parent_folder_id = ? AND project_id = ?');
+  while (queue.length) {
+    const id = queue.shift();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    for (const child of getChildren.all(id, share.project_id)) queue.push(child.id);
+  }
+  return [...seen];
+}
+
+function getShareDocuments(share) {
+  const folderIds = getAllowedDocumentFolderIds(share);
+  const explicitDocIds = parseShareDocumentIds(share);
+  if (!folderIds.length && !explicitDocIds.length) return { folders: [], documents: [] };
+  const placeholders = folderIds.map(() => '?').join(',');
+  const folders = folderIds.length
+    ? db.prepare(`SELECT * FROM document_folders WHERE project_id = ? AND id IN (${placeholders}) ORDER BY name`).all(share.project_id, ...folderIds)
+    : [];
+  const clauses = [];
+  const args = [share.project_id];
+  if (folderIds.length) {
+    clauses.push(`d.folder_id IN (${placeholders})`);
+    args.push(...folderIds);
+  }
+  if (explicitDocIds.length) {
+    clauses.push(`d.id IN (${explicitDocIds.map(() => '?').join(',')})`);
+    args.push(...explicitDocIds);
+  }
+  const documents = db.prepare(
+    `SELECT d.id, d.folder_id, d.name, d.created_at,
+            dv.id AS current_version_id, dv.revision_name, dv.issue_date, dv.created_at AS version_created_at
+     FROM documents d
+     LEFT JOIN document_versions dv ON dv.id = d.current_version_id
+     WHERE d.project_id = ? AND (${clauses.join(' OR ')})
+     ORDER BY d.name`
+  ).all(...args);
+  return { folders, documents };
+}
+
+function canAccessShareDocument(share, documentId) {
+  const folderIds = getAllowedDocumentFolderIds(share);
+  const explicitDocIds = parseShareDocumentIds(share);
+  if (!folderIds.length && !explicitDocIds.length) return null;
+  const clauses = [];
+  const args = [documentId, share.project_id];
+  if (folderIds.length) {
+    clauses.push(`folder_id IN (${folderIds.map(() => '?').join(',')})`);
+    args.push(...folderIds);
+  }
+  if (explicitDocIds.length) {
+    clauses.push(`id IN (${explicitDocIds.map(() => '?').join(',')})`);
+    args.push(...explicitDocIds);
+  }
+  return db.prepare(`SELECT * FROM documents WHERE id = ? AND project_id = ? AND (${clauses.join(' OR ')})`).get(...args);
+}
+
 function logShareActivity(share, action, detail) {
   db.prepare('INSERT INTO activity_log (project_id, actor, action, detail) VALUES (?, ?, ?, ?)').run(
     share.project_id,
@@ -67,4 +146,4 @@ function logShareActivity(share, action, detail) {
   );
 }
 
-module.exports = { resolveShare, getShareSheets, logShareActivity };
+module.exports = { resolveShare, getShareSheets, getShareDocuments, canAccessShareDocument, logShareActivity };

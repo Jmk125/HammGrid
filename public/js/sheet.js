@@ -62,7 +62,7 @@ function setupZoomPan() {
     isPanBlocked: (e) => {
       if (markupsController && markupsController.isToolActive()) return true;
       if (measureTool) return true;
-      const tag = e.target.tagName.toLowerCase();
+      const tag = (e.target.tagName || '').toLowerCase();
       return tag !== 'svg' && tag !== 'canvas';
     },
     onChange: (state) => {
