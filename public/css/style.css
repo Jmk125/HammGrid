@@ -635,7 +635,8 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .upload-row-status.error { color: var(--danger); }
 
 /* ---------- Share permissions modal ---------- */
-.permission-modal { min-width: min(720px, 92vw); }
+.permission-modal-shell { width: min(920px, calc(100vw - 48px)); }
+.permission-modal { width: 100%; }
 .permission-option {
   display: flex;
   align-items: flex-start;

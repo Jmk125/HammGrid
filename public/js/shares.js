@@ -224,6 +224,7 @@ function editPermissions(source, onSave) {
       <div class="row"><button id="save-permissions" class="primary">Save</button><button id="cancel-permissions">Cancel</button></div>
     </div>
   `);
+  backdrop.querySelector('.modal').classList.add('permission-modal-shell');
   const docsToggle = backdrop.querySelector('#edit-documents');
   docsToggle.addEventListener('change', () => {
     backdrop.querySelector('#document-permissions').style.display = docsToggle.checked ? '' : 'none';
