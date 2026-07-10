@@ -10,6 +10,7 @@ const { runPython } = require('../lib/pyRunner');
 const queue = require('../lib/queue');
 const { computeMatch, needsAttention } = require('../lib/matching');
 const jobStore = require('../lib/jobStore');
+const { toPortablePath } = require('../lib/paths');
 
 // Burst walks every page sequentially (PyMuPDF render + thumbnail + preview),
 // so a large multi-hundred-page upload can legitimately take a while. This
@@ -128,9 +129,9 @@ router.post('/:revisionId/upload', requireRole('admin', 'editor'), upload.single
         insertStmt.run(
           revision.id,
           nextOrder,
-          page.pdf_path,
-          page.thumb_path,
-          page.preview_path,
+          toPortablePath(page.pdf_path),
+          toPortablePath(page.thumb_path),
+          toPortablePath(page.preview_path),
           page.page_width_pt,
           page.page_height_pt
         );
@@ -331,7 +332,11 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
 
     const destDir = path.join(config.storageDir, 'projects', String(revision.project_id), 'sheets', String(s.match_sheet_id));
     fs.mkdirSync(destDir, { recursive: true });
-    const overlayDest = path.join(destDir, `v${revision.id}_overlay.webp`);
+    // Forward slashes work fine as real filesystem paths on Windows too, so
+    // the portable form is used for the actual file write as well as the
+    // value stored in the DB - one value, no separate "for fs" vs "for DB"
+    // variants needed.
+    const overlayDest = toPortablePath(path.join(destDir, `v${revision.id}_overlay.webp`));
     try {
       await queue.enqueue(() => runPython(OVERLAY_SCRIPT, [oldVersion.pdf_path, s.pdf_path, overlayDest]));
       overlayPaths[s.id] = overlayDest;
@@ -364,9 +369,9 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
 
       const destDir = path.join(config.storageDir, 'projects', String(revision.project_id), 'sheets', String(sheetId));
       fs.mkdirSync(destDir, { recursive: true });
-      const destPdf = path.join(destDir, `v${revision.id}.pdf`);
-      const destThumb = s.thumb_path ? path.join(destDir, `v${revision.id}_thumb.webp`) : null;
-      const destPreview = s.preview_path ? path.join(destDir, `v${revision.id}_preview.webp`) : null;
+      const destPdf = toPortablePath(path.join(destDir, `v${revision.id}.pdf`));
+      const destThumb = s.thumb_path ? toPortablePath(path.join(destDir, `v${revision.id}_thumb.webp`)) : null;
+      const destPreview = s.preview_path ? toPortablePath(path.join(destDir, `v${revision.id}_preview.webp`)) : null;
 
       fs.renameSync(s.pdf_path, destPdf);
       if (destThumb) fs.renameSync(s.thumb_path, destThumb);

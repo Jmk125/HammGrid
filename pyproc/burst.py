@@ -71,11 +71,17 @@ def main():
         save_webp(img, preview_path, args.preview_size, quality=85)
         save_webp(img, thumb_path, args.thumb_size, quality=78)
 
+        # These paths get stored verbatim in the DB and may later be read on
+        # a different OS than the one that ran this script (per CLAUDE.md,
+        # ingest can run on the Windows dev box while serving happens from
+        # the Pi) - os.path.join uses a backslash separator on Windows,
+        # which isn't a path separator on Linux at all, so normalize to
+        # forward slashes here at the source.
         results.append({
             "page_number": page_number,
-            "pdf_path": pdf_path,
-            "thumb_path": thumb_path,
-            "preview_path": preview_path,
+            "pdf_path": pdf_path.replace(os.sep, "/"),
+            "thumb_path": thumb_path.replace(os.sep, "/"),
+            "preview_path": preview_path.replace(os.sep, "/"),
             "page_width_pt": width_pt,
             "page_height_pt": height_pt,
         })

@@ -1,7 +1,7 @@
 const express = require('express');
-const fs = require('fs');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { streamFile } = require('../lib/streamFile');
 
 const router = express.Router();
 
@@ -14,8 +14,7 @@ router.get('/:id', requireAuth, (req, res) => {
 router.get('/:id/pdf', requireAuth, (req, res) => {
   const document = db.prepare('SELECT pdf_path FROM documents WHERE id = ?').get(req.params.id);
   if (!document || !document.pdf_path) return res.status(404).end();
-  res.type('application/pdf');
-  fs.createReadStream(document.pdf_path).pipe(res);
+  streamFile(res, document.pdf_path, 'application/pdf');
 });
 
 module.exports = router;

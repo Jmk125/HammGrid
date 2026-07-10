@@ -1,8 +1,8 @@
 const express = require('express');
-const fs = require('fs');
 const db = require('../db');
 const { resolveShare, getShareSheets, logShareActivity } = require('../lib/shareAccess');
 const { streamZip, streamMergedPdf } = require('../lib/exportPdfs');
+const { streamFile } = require('../lib/streamFile');
 
 const router = express.Router();
 
@@ -45,8 +45,7 @@ function serveShareFile(pathColumn, contentType) {
   return (req, res) => {
     const row = db.prepare(`SELECT ${pathColumn} AS p FROM sheet_versions WHERE id = ?`).get(req.params.versionId);
     if (!row || !row.p) return res.status(404).end();
-    res.type(contentType);
-    fs.createReadStream(row.p).pipe(res);
+    streamFile(res, row.p, contentType);
   };
 }
 

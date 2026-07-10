@@ -1,7 +1,7 @@
 const express = require('express');
-const fs = require('fs');
 const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { streamFile } = require('../lib/streamFile');
 
 const router = express.Router();
 
@@ -9,7 +9,6 @@ function serveFile(pathColumn, contentType) {
   return (req, res) => {
     const row = db.prepare(`SELECT ${pathColumn} AS p FROM sheet_versions WHERE id = ?`).get(req.params.id);
     if (!row || !row.p) return res.status(404).end();
-    res.type(contentType);
     // A published sheet_version's files never change in place - a new
     // revision always writes a new file (v<revisionId>.*), never overwrites
     // an existing one - so these are safe to cache hard. Repeat views of the
@@ -17,7 +16,7 @@ function serveFile(pathColumn, contentType) {
     // load from disk instead of re-fetching over the network. `private` (not
     // `public`) since this still requires auth per CLAUDE.md's access model.
     res.set('Cache-Control', 'private, max-age=31536000, immutable');
-    fs.createReadStream(row.p).pipe(res);
+    streamFile(res, row.p, contentType);
   };
 }
 

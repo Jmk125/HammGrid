@@ -3,6 +3,7 @@ const fs = require('fs');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { deriveDiscipline } = require('../lib/matching');
+const { streamFile } = require('../lib/streamFile');
 
 const router = express.Router();
 const MATCH_STATUSES = ['pending', 'new', 'replacement', 'suspicious', 'ignored'];
@@ -20,8 +21,7 @@ function serveFile(pathColumn, contentType) {
   return (req, res) => {
     const row = db.prepare(`SELECT ${pathColumn} AS p FROM staged_sheets WHERE id = ?`).get(req.params.id);
     if (!row || !row.p) return res.status(404).end();
-    res.type(contentType);
-    fs.createReadStream(row.p).pipe(res);
+    streamFile(res, row.p, contentType);
   };
 }
 

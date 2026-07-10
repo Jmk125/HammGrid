@@ -37,6 +37,14 @@ async function streamMergedPdf(res, entries) {
     res.type('application/pdf');
     res.attachment('drawings-merged.pdf');
     const stream = fs.createReadStream(outputPath);
+    // Same crash-safety concern as the other file-serving routes: an
+    // unhandled stream 'error' event is an uncaught exception that takes
+    // down the whole server, not just this request.
+    stream.on('error', (err) => {
+      console.error('merged PDF stream failed', err);
+      if (!res.headersSent) res.status(500).end();
+      else res.destroy();
+    });
     stream.pipe(res);
     stream.on('close', () => fs.rm(tmpDir, { recursive: true, force: true }, () => {}));
   } catch (err) {

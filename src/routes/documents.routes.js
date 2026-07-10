@@ -6,6 +6,7 @@ const multer = require('multer');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { toPortablePath } = require('../lib/paths');
 
 const router = express.Router({ mergeParams: true });
 const KINDS = ['rfi', 'submittal'];
@@ -43,7 +44,7 @@ router.post('/', requireRole('admin', 'editor'), upload.single('file'), (req, re
       `INSERT INTO documents (project_id, kind, number, title, date, status, pdf_path)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(req.params.projectId, kind, number || null, title || null, date || null, status || null, req.file.path);
+    .run(req.params.projectId, kind, number || null, title || null, date || null, status || null, toPortablePath(req.file.path));
 
   const document = db.prepare('SELECT * FROM documents WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json({ document });
