@@ -320,6 +320,29 @@ tr.ignored td { opacity: 0.5; }
 .doc-row-name a:hover { text-decoration: underline; }
 tr.doc-row-folder .doc-icon { color: #d4a537; }
 
+/* Generously tall even when a folder has few/no items yet, so there's
+   always a real target to drag a batch of files onto - not just whatever
+   little sliver of table happens to have rows in it. */
+.doc-dropzone { position: relative; min-height: 55vh; transition: background 0.12s ease, outline-color 0.12s ease; outline: 2px solid transparent; outline-offset: -2px; }
+.doc-dropzone.drag-active { background: var(--accent-light); outline-color: var(--accent); }
+.doc-dropzone-hint {
+  display: none;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+  pointer-events: none;
+}
+.doc-dropzone.drag-active .doc-dropzone-hint { display: flex; }
+tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline: 2px dashed var(--accent); outline-offset: -2px; }
+
+.row-delete-icon-btn { background: transparent; border: none; color: var(--danger); padding: 4px; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; }
+.row-delete-icon-btn:hover { background: rgba(220,38,38,0.12); }
+.row-delete-icon-btn svg { width: 16px; height: 16px; display: block; }
+
 .doc-picker-breadcrumb { font-size: 13px; margin-bottom: 8px; color: var(--muted); }
 .doc-picker-breadcrumb .doc-picker-crumb { color: var(--accent); cursor: pointer; }
 .doc-picker-breadcrumb .doc-picker-crumb:hover { text-decoration: underline; }

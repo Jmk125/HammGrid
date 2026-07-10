@@ -11,19 +11,21 @@
         <div class="row" style="justify-content: space-between; margin-bottom: 14px;">
           <div class="doc-breadcrumb" id="breadcrumb"></div>
           <div class="row" id="doc-actions" style="display:none;">
+            <button id="edit-mode-btn" type="button">Edit</button>
             <button id="new-folder-btn" type="button">+ Folder</button>
             <button class="primary" id="upload-btn" type="button">+ Upload</button>
           </div>
         </div>
 
-        <div class="card">
+        <div class="card doc-dropzone" id="doc-dropzone">
           <table id="doc-table">
             <thead>
               <tr><th></th><th>Name</th><th>Revision</th><th>Issued</th><th>Uploaded</th><th>Links</th><th></th></tr>
             </thead>
             <tbody></tbody>
           </table>
-          <p class="muted" id="empty-msg" style="display:none; padding: 8px;">This folder is empty.</p>
+          <p class="muted" id="empty-msg" style="display:none; padding: 8px;">This folder is empty. Drag &amp; drop PDFs anywhere in this area to upload.</p>
+          <div class="doc-dropzone-hint" id="doc-dropzone-hint">Drop PDFs here to upload</div>
         </div>
       </main>
     </div>
