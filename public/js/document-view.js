@@ -5,6 +5,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
 const params = new URLSearchParams(window.location.search);
 const documentId = params.get('documentId');
+const shareToken = params.get('token');
 const versionId = params.get('versionId'); // optional - view a specific historical revision instead of current
 const RENDER_SCALE = 2.5;
 
@@ -25,7 +26,9 @@ async function renderPdf() {
   const statusEl = document.getElementById('pdf-status');
   statusEl.textContent = 'Loading...';
   const canvas = document.getElementById('pdf-canvas');
-  const pdfUrl = versionId ? `/api/document-versions/${versionId}/pdf` : `/api/documents/${documentId}/pdf`;
+  const pdfUrl = shareToken
+    ? `/api/share/${shareToken}/documents/${documentId}/pdf`
+    : versionId ? `/api/document-versions/${versionId}/pdf` : `/api/documents/${documentId}/pdf`;
   try {
     const loadingTask = pdfjsLib.getDocument({ url: pdfUrl });
     const pdf = await loadingTask.promise;
@@ -57,19 +60,26 @@ document.getElementById('logout').addEventListener('click', async () => {
 });
 
 (async function init() {
-  const me = await requireSession();
-  if (!me) return;
-  document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
+  if (shareToken) {
+    document.getElementById('logout').style.display = 'none';
+    document.getElementById('whoami').style.display = 'none';
+    document.querySelector('.brand').textContent = 'HammGrid — Shared Document';
+    document.getElementById('doc-label').textContent = 'Shared document';
+  } else {
+    const me = await requireSession();
+    if (!me) return;
+    document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
 
-  try {
-    const { document: doc, versions } = await api('GET', `/api/documents/${documentId}`);
-    const shownVersion = versionId ? versions.find((v) => String(v.id) === versionId) : versions[0];
-    const revisionLabel = shownVersion && shownVersion.revision_name ? shownVersion.revision_name : 'Original';
-    const issueDate = shownVersion && shownVersion.issue_date ? ` (${shownVersion.issue_date})` : '';
-    const staleNote = versionId && versions[0] && String(versions[0].id) !== versionId ? ' — not the current version' : '';
-    document.getElementById('doc-label').textContent = `${doc.name} — ${revisionLabel}${issueDate}${staleNote}`;
-  } catch (err) {
-    // metadata fetch failed - still try to render the PDF itself
+    try {
+      const { document: doc, versions } = await api('GET', `/api/documents/${documentId}`);
+      const shownVersion = versionId ? versions.find((v) => String(v.id) === versionId) : versions[0];
+      const revisionLabel = shownVersion && shownVersion.revision_name ? shownVersion.revision_name : 'Original';
+      const issueDate = shownVersion && shownVersion.issue_date ? ` (${shownVersion.issue_date})` : '';
+      const staleNote = versionId && versions[0] && String(versions[0].id) !== versionId ? ' — not the current version' : '';
+      document.getElementById('doc-label').textContent = `${doc.name} — ${revisionLabel}${issueDate}${staleNote}`;
+    } catch (err) {
+      // metadata fetch failed - still try to render the PDF itself
+    }
   }
 
   setupZoomPan();

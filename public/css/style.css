@@ -696,3 +696,30 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .permission-tree-doc { color: var(--text); }
 .permission-tree-icon { width: 22px; text-align: center; flex: 0 0 auto; }
 .permission-tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- Shared document tree ---------- */
+.shared-doc-tree { display: flex; flex-direction: column; gap: 2px; }
+.shared-doc-folder { display: block; }
+.shared-doc-folder > summary { list-style: none; cursor: pointer; }
+.shared-doc-folder > summary::-webkit-details-marker { display: none; }
+.shared-doc-folder > summary::before {
+  content: '▾';
+  width: 14px;
+  color: var(--muted);
+  display: inline-flex;
+  justify-content: center;
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+.shared-doc-folder[open] > summary::before { transform: rotate(0deg); }
+.shared-doc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px 9px calc(12px + (var(--depth, 0) * 22px));
+  border-radius: 6px;
+  min-height: 38px;
+}
+.shared-doc-row:hover { background: var(--accent-light); }
+.shared-doc-file a { font-weight: 600; text-decoration: none; }
+.shared-doc-icon { width: 22px; text-align: center; flex: 0 0 auto; }
