@@ -2,7 +2,9 @@ import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
-const documentId = new URLSearchParams(window.location.search).get('documentId');
+const params = new URLSearchParams(window.location.search);
+const documentId = params.get('documentId');
+const versionId = params.get('versionId'); // optional - view a specific historical revision instead of current
 const RENDER_SCALE = 2.5;
 
 const zoomState = { scale: 1, x: 0, y: 0 };
@@ -67,8 +69,9 @@ async function renderPdf() {
   const statusEl = document.getElementById('pdf-status');
   statusEl.textContent = 'Loading...';
   const canvas = document.getElementById('pdf-canvas');
+  const pdfUrl = versionId ? `/api/document-versions/${versionId}/pdf` : `/api/documents/${documentId}/pdf`;
   try {
-    const loadingTask = pdfjsLib.getDocument({ url: `/api/documents/${documentId}/pdf` });
+    const loadingTask = pdfjsLib.getDocument({ url: pdfUrl });
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(1);
     const viewport = page.getViewport({ scale: RENDER_SCALE });
@@ -96,8 +99,12 @@ document.getElementById('logout').addEventListener('click', async () => {
   document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
 
   try {
-    const { document: doc } = await api('GET', `/api/documents/${documentId}`);
-    document.getElementById('doc-label').textContent = `${doc.kind.toUpperCase()} ${doc.number || ''} ${doc.title || ''}`;
+    const { document: doc, versions } = await api('GET', `/api/documents/${documentId}`);
+    const shownVersion = versionId ? versions.find((v) => String(v.id) === versionId) : versions[0];
+    const revisionLabel = shownVersion && shownVersion.revision_name ? shownVersion.revision_name : 'Original';
+    const issueDate = shownVersion && shownVersion.issue_date ? ` (${shownVersion.issue_date})` : '';
+    const staleNote = versionId && versions[0] && String(versions[0].id) !== versionId ? ' — not the current version' : '';
+    document.getElementById('doc-label').textContent = `${doc.name} — ${revisionLabel}${issueDate}${staleNote}`;
   } catch (err) {
     // metadata fetch failed - still try to render the PDF itself
   }

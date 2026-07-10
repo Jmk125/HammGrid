@@ -783,11 +783,15 @@ async function loadSheetOffline() {
   setupMeasureTools();
 
   let documents = [];
+  let folders = [];
   if (!offlineMode) {
     try {
-      ({ documents } = await api('GET', `/api/projects/${projectId}/documents`));
+      [{ documents }, { folders }] = await Promise.all([
+        api('GET', `/api/projects/${projectId}/documents`),
+        api('GET', `/api/projects/${projectId}/documents/folders`),
+      ]);
     } catch (err) {
-      // offline - markup linking dropdown just won't have options this session
+      // offline - markup link picker just won't have options this session
     }
   }
 
@@ -797,6 +801,7 @@ async function loadSheetOffline() {
     svgEl: document.getElementById('markup-svg'),
     canvasEl: document.getElementById('pdf-canvas'),
     documents,
+    folders,
     onToolChange: (tool) => {
       if (tool !== 'select') {
         clearMeasure();

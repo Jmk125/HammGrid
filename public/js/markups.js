@@ -1,4 +1,5 @@
 import { getCachedMarkupsForSheet } from '/js/offline-store.js';
+import { openDocPicker } from '/js/docPicker.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CLOUD_BUMP_SIZE = { 'cloud-small': 14, 'cloud-large': 30 };
@@ -65,7 +66,7 @@ function cloudPath(x, y, w, h, bumpSize) {
   return d + 'Z';
 }
 
-export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolChange }) {
+export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, onToolChange }) {
   let activeTool = 'select';
   let markups = [];
   let drawing = null;
@@ -340,6 +341,9 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
   function renderPopupButtons(m) {
     const perm = permissions(m);
     popupEl.innerHTML = '';
+    const buttonRow = document.createElement('div');
+    buttonRow.className = 'markup-popup-buttons';
+    popupEl.appendChild(buttonRow);
 
     if (m.linked_document_id) {
       const openBtn = document.createElement('button');
@@ -350,7 +354,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
         e.stopPropagation();
         window.open(`/document-view.html?documentId=${m.linked_document_id}`, '_blank');
       });
-      popupEl.appendChild(openBtn);
+      buttonRow.appendChild(openBtn);
     }
 
     if (perm.canEdit) {
@@ -359,9 +363,9 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
       linkBtn.textContent = m.linked_document_id ? 'Change link' : 'Link doc';
       linkBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        toggleLinkPicker(m);
+        openLinkPicker(m);
       });
-      popupEl.appendChild(linkBtn);
+      buttonRow.appendChild(linkBtn);
     }
 
     if (perm.canPublish) {
@@ -376,7 +380,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
         Object.assign(m, markup);
         renderAll();
       });
-      popupEl.appendChild(pubBtn);
+      buttonRow.appendChild(pubBtn);
     }
 
     if (perm.canEdit) {
@@ -392,7 +396,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
         }
         renderAll();
       });
-      popupEl.appendChild(editBtn);
+      buttonRow.appendChild(editBtn);
     }
 
     if (perm.canDelete) {
@@ -408,36 +412,34 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, onToolCha
         editingId = null;
         renderAll();
       });
-      popupEl.appendChild(delBtn);
+      buttonRow.appendChild(delBtn);
+    }
+
+    // Shows which document is linked (e.g. "RFI-042 - Beam size...") so the
+    // user doesn't have to open it just to see what it is.
+    if (m.linked_document_id && documents) {
+      const linked = documents.find((d) => d.id === m.linked_document_id);
+      if (linked) {
+        const label = document.createElement('div');
+        label.className = 'markup-popup-doclabel';
+        label.textContent = linked.name;
+        label.title = linked.name;
+        popupEl.appendChild(label);
+      }
     }
   }
 
-  function toggleLinkPicker(m) {
-    const existing = popupEl.querySelector('select.link-picker');
-    if (existing) {
-      existing.remove();
-      return;
-    }
-    const select = document.createElement('select');
-    select.className = 'link-picker';
-    select.innerHTML =
-      '<option value="">No linked document</option>' +
-      documents
-        .map(
-          (d) =>
-            `<option value="${d.id}" ${d.id === m.linked_document_id ? 'selected' : ''}>${d.kind.toUpperCase()} ${d.number || ''} ${d.title || ''}</option>`
-        )
-        .join('');
-    select.addEventListener('click', (e) => e.stopPropagation());
-    select.addEventListener('change', async () => {
-      const { markup } = await api('PATCH', `/api/markups/${m.id}`, {
-        linked_document_id: select.value ? Number(select.value) : null,
-      });
-      Object.assign(m, markup);
-      select.remove();
-      renderAll();
+  function openLinkPicker(m) {
+    openDocPicker({
+      documents: documents || [],
+      folders: folders || [],
+      currentId: m.linked_document_id,
+      onSelect: async (documentId) => {
+        const { markup } = await api('PATCH', `/api/markups/${m.id}`, { linked_document_id: documentId });
+        Object.assign(m, markup);
+        renderAll();
+      },
     });
-    popupEl.appendChild(select);
   }
 
   function selectMarkup(id) {
