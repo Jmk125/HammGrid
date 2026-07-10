@@ -13,6 +13,16 @@ function escapeHtml(str) {
   })[c]);
 }
 
+function escapeHtml(str) {
+  return String(str || '').replace(/[&<>'"]/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;',
+  })[c]);
+}
+
 async function load() {
   const { project } = await api('GET', `/api/projects/${projectId}`);
   const disciplineSelect = document.getElementById('share-discipline');
