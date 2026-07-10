@@ -384,13 +384,9 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   height: 72vh;
   cursor: grab;
   user-select: none;
-  /* Stops Safari's native "pinch to zoom the whole page" gesture from ever
-     starting here, so our own pinch-to-zoom (zoomPan.js) gets the gesture
-     instead - explicitly still allowing single-finger pan/scroll gestures
-     to pass through untouched (touch-action: none would also block those,
-     which would break touch-based markup/box drawing that relies on the
-     browser's normal single-touch-to-mouse-event compatibility behavior). */
-  touch-action: pan-x pan-y;
+  /* Keep iPad Safari from turning drawing gestures into page scroll/zoom.
+     zoomPan.js and markups.js handle pan/pinch/draw inside this region. */
+  touch-action: none;
 }
 .zoom-wrap.panning { cursor: grabbing; }
 .zoom-pan-inner {
