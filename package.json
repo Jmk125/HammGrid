@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "nodemon src/server.js",
+    "start": "PORT=3010 node src/server.js",
+    "dev": "PORT=3010 nodemon src/server.js",
     "create-admin": "node src/scripts/create-admin.js",
     "fix-path-separators": "node src/scripts/fix-path-separators.js"
   },

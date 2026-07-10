@@ -35,6 +35,12 @@ addColumnIfMissing('projects', 'size', 'TEXT');
 
 addColumnIfMissing('sheets', 'scale_feet_per_inch', 'REAL');
 
+addColumnIfMissing('shares', 'name', 'TEXT');
+addColumnIfMissing('shares', 'allow_personal_markups', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('shares', 'allow_documents', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('shares', 'document_folder_ids', "TEXT NOT NULL DEFAULT '[]'");
+addColumnIfMissing('shares', 'document_ids', "TEXT NOT NULL DEFAULT '[]'");
+
 // documents used to be a rigid kind('rfi'|'submittal')/number/title/date/
 // status/pdf_path row. It's now a folder-organized entity with versioned
 // revisions (document_folders/documents/document_versions, mirroring
