@@ -5,7 +5,7 @@
 // mouse positions) keeps working unmodified because getBoundingClientRect()
 // already reflects applied transforms.
 
-export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButton = 0 }) {
+export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButton = 0, touchPan = panButton === 0 }) {
   const state = { scale: 1, x: 0, y: 0 };
 
   // When panning is bound to the right mouse button (box-drawing tool, so
@@ -70,14 +70,10 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
     wrapEl.classList.remove('panning');
   });
 
-  // Two-finger pinch-to-zoom (iPad Safari etc.). Deliberately only handles
-  // the exactly-2-touches case - single-finger touch is left completely
-  // alone here so it keeps synthesizing mouse events for markup drawing /
-  // box drawing / drag-pan exactly as before, with zero risk of double-
-  // firing. The CSS touch-action: pan-x pan-y on .zoom-wrap (see style.css)
-  // is what actually stops Safari's native "zoom the whole page" gesture -
-  // preventDefault() here alone is often too late, since Safari can start
-  // recognizing its own pinch gesture before this handler even runs.
+  // Touch handling for iPad Safari etc. Two fingers pinch the drawing, and
+  // one finger pans the drawing when the current tool/target allows panning.
+  // Drawing/markup tools can block one-finger panning via isPanBlocked(), so
+  // touch markups still receive the gesture instead of fighting the viewport.
   function touchDistance(touches) {
     return Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
   }
@@ -86,11 +82,21 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
   }
 
   let pinch = null; // { startDist, startScale }
+  let touchPanState = null;
   wrapEl.addEventListener(
     'touchstart',
     (e) => {
+      if (e.touches.length === 1 && touchPan) {
+        if (isPanBlocked && isPanBlocked(e)) return;
+        e.preventDefault();
+        const t = e.touches[0];
+        touchPanState = { startX: t.clientX, startY: t.clientY, origX: state.x, origY: state.y };
+        wrapEl.classList.add('panning');
+        return;
+      }
       if (e.touches.length !== 2) return;
       e.preventDefault();
+      touchPanState = null;
       pinch = { startDist: touchDistance(e.touches), startScale: state.scale };
     },
     { passive: false }
@@ -98,6 +104,14 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
   wrapEl.addEventListener(
     'touchmove',
     (e) => {
+      if (e.touches.length === 1 && touchPanState) {
+        e.preventDefault();
+        const t = e.touches[0];
+        state.x = touchPanState.origX + (t.clientX - touchPanState.startX);
+        state.y = touchPanState.origY + (t.clientY - touchPanState.startY);
+        apply();
+        return;
+      }
       if (e.touches.length !== 2 || !pinch) return;
       e.preventDefault();
       const rect = wrapEl.getBoundingClientRect();
@@ -112,11 +126,15 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
     },
     { passive: false }
   );
-  function endPinch(e) {
+  function endTouch(e) {
     if (e.touches.length < 2) pinch = null;
+    if (e.touches.length === 0) {
+      touchPanState = null;
+      wrapEl.classList.remove('panning');
+    }
   }
-  wrapEl.addEventListener('touchend', endPinch);
-  wrapEl.addEventListener('touchcancel', endPinch);
+  wrapEl.addEventListener('touchend', endTouch);
+  wrapEl.addEventListener('touchcancel', endTouch);
 
   return { fitToView, apply, state };
 }
