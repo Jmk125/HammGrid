@@ -5,6 +5,11 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router({ mergeParams: true });
 
+function normalizeFolderIds(ids) {
+  if (!Array.isArray(ids)) return '[]';
+  return JSON.stringify([...new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))]);
+}
+
 router.get('/', requireRole('admin', 'editor'), (req, res) => {
   const shares = db
     .prepare(
@@ -19,7 +24,7 @@ router.get('/', requireRole('admin', 'editor'), (req, res) => {
 });
 
 router.post('/', requireRole('admin', 'editor'), (req, res) => {
-  const { name, scope, snapshot_revision_id, discipline_filter, expires_at } = req.body;
+  const { name, scope, snapshot_revision_id, discipline_filter, expires_at, allow_personal_markups, allow_documents, document_folder_ids } = req.body;
   if (!['live', 'snapshot'].includes(scope)) {
     return res.status(400).json({ error: 'scope must be live or snapshot' });
   }
@@ -30,8 +35,8 @@ router.post('/', requireRole('admin', 'editor'), (req, res) => {
   const token = crypto.randomBytes(24).toString('base64url');
   const result = db
     .prepare(
-      `INSERT INTO shares (project_id, token, name, scope, snapshot_revision_id, discipline_filter, expires_at, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO shares (project_id, token, name, scope, snapshot_revision_id, discipline_filter, expires_at, allow_personal_markups, allow_documents, document_folder_ids, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       req.params.projectId,
@@ -41,6 +46,9 @@ router.post('/', requireRole('admin', 'editor'), (req, res) => {
       scope === 'snapshot' ? snapshot_revision_id : null,
       discipline_filter || null,
       expires_at || null,
+      allow_personal_markups ? 1 : 0,
+      allow_documents ? 1 : 0,
+      normalizeFolderIds(document_folder_ids),
       req.session.user.id
     );
 
@@ -79,7 +87,10 @@ router.patch('/:id', requireAuth, (req, res) => {
 
   const hasName = Object.prototype.hasOwnProperty.call(req.body, 'name');
   const hasRevoked = Object.prototype.hasOwnProperty.call(req.body, 'revoked');
-  if (!hasName && !hasRevoked) {
+  const hasPersonalMarkups = Object.prototype.hasOwnProperty.call(req.body, 'allow_personal_markups');
+  const hasDocuments = Object.prototype.hasOwnProperty.call(req.body, 'allow_documents');
+  const hasDocumentFolders = Object.prototype.hasOwnProperty.call(req.body, 'document_folder_ids');
+  if (!hasName && !hasRevoked && !hasPersonalMarkups && !hasDocuments && !hasDocumentFolders) {
     return res.status(400).json({ error: 'Nothing to update' });
   }
   if (hasRevoked && ![true, false, 0, 1].includes(req.body.revoked)) {
@@ -88,7 +99,11 @@ router.patch('/:id', requireAuth, (req, res) => {
 
   const nextName = hasName ? (req.body.name || '').trim() || null : share.name;
   const nextRevoked = hasRevoked ? (req.body.revoked ? 1 : 0) : share.revoked;
-  db.prepare('UPDATE shares SET name = ?, revoked = ? WHERE id = ?').run(nextName, nextRevoked, share.id);
+  const nextPersonalMarkups = hasPersonalMarkups ? (req.body.allow_personal_markups ? 1 : 0) : share.allow_personal_markups;
+  const nextDocuments = hasDocuments ? (req.body.allow_documents ? 1 : 0) : share.allow_documents;
+  const nextDocumentFolders = hasDocumentFolders ? normalizeFolderIds(req.body.document_folder_ids) : share.document_folder_ids;
+  db.prepare('UPDATE shares SET name = ?, revoked = ?, allow_personal_markups = ?, allow_documents = ?, document_folder_ids = ? WHERE id = ?')
+    .run(nextName, nextRevoked, nextPersonalMarkups, nextDocuments, nextDocumentFolders, share.id);
 
   const action = hasRevoked
     ? nextRevoked ? 'share_deactivate' : 'share_activate'
@@ -96,6 +111,9 @@ router.patch('/:id', requireAuth, (req, res) => {
   logShareChange(share.project_id, user.id, action, share.id, {
     name: nextName,
     revoked: Boolean(nextRevoked),
+    allow_personal_markups: Boolean(nextPersonalMarkups),
+    allow_documents: Boolean(nextDocuments),
+    document_folder_ids: JSON.parse(nextDocumentFolders || '[]'),
   });
 
   const updated = db.prepare('SELECT * FROM shares WHERE id = ?').get(share.id);

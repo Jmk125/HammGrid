@@ -134,7 +134,20 @@ CREATE TABLE IF NOT EXISTS shares (
   discipline_filter TEXT,
   expires_at TEXT,
   revoked INTEGER NOT NULL DEFAULT 0,
+  allow_personal_markups INTEGER NOT NULL DEFAULT 0,
+  allow_documents INTEGER NOT NULL DEFAULT 0,
+  document_folder_ids TEXT NOT NULL DEFAULT '[]',
   created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS share_markups (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  share_id INTEGER NOT NULL REFERENCES shares(id) ON DELETE CASCADE,
+  sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect')),
+  geometry TEXT NOT NULL,
+  style TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -195,6 +208,8 @@ CREATE INDEX IF NOT EXISTS idx_markups_sheet ON markups(sheet_id);
 CREATE INDEX IF NOT EXISTS idx_markups_linked_document ON markups(linked_document_id);
 CREATE INDEX IF NOT EXISTS idx_shares_project ON shares(project_id);
 CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token);
+CREATE INDEX IF NOT EXISTS idx_share_markups_share ON share_markups(share_id);
+CREATE INDEX IF NOT EXISTS idx_share_markups_sheet ON share_markups(sheet_id);
 CREATE INDEX IF NOT EXISTS idx_activity_log_project ON activity_log(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires);
 CREATE INDEX IF NOT EXISTS idx_staged_sheets_revision ON staged_sheets(revision_id);

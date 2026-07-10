@@ -1,6 +1,17 @@
-import { renderShell } from '/js/shell.js';
+import { renderShell, openModal, closeModal } from '/js/shell.js';
 
 const projectId = new URLSearchParams(window.location.search).get('projectId');
+let allFolders = [];
+
+function escapeHtml(str) {
+  return String(str || '').replace(/[&<>'"]/g, (c) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;',
+  })[c]);
+}
 
 function escapeHtml(str) {
   return String(str || '').replace(/[&<>'"]/g, (c) => ({
@@ -19,6 +30,11 @@ async function load() {
     disciplineSelect.appendChild(new Option(d, d));
   }
 
+  const folderData = await api('GET', `/api/projects/${projectId}/documents/folders`);
+  allFolders = folderData.folders || [];
+  const folderSelect = document.getElementById('share-folders');
+  for (const f of allFolders) folderSelect.appendChild(new Option(f.name, f.id));
+
   const { revisions } = await api('GET', `/api/projects/${projectId}/revisions`);
   const revisionSelect = document.getElementById('share-revision');
   for (const r of revisions.filter((r) => r.status === 'published')) {
@@ -27,6 +43,10 @@ async function load() {
 
   await loadShares();
 }
+
+document.getElementById('share-documents').addEventListener('change', (e) => {
+  document.getElementById('share-folders').style.display = e.target.checked ? '' : 'none';
+});
 
 document.getElementById('share-scope').addEventListener('change', (e) => {
   document.getElementById('share-revision').style.display = e.target.value === 'snapshot' ? '' : 'none';
@@ -53,6 +73,7 @@ async function loadShares() {
       <td>${escapeHtml(s.expires_at) || 'Never'}</td>
       <td>${escapeHtml(s.created_by_name)}</td>
       <td><span class="pill ${status === 'active' ? 'new' : 'suspicious'}">${status}</span></td>
+      <td>${s.allow_personal_markups ? 'Personal markups' : 'View only'}${s.allow_documents ? ' + docs' : ''}</td>
       <td><input readonly value="${escapeHtml(url)}" style="width:260px" onclick="this.select()"></td>
       <td class="row"></td>`;
 
@@ -66,6 +87,12 @@ async function loadShares() {
       await updateShare(s.id, { name: nextName });
     });
     actions.appendChild(renameBtn);
+
+    const permissionsBtn = document.createElement('button');
+    permissionsBtn.type = 'button';
+    permissionsBtn.textContent = 'Permissions';
+    permissionsBtn.addEventListener('click', () => editPermissions(s));
+    actions.appendChild(permissionsBtn);
 
     if (!expired) {
       const toggleBtn = document.createElement('button');
@@ -101,6 +128,9 @@ document.getElementById('new-share-form').addEventListener('submit', async (e) =
     snapshot_revision_id: scope === 'snapshot' ? Number(document.getElementById('share-revision').value) : null,
     discipline_filter: document.getElementById('share-discipline').value || null,
     expires_at: document.getElementById('share-expires').value || null,
+    allow_personal_markups: document.getElementById('share-personal-markups').checked,
+    allow_documents: document.getElementById('share-documents').checked,
+    document_folder_ids: [...document.getElementById('share-folders').selectedOptions].map((o) => Number(o.value)),
   };
   const { share } = await api('POST', `/api/projects/${projectId}/shares`, body);
   document.getElementById('new-share-result').textContent =
@@ -108,6 +138,32 @@ document.getElementById('new-share-form').addEventListener('submit', async (e) =
   document.getElementById('share-name').value = '';
   await loadShares();
 });
+
+function folderIdsForShare(share) {
+  try { return JSON.parse(share.document_folder_ids || '[]'); } catch (e) { return []; }
+}
+
+function editPermissions(share) {
+  const folderIds = folderIdsForShare(share);
+  const backdrop = openModal(`
+    <h2>Share permissions</h2>
+    <label><input type="checkbox" id="edit-personal" ${share.allow_personal_markups ? 'checked' : ''}> Allow personal markups</label>
+    <label><input type="checkbox" id="edit-documents" ${share.allow_documents ? 'checked' : ''}> Allow documents</label>
+    <div class="field"><label>Allowed document folders</label>
+      <select id="edit-folders" multiple size="8">${allFolders.map((f) => `<option value="${f.id}" ${folderIds.includes(f.id) ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}</select>
+    </div>
+    <div class="row"><button id="save-permissions" class="primary">Save</button><button id="cancel-permissions">Cancel</button></div>
+  `);
+  backdrop.querySelector('#cancel-permissions').addEventListener('click', closeModal);
+  backdrop.querySelector('#save-permissions').addEventListener('click', async () => {
+    await updateShare(share.id, {
+      allow_personal_markups: backdrop.querySelector('#edit-personal').checked,
+      allow_documents: backdrop.querySelector('#edit-documents').checked,
+      document_folder_ids: [...backdrop.querySelector('#edit-folders').selectedOptions].map((o) => Number(o.value)),
+    });
+    closeModal();
+  });
+}
 
 (async function init() {
   const me = await requireSession();

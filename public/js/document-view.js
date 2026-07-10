@@ -44,6 +44,13 @@ async function renderPdf() {
   }
 }
 
+document.getElementById('back-btn').addEventListener('click', () => {
+  window.close();
+  if (!window.closed) {
+    history.back();
+  }
+});
+
 document.getElementById('logout').addEventListener('click', async () => {
   await api('POST', '/api/auth/logout');
   window.location.href = '/login.html';
