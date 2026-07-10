@@ -1,4 +1,4 @@
-import { renderShell, openModal, closeModal, showToast } from '/js/shell.js';
+import { renderShell, openModal, closeModal, showToast, confirmModal } from '/js/shell.js';
 
 const TRASH_ICON =
   '<svg viewBox="0 0 20 20"><path d="M4 6h12M8 6V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2m-7 0 .7 10.5A1 1 0 0 0 6.7 17h6.6a1 1 0 0 0 1-1.5L15 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -104,8 +104,15 @@ function renderTable() {
           linked_markup_count > 0
             ? ` ${linked_markup_count} markup(s) on drawings link to documents inside it - those links will be removed too.`
             : '';
-        if (!confirm(`Delete folder "${f.name}" and everything inside it? This cannot be undone.${warning}`)) return;
+        const ok = await confirmModal({
+          title: `Delete folder "${f.name}"?`,
+          message: `Everything inside it will be deleted too. This cannot be undone.${warning}`,
+          confirmLabel: 'Delete',
+          danger: true,
+        });
+        if (!ok) return;
         await api('DELETE', `/api/document-folders/${f.id}`);
+        showToast(`Folder "${f.name}" deleted.`, 'success');
         await loadAll();
         render();
       });
@@ -140,8 +147,15 @@ function renderTable() {
           d.linked_sheet_count > 0
             ? ` It's linked from markups on ${d.linked_sheet_count} sheet(s) - those links will be removed too.`
             : '';
-        if (!confirm(`Delete "${d.name}" and all its revisions? This cannot be undone.${warning}`)) return;
+        const ok = await confirmModal({
+          title: `Delete "${d.name}"?`,
+          message: `All its revisions will be deleted too. This cannot be undone.${warning}`,
+          confirmLabel: 'Delete',
+          danger: true,
+        });
+        if (!ok) return;
         await api('DELETE', `/api/documents/${d.id}`);
+        showToast(`"${d.name}" deleted.`, 'success');
         await loadAll();
         render();
       });

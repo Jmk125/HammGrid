@@ -55,8 +55,25 @@ router.patch('/:sheetId', requireRole('admin', 'editor'), (req, res) => {
     .get(req.params.sheetId, req.params.projectId);
   if (!sheet) return res.status(404).json({ error: 'Not found' });
 
-  const { scale_feet_per_inch } = req.body;
-  db.prepare('UPDATE sheets SET scale_feet_per_inch = ? WHERE id = ?').run(
+  const { scale_feet_per_inch, sheet_number, discipline } = req.body;
+
+  let nextNumber = sheet.sheet_number;
+  if (sheet_number !== undefined) {
+    nextNumber = String(sheet_number).trim();
+    if (!nextNumber) return res.status(400).json({ error: 'Sheet number cannot be empty' });
+    if (nextNumber !== sheet.sheet_number) {
+      const collision = db
+        .prepare('SELECT id FROM sheets WHERE project_id = ? AND sheet_number = ? AND id != ?')
+        .get(req.params.projectId, nextNumber, sheet.id);
+      if (collision) {
+        return res.status(400).json({ error: `Sheet number "${nextNumber}" is already in use on another sheet.` });
+      }
+    }
+  }
+
+  db.prepare('UPDATE sheets SET sheet_number = ?, discipline = ?, scale_feet_per_inch = ? WHERE id = ?').run(
+    nextNumber,
+    discipline === undefined ? sheet.discipline : discipline || null,
     scale_feet_per_inch === undefined ? sheet.scale_feet_per_inch : scale_feet_per_inch,
     sheet.id
   );

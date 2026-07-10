@@ -18,6 +18,130 @@ export function closeModal() {
   document.querySelectorAll('.modal-backdrop').forEach((el) => el.remove());
 }
 
+// navigator.clipboard.writeText() needs a secure context (HTTPS, or
+// localhost) and can be denied outright by browser/OS permissions - this
+// app is described in CLAUDE.md as served over the office LAN / a Pi, which
+// may well be plain HTTP, so the modern API is not guaranteed to work in
+// production. Falls back to the old hidden-textarea + execCommand trick,
+// which works without any permission grant or secure-context requirement.
+export async function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      // fall through to the legacy fallback below
+    }
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (err) {
+    ok = false;
+  }
+  textarea.remove();
+  return ok;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// Promise-based replacement for the native alert() dialog - a single-button
+// acknowledgment (no cancel), for cases like "Published 12 sheet(s)" where a
+// yes/no confirm doesn't fit but the caller still needs to wait for the user
+// to dismiss it before moving on (e.g. before navigating away).
+export function alertModal({ title = 'Notice', message = '', okLabel = 'OK' } = {}) {
+  return new Promise((resolve) => {
+    openModal(`
+      <h2>${escapeHtml(title)}</h2>
+      ${message ? `<p>${escapeHtml(message)}</p>` : ''}
+      <div class="modal-actions">
+        <button class="primary" type="button" id="modal-confirm">${escapeHtml(okLabel)}</button>
+      </div>
+    `);
+    document.getElementById('modal-confirm').addEventListener('click', () => {
+      closeModal();
+      resolve();
+    });
+  });
+}
+
+// Promise-based replacement for the native confirm() dialog - resolves true/false,
+// styled like the rest of the app instead of a jarring native browser popup.
+export function confirmModal({ title = 'Are you sure?', message = '', confirmLabel = 'Confirm', danger = false } = {}) {
+  return new Promise((resolve) => {
+    openModal(`
+      <h2>${escapeHtml(title)}</h2>
+      ${message ? `<p>${escapeHtml(message)}</p>` : ''}
+      <div class="modal-actions">
+        <button type="button" id="modal-cancel">Cancel</button>
+        <button type="button" id="modal-confirm" class="${danger ? 'danger' : 'primary'}">${escapeHtml(confirmLabel)}</button>
+      </div>
+    `);
+    let resolved = false;
+    const finish = (value) => {
+      if (resolved) return;
+      resolved = true;
+      closeModal();
+      resolve(value);
+    };
+    document.getElementById('modal-cancel').addEventListener('click', () => finish(false));
+    document.getElementById('modal-confirm').addEventListener('click', () => finish(true));
+  });
+}
+
+// Promise-based replacement for the native prompt() dialog - resolves the
+// trimmed string, or null if cancelled.
+export function promptModal({ title = 'Enter a value', message = '', placeholder = '', defaultValue = '', confirmLabel = 'OK', required = true } = {}) {
+  return new Promise((resolve) => {
+    openModal(`
+      <h2>${escapeHtml(title)}</h2>
+      ${message ? `<p class="muted">${escapeHtml(message)}</p>` : ''}
+      <div class="field">
+        <input id="modal-prompt-input" placeholder="${escapeHtml(placeholder)}" value="${escapeHtml(defaultValue)}">
+      </div>
+      <p class="error" id="modal-prompt-error" style="display:none;"></p>
+      <div class="modal-actions">
+        <button type="button" id="modal-cancel">Cancel</button>
+        <button class="primary" type="button" id="modal-confirm">${escapeHtml(confirmLabel)}</button>
+      </div>
+    `);
+    let resolved = false;
+    const input = document.getElementById('modal-prompt-input');
+    input.focus();
+    input.select();
+    const finish = (value) => {
+      if (resolved) return;
+      resolved = true;
+      closeModal();
+      resolve(value);
+    };
+    document.getElementById('modal-cancel').addEventListener('click', () => finish(null));
+    function submit() {
+      const value = input.value.trim();
+      if (required && !value) {
+        const err = document.getElementById('modal-prompt-error');
+        err.textContent = 'This field is required.';
+        err.style.display = 'block';
+        return;
+      }
+      finish(value);
+    }
+    document.getElementById('modal-confirm').addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+    });
+  });
+}
+
 // ---------- Toasts + cross-page background job notifications ----------
 // There's no push/background-sync infrastructure here (deliberately - it's
 // unreliable on iOS Safari, the actual field-use target per CLAUDE.md), so

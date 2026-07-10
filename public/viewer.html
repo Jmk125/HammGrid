@@ -28,6 +28,14 @@
       </main>
     </div>
   </div>
+  <div id="selection-bar" class="selection-bar" style="display:none;">
+    <label class="chip-toggle" id="select-all-chip">
+      <input type="checkbox" id="select-all-checkbox"><span class="dot"></span>Select all
+    </label>
+    <span id="selection-count" class="muted">0 selected</span>
+    <button type="button" class="primary" id="selection-download-btn" disabled>Download</button>
+    <button type="button" id="selection-cancel-btn">Cancel</button>
+  </div>
   <script src="/js/api.js"></script>
   <script type="module" src="/js/viewer.js"></script>
   <script type="module" src="/js/pwa.js"></script>

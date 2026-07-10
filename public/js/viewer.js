@@ -1,7 +1,11 @@
 import { syncProject, getCachedSheets, getCachedAsset } from '/js/offline-store.js';
-import { renderShell } from '/js/shell.js';
+import { renderShell, openModal, closeModal } from '/js/shell.js';
 
 const projectId = new URLSearchParams(window.location.search).get('projectId');
+
+let selectionMode = false;
+let selectedIds = new Set();
+let lastFiltered = [];
 
 async function loadFilters() {
   const { project } = await api('GET', `/api/projects/${projectId}`);
@@ -42,23 +46,163 @@ function renderGrid(items) {
     );
   }
   filtered.sort((a, b) => a.sheet_number.localeCompare(b.sheet_number));
+  lastFiltered = filtered;
 
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
   document.getElementById('empty-msg').style.display = filtered.length ? 'none' : '';
 
   for (const s of filtered) {
-    const a = document.createElement('a');
-    a.className = 'sheet-card';
-    a.href = `/sheet.html?projectId=${projectId}&sheetId=${s.sheet_id}`;
-    a.innerHTML = `
+    const selected = selectedIds.has(s.sheet_id);
+    // Selection mode swaps the card from a navigating <a> to a non-navigating
+    // <div> entirely, rather than trying to suppress the <a>'s default click
+    // behavior - simpler and avoids any chance of a stray navigation on touch.
+    const card = document.createElement(selectionMode ? 'div' : 'a');
+    card.className = 'sheet-card' + (selectionMode ? ' selectable' : '') + (selected ? ' selected' : '');
+    if (!selectionMode) card.href = `/sheet.html?projectId=${projectId}&sheetId=${s.sheet_id}`;
+    card.innerHTML = `
+      ${selectionMode ? `<span class="card-checkbox"><input type="checkbox" tabindex="-1" ${selected ? 'checked' : ''}><span class="checkmark"></span></span>` : ''}
       <div class="thumb-wrap"><img src="${s.thumbSrc}" loading="lazy"></div>
       <div class="meta">
         <div class="sheet-number">${s.sheet_number}</div>
         <div class="sheet-title">${s.title || ''}</div>
       </div>`;
-    grid.appendChild(a);
+    if (selectionMode) {
+      card.addEventListener('click', () => toggleSheetSelection(s.sheet_id, card));
+    }
+    grid.appendChild(card);
   }
+  if (selectionMode) updateSelectionBar();
+}
+
+function toggleSheetSelection(sheetId, cardEl) {
+  const nowSelected = !selectedIds.has(sheetId);
+  if (nowSelected) selectedIds.add(sheetId);
+  else selectedIds.delete(sheetId);
+  cardEl.classList.toggle('selected', nowSelected);
+  cardEl.querySelector('input[type="checkbox"]').checked = nowSelected;
+  updateSelectionBar();
+}
+
+function updateSelectionBar() {
+  const count = selectedIds.size;
+  document.getElementById('selection-count').textContent = count === 1 ? '1 selected' : `${count} selected`;
+  document.getElementById('selection-download-btn').disabled = count === 0;
+  const allSelected = lastFiltered.length > 0 && lastFiltered.every((s) => selectedIds.has(s.sheet_id));
+  const selectAllInput = document.getElementById('select-all-checkbox');
+  selectAllInput.checked = allSelected;
+  document.getElementById('select-all-chip').classList.toggle('checked', allSelected);
+}
+
+function setSelectionMode(on) {
+  selectionMode = on;
+  document.getElementById('selection-bar').style.display = on ? '' : 'none';
+  if (!on) selectedIds.clear();
+  renderGrid(lastItems);
+}
+
+function setupSelectionToggleButton() {
+  const whoami = document.getElementById('whoami');
+  const row = whoami ? whoami.parentElement : document.querySelector('#topbar > .row:last-child');
+  if (!row || document.getElementById('select-sheets-btn')) return;
+  const btn = document.createElement('button');
+  btn.id = 'select-sheets-btn';
+  btn.className = 'icon-btn';
+  btn.type = 'button';
+  btn.title = 'Download drawings';
+  btn.textContent = '⬇';
+  btn.addEventListener('click', () => setSelectionMode(true));
+  const newRevBtn = document.getElementById('new-revision-btn');
+  if (newRevBtn) newRevBtn.after(btn);
+  else row.prepend(btn);
+}
+
+function setupSelectionBar() {
+  const selectAllInput = document.getElementById('select-all-checkbox');
+  // The native <label> wrapping this input already forwards any click inside
+  // it to the input itself (including toggling `checked`), so listening for
+  // the input's own 'change' event is the only wiring needed here - an extra
+  // click listener on the label double-toggles it.
+  selectAllInput.addEventListener('change', () => {
+    if (selectAllInput.checked) lastFiltered.forEach((s) => selectedIds.add(s.sheet_id));
+    else lastFiltered.forEach((s) => selectedIds.delete(s.sheet_id));
+    renderGrid(lastItems);
+  });
+  document.getElementById('selection-cancel-btn').addEventListener('click', () => setSelectionMode(false));
+  document.getElementById('selection-download-btn').addEventListener('click', () => {
+    if (selectedIds.size > 0) openMergedDownloadModal([...selectedIds]);
+  });
+}
+
+function openMergedDownloadModal(sheetIds) {
+  const count = sheetIds.length;
+  openModal(`
+    <h2>Download ${count} drawing${count === 1 ? '' : 's'}</h2>
+    <label class="permission-option">
+      <input type="checkbox" id="dl-published" checked>
+      <span><b>Published markups</b><small>Include markups any user has published to these sheets.</small></span>
+    </label>
+    <label class="permission-option">
+      <input type="checkbox" id="dl-personal" checked>
+      <span><b>My personal markups</b><small>Include your own private markups on these sheets.</small></span>
+    </label>
+    <p class="error" id="dl-error" style="display:none;"></p>
+    <div class="modal-actions">
+      <button type="button" id="modal-cancel">Cancel</button>
+      <button class="primary" type="button" id="modal-ok">Download</button>
+    </div>
+  `);
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  document.getElementById('modal-ok').addEventListener('click', async () => {
+    const okBtn = document.getElementById('modal-ok');
+    okBtn.disabled = true;
+    okBtn.textContent = 'Preparing...';
+    try {
+      await downloadMergedSheets(sheetIds, {
+        published: document.getElementById('dl-published').checked,
+        personal: document.getElementById('dl-personal').checked,
+      });
+      closeModal();
+      setSelectionMode(false);
+    } catch (err) {
+      const errEl = document.getElementById('dl-error');
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+      okBtn.disabled = false;
+      okBtn.textContent = 'Download';
+    }
+  });
+}
+
+// Not using the shared api() helper here - it always calls res.json(), which
+// would consume/choke on this endpoint's binary PDF body. A POST (not GET)
+// because a large sheet selection could otherwise overflow a URL query string.
+async function downloadMergedSheets(sheetIds, { published, personal }) {
+  const res = await fetch(`/api/projects/${projectId}/export/selected-merged-pdf`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sheetIds, published: !!published, personal: !!personal }),
+  });
+  if (!res.ok) {
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const data = await res.json();
+      if (data && data.error) message = data.error;
+    } catch (e) {
+      // no JSON body on this error - keep the status-line message
+    }
+    throw new Error(message);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'drawings-merged.pdf';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // Renders straight from IndexedDB/OPFS - no network in the path, works offline.
@@ -112,6 +256,8 @@ document.getElementById('search-filter').addEventListener('input', () => renderG
     active: 'viewer',
     me,
   });
+  setupSelectionToggleButton();
+  setupSelectionBar();
 
   try {
     await loadFilters();

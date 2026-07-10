@@ -4,10 +4,14 @@ const path = require('path');
 const crypto = require('crypto');
 const archiver = require('archiver');
 const { runPython } = require('./pyRunner');
+const { annotatePdfToFile } = require('./annotatePdf');
 
 const MERGE_SCRIPT = path.join(__dirname, '..', '..', 'pyproc', 'merge_pdfs.py');
 
-// sheetRows: [{ sheet_number, version_id, title }] with each version's pdf_path resolvable by the caller.
+// entries: [{ pdf_path, sheet_number, title, markups? }]. An entry with a
+// non-empty `markups` array is annotated into a temp file before merging;
+// callers that never pass `markups` (the plain project/share exports) pay
+// nothing extra - the loop below just reuses pdf_path directly for them.
 function streamZip(res, entries) {
   res.type('application/zip');
   res.attachment('drawings.zip');
@@ -30,7 +34,20 @@ async function streamMergedPdf(res, entries) {
   const outputPath = path.join(tmpDir, 'merged.pdf');
 
   try {
-    const manifest = entries.map((e) => ({ path: e.pdf_path, title: `${e.sheet_number} - ${e.title || ''}`.trim() }));
+    // Sequential, not Promise.all - matches the Pi RAM-constrained,
+    // one-at-a-time pyproc invocation pattern used everywhere else in this
+    // codebase (queue.js, burst/OCR).
+    const resolvedPaths = [];
+    for (const e of entries) {
+      let pdfPath = e.pdf_path;
+      if (e.markups && e.markups.length) {
+        const outPath = path.join(tmpDir, `annotated-${resolvedPaths.length}.pdf`);
+        await annotatePdfToFile(e.pdf_path, e.markups, outPath);
+        pdfPath = outPath;
+      }
+      resolvedPaths.push(pdfPath);
+    }
+    const manifest = entries.map((e, i) => ({ path: resolvedPaths[i], title: `${e.sheet_number} - ${e.title || ''}`.trim() }));
     fs.writeFileSync(manifestPath, JSON.stringify(manifest));
     await runPython(MERGE_SCRIPT, [manifestPath, outputPath]);
 

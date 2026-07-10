@@ -1,4 +1,4 @@
-import { renderShell, trackPendingJob, showToast } from '/js/shell.js';
+import { renderShell, trackPendingJob, showToast, confirmModal, alertModal } from '/js/shell.js';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 
 const params = new URLSearchParams(window.location.search);
@@ -21,6 +21,7 @@ let stagedSheets = [];
 let boxes = { number_box: null, title_box: null };
 let drawing = null; // {startX, startY} while dragging
 let revisionTitle = '';
+let revisionStatus = '';
 
 // ---------- Accordion ----------
 document.querySelectorAll('.pane-section-header').forEach((header) => {
@@ -41,12 +42,11 @@ function insertRevisionLabel(revision) {
 async function loadRevision() {
   const { revision } = await api('GET', `/api/projects/${projectId}/revisions/${revisionId}`);
   revisionTitle = revision.title;
+  revisionStatus = revision.status;
   insertRevisionLabel(revision);
-
-  const isDraft = revision.status === 'draft';
-  document.getElementById('section-upload').style.display = isDraft ? '' : 'none';
-  document.getElementById('section-box').style.display = isDraft ? '' : 'none';
-  document.getElementById('publish-btn').style.display = isDraft ? '' : 'none';
+  // Upload/box-drawing/publish all stay available regardless of status -
+  // sheets can be added to a revision after it's already published (the
+  // "modify an existing revision" flow), not just while still a draft.
   return revision;
 }
 
@@ -399,13 +399,19 @@ async function patchField(id, field, value) {
     if (idx >= 0) stagedSheets[idx] = staged_sheet;
     renderStagedTable();
   } catch (err) {
-    alert(`Failed to save: ${err.message}`);
+    showToast(`Failed to save: ${err.message}`, 'error');
     loadStaged();
   }
 }
 
 async function removeSheet(id) {
-  if (!confirm('Remove this sheet from the batch? This cannot be undone.')) return;
+  const ok = await confirmModal({
+    title: 'Remove this sheet?',
+    message: 'This removes it from the batch. This cannot be undone.',
+    confirmLabel: 'Remove',
+    danger: true,
+  });
+  if (!ok) return;
   await api('DELETE', `/api/staged-sheets/${id}`);
   await loadStaged();
 }
@@ -529,10 +535,16 @@ async function pollJob(jobId, statusEl, fileName) {
 document.getElementById('publish-btn').addEventListener('click', async () => {
   const errorEl = document.getElementById('publish-error');
   errorEl.style.display = 'none';
-  if (!confirm('Publish this revision? The field will see this set as current immediately.')) return;
+  const alreadyPublished = revisionStatus === 'published';
+  const ok = await confirmModal({
+    title: alreadyPublished ? 'Publish these additions?' : 'Publish this revision?',
+    message: 'The field will see this set as current immediately.',
+    confirmLabel: 'Publish',
+  });
+  if (!ok) return;
   try {
     const result = await api('POST', `/api/projects/${projectId}/revisions/${revisionId}/publish`);
-    alert(`Published ${result.published_sheets} sheet(s).`);
+    await alertModal({ title: 'Revision published', message: `Published ${result.published_sheets} sheet(s).` });
     window.location.href = `/project-settings.html?projectId=${projectId}`;
   } catch (err) {
     errorEl.textContent = err.message;

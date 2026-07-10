@@ -1,5 +1,6 @@
 import { getCachedMarkupsForSheet } from '/js/offline-store.js';
 import { openDocPicker } from '/js/docPicker.js';
+import { confirmModal, promptModal } from '/js/shell.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CLOUD_BUMP_SIZE = { 'cloud-small': 14, 'cloud-large': 30 };
@@ -427,7 +428,8 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
       delBtn.textContent = 'Delete';
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!confirm('Delete this markup?')) return;
+        const ok = await confirmModal({ title: 'Delete this markup?', confirmLabel: 'Delete', danger: true });
+        if (!ok) return;
         await api('DELETE', `/api/markups/${m.id}`);
         markups = markups.filter((x) => x.id !== m.id);
         selectedId = null;
@@ -557,8 +559,8 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
     const pt = getSvgPoint(evt);
 
     if (activeTool === 'text') {
-      const text = prompt('Text:');
       activateTool('select');
+      const text = await promptModal({ title: 'Add text markup', placeholder: 'Text', required: false });
       if (!text) return;
       const { w, h } = vbSize();
       await createMarkup('text', { x: pt.x / w, y: pt.y / h, text });

@@ -29,13 +29,12 @@ router.get('/:id/thumb', requireAuth, serveFile('thumb_path', 'image/webp'));
 router.get('/:id/preview', requireAuth, serveFile('preview_path', 'image/webp'));
 router.get('/:id/pdf', requireAuth, serveFile('pdf_path', 'application/pdf'));
 
+// Not gated to the revision still being a draft - staged sheets can exist
+// (and need review/correction) on an already-published revision too, when
+// sheets are being added to it after the fact.
 router.patch('/:id', requireRole('admin', 'editor'), (req, res) => {
   const staged = getStagedOr404(req, res);
   if (!staged) return;
-  const revision = db.prepare('SELECT status FROM revisions WHERE id = ?').get(staged.revision_id);
-  if (revision.status !== 'draft') {
-    return res.status(400).json({ error: 'Revision is already published' });
-  }
 
   const { corrected_number, corrected_title, discipline, match_status, match_sheet_id } = req.body;
   if (match_status !== undefined && !MATCH_STATUSES.includes(match_status)) {
@@ -75,10 +74,6 @@ router.patch('/:id', requireRole('admin', 'editor'), (req, res) => {
 router.delete('/:id', requireRole('admin', 'editor'), (req, res) => {
   const staged = getStagedOr404(req, res);
   if (!staged) return;
-  const revision = db.prepare('SELECT status FROM revisions WHERE id = ?').get(staged.revision_id);
-  if (revision.status !== 'draft') {
-    return res.status(400).json({ error: 'Revision is already published' });
-  }
 
   db.prepare('DELETE FROM staged_sheets WHERE id = ?').run(staged.id);
   for (const p of [staged.pdf_path, staged.thumb_path, staged.preview_path]) {

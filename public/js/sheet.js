@@ -1,7 +1,7 @@
 import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { initMarkups } from '/js/markups.js';
 import { getCachedAsset, getCachedSheets } from '/js/offline-store.js';
-import { renderShell, openModal, closeModal } from '/js/shell.js';
+import { renderShell, openModal, closeModal, showToast, promptModal } from '/js/shell.js';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
@@ -25,10 +25,19 @@ const sheetId = params.get('sheetId');
 
 let markupsController = null;
 let currentSheet = null;
+let canManage = false;
 let allVersions = [];
 let displayedVersionId = null;
 let overlayActive = false;
-let overlayLayers = { old: null, new: null, showOld: true, showNew: true };
+let overlayLayers = { a: null, b: null, showA: true, showB: true };
+// Cached <img> elements so drag-align/rotate only re-composites pixels
+// instead of re-fetching both preview images from the network every frame.
+let overlayImages = { a: null, b: null };
+let overlayTransform = { a: { tx: 0, ty: 0, rotation: 0 }, b: { tx: 0, ty: 0, rotation: 0 } };
+let overlayAlignActive = false;
+let overlayAlignTarget = 'b';
+let overlayDrag = null;
+let overlayRecomputeQueued = false;
 let currentRenderTask = null;
 let userHasZoomedOrPanned = false;
 
@@ -60,6 +69,7 @@ function setupZoomPan() {
     wrapEl,
     innerEl: document.getElementById('zoom-pan-inner'),
     isPanBlocked: (e) => {
+      if (overlayAlignActive) return true;
       if (markupsController && markupsController.isToolActive()) return true;
       if (measureTool) return true;
       const tag = (e.target.tagName || '').toLowerCase();
@@ -117,21 +127,107 @@ function insertSheetLabel(sheet, title) {
 }
 
 
+function openDownloadPicker() {
+  openModal(`
+    <h2>Download drawing</h2>
+    <label class="permission-option">
+      <input type="checkbox" id="dl-published" checked>
+      <span><b>Published markups</b><small>Include markups any user has published to this sheet.</small></span>
+    </label>
+    <label class="permission-option">
+      <input type="checkbox" id="dl-personal" checked>
+      <span><b>My personal markups</b><small>Include your own private markups on this sheet.</small></span>
+    </label>
+    <div class="modal-actions">
+      <button type="button" id="modal-cancel">Cancel</button>
+      <button class="primary" type="button" id="modal-ok">Download</button>
+    </div>
+  `);
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  document.getElementById('modal-ok').addEventListener('click', () => {
+    const includePublished = document.getElementById('dl-published').checked;
+    const includePersonal = document.getElementById('dl-personal').checked;
+    const qs = new URLSearchParams({ published: includePublished ? '1' : '0', personal: includePersonal ? '1' : '0' });
+    window.location.href = `/api/sheet-versions/${displayedVersionId}/download?${qs}`;
+    closeModal();
+  });
+}
+
 function setupDownloadButton() {
-  const row = document.querySelector('#topbar > .row');
+  const overlayBtn = document.getElementById('overlay-btn');
+  const row = overlayBtn ? overlayBtn.parentElement : document.querySelector('#topbar > .row');
   if (!row || document.getElementById('download-sheet-btn')) return;
   const btn = document.createElement('button');
   btn.id = 'download-sheet-btn';
+  btn.className = 'icon-btn';
   btn.type = 'button';
   btn.title = 'Download drawing';
   btn.textContent = '⬇';
-  btn.addEventListener('click', () => {
-    const includePublished = confirm('Include published markups in the downloaded PDF?');
-    const includePersonal = confirm('Include your personal markups in the downloaded PDF?');
-    const qs = new URLSearchParams({ published: includePublished ? '1' : '0', personal: includePersonal ? '1' : '0' });
-    window.location.href = `/api/sheet-versions/${displayedVersionId}/download?${qs}`;
+  btn.addEventListener('click', openDownloadPicker);
+  if (overlayBtn) overlayBtn.after(btn);
+  else row.prepend(btn);
+}
+
+function openEditSheetModal() {
+  openModal(`
+    <h2>Edit sheet</h2>
+    <div class="field">
+      <label>Sheet number</label>
+      <input id="edit-sheet-number" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>Discipline</label>
+      <input id="edit-sheet-discipline" placeholder="e.g. Architectural" autocomplete="off">
+    </div>
+    <p class="error" id="edit-sheet-error" style="display:none;"></p>
+    <div class="modal-actions">
+      <button type="button" id="modal-cancel">Cancel</button>
+      <button class="primary" type="button" id="modal-save">Save</button>
+    </div>
+  `);
+  // Set via JS rather than interpolated into the template - sheet numbers
+  // are OCR/user-entered free text, and setting .value sidesteps any
+  // attribute-escaping concern entirely.
+  document.getElementById('edit-sheet-number').value = currentSheet.sheet_number;
+  document.getElementById('edit-sheet-discipline').value = currentSheet.discipline || '';
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  document.getElementById('modal-save').addEventListener('click', async () => {
+    const saveBtn = document.getElementById('modal-save');
+    saveBtn.disabled = true;
+    try {
+      const { sheet } = await api('PATCH', `/api/projects/${projectId}/sheets/${sheetId}`, {
+        sheet_number: document.getElementById('edit-sheet-number').value,
+        discipline: document.getElementById('edit-sheet-discipline').value.trim(),
+      });
+      currentSheet.sheet_number = sheet.sheet_number;
+      currentSheet.discipline = sheet.discipline;
+      const titleEl = document.querySelector('.sheet-label .title');
+      insertSheetLabel(currentSheet, titleEl ? titleEl.textContent : '');
+      closeModal();
+      showToast('Sheet updated.', 'success');
+    } catch (err) {
+      const errEl = document.getElementById('edit-sheet-error');
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+      saveBtn.disabled = false;
+    }
   });
-  row.prepend(btn);
+}
+
+function setupEditSheetButton() {
+  if (!canManage) return;
+  const downloadBtn = document.getElementById('download-sheet-btn');
+  const row = downloadBtn ? downloadBtn.parentElement : document.querySelector('#topbar > .row');
+  if (!row || document.getElementById('edit-sheet-btn')) return;
+  const btn = document.createElement('button');
+  btn.id = 'edit-sheet-btn';
+  btn.className = 'icon-btn';
+  btn.type = 'button';
+  btn.title = 'Edit sheet';
+  btn.textContent = '✎';
+  btn.addEventListener('click', openEditSheetModal);
+  if (downloadBtn) downloadBtn.after(btn);
+  else row.prepend(btn);
 }
 
 // ---------- PDF rendering ----------
@@ -242,65 +338,178 @@ function loadImage(src) {
   });
 }
 
-// Old -> blue, new -> red, shared -> black, blank -> white. Mirrors
-// pyproc/overlay.py's formula exactly (R=g_old, G=min(g_old,g_new), B=g_new).
-async function computeOverlay() {
-  const { old: oldId, new: newId, showOld, showNew } = overlayLayers;
-  const canvas = document.getElementById('pdf-canvas');
-  const statusEl = document.getElementById('pdf-status');
-  statusEl.textContent = 'Loading overlay...';
-
-  const [oldImg, newImg] = await Promise.all([
-    loadImage(`/api/sheet-versions/${oldId}/preview`),
-    loadImage(`/api/sheet-versions/${newId}/preview`),
+// Fetched once per enterOverlay() call, not on every recompute - align-drag
+// and rotate need to re-composite many times per second, and re-fetching two
+// preview images from the network on every mousemove would make dragging
+// feel laggy for no benefit (the images themselves never change mid-session).
+async function loadOverlayImages() {
+  const [imgA, imgB] = await Promise.all([
+    loadImage(`/api/sheet-versions/${overlayLayers.a}/preview`),
+    loadImage(`/api/sheet-versions/${overlayLayers.b}/preview`),
   ]);
+  overlayImages = { a: imgA, b: imgB };
+}
 
-  const width = Math.max(oldImg.naturalWidth, newImg.naturalWidth);
-  const height = Math.max(oldImg.naturalHeight, newImg.naturalHeight);
+// A -> blue, B -> red, shared -> black, blank -> white. Mirrors
+// pyproc/overlay.py's formula exactly (R=gA, G=min(gA,gB), B=gB).
+// `fit` re-fits the zoom/pan to the composite - only wanted right after
+// entering overlay or toggling A/B visibility, NOT during align-drag or
+// rotate, which must preserve whatever zoom/pan the user has dialed in while
+// lining things up.
+function computeOverlay({ fit = false } = {}) {
+  const { showA, showB } = overlayLayers;
+  const canvas = document.getElementById('pdf-canvas');
+  const imgA = overlayImages.a;
+  const imgB = overlayImages.b;
+  if (!imgA || !imgB) return;
+
+  const width = Math.max(imgA.naturalWidth, imgB.naturalWidth);
+  const height = Math.max(imgA.naturalHeight, imgB.naturalHeight);
   canvas.width = width;
   canvas.height = height;
 
-  function toGray(img) {
+  // Draws the image centered on the composite canvas, offset by the layer's
+  // drag (tx,ty) and rotated about its own center - identical to the old
+  // draw-at-(0,0) behavior when both previews are the same size (the common
+  // case), since centering then coincides with top-left anchoring.
+  function toGray(img, transform) {
     const c = document.createElement('canvas');
     c.width = width;
     c.height = height;
     const cx = c.getContext('2d');
     cx.fillStyle = 'white';
     cx.fillRect(0, 0, width, height);
-    cx.drawImage(img, 0, 0);
+    cx.save();
+    cx.translate(width / 2 + transform.tx, height / 2 + transform.ty);
+    cx.rotate((transform.rotation * Math.PI) / 180);
+    cx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+    cx.restore();
     return cx.getImageData(0, 0, width, height).data;
   }
 
-  const oldPixels = showOld ? toGray(oldImg) : null;
-  const newPixels = showNew ? toGray(newImg) : null;
+  const aPixels = showA ? toGray(imgA, overlayTransform.a) : null;
+  const bPixels = showB ? toGray(imgB, overlayTransform.b) : null;
 
   const ctx = canvas.getContext('2d');
   const out = ctx.createImageData(width, height);
   const outPixels = out.data;
   for (let i = 0; i < outPixels.length; i += 4) {
-    const gOld = oldPixels ? 0.299 * oldPixels[i] + 0.587 * oldPixels[i + 1] + 0.114 * oldPixels[i + 2] : 255;
-    const gNew = newPixels ? 0.299 * newPixels[i] + 0.587 * newPixels[i + 1] + 0.114 * newPixels[i + 2] : 255;
-    if (showOld && showNew) {
-      outPixels[i] = gOld;
-      outPixels[i + 1] = Math.min(gOld, gNew);
-      outPixels[i + 2] = gNew;
-    } else if (showOld) {
-      outPixels[i] = outPixels[i + 1] = outPixels[i + 2] = gOld;
-    } else if (showNew) {
-      outPixels[i] = outPixels[i + 1] = outPixels[i + 2] = gNew;
+    const gA = aPixels ? 0.299 * aPixels[i] + 0.587 * aPixels[i + 1] + 0.114 * aPixels[i + 2] : 255;
+    const gB = bPixels ? 0.299 * bPixels[i] + 0.587 * bPixels[i + 1] + 0.114 * bPixels[i + 2] : 255;
+    if (showA && showB) {
+      outPixels[i] = gA;
+      outPixels[i + 1] = Math.min(gA, gB);
+      outPixels[i + 2] = gB;
+    } else if (showA) {
+      outPixels[i] = outPixels[i + 1] = outPixels[i + 2] = gA;
+    } else if (showB) {
+      outPixels[i] = outPixels[i + 1] = outPixels[i + 2] = gB;
     } else {
       outPixels[i] = outPixels[i + 1] = outPixels[i + 2] = 255;
     }
     outPixels[i + 3] = 255;
   }
   ctx.putImageData(out, 0, 0);
-  statusEl.textContent = '';
-  fitToView();
+  document.getElementById('pdf-status').textContent = '';
+  if (fit) fitToView();
 }
 
-function enterOverlay(oldVersionId, newVersionId) {
+// Drag-align and rotate can fire many times a second (mousemove, or a user
+// rapid-clicking rotation angles) - a full-resolution pixel composite on
+// every single event would visibly lag, so recomputes are coalesced to at
+// most one per animation frame.
+function scheduleOverlayRecompute() {
+  if (overlayRecomputeQueued) return;
+  overlayRecomputeQueued = true;
+  requestAnimationFrame(() => {
+    overlayRecomputeQueued = false;
+    computeOverlay();
+  });
+}
+
+function setupOverlayAlignDrag() {
+  const wrapEl = document.getElementById('zoom-wrap');
+  wrapEl.addEventListener('mousedown', (e) => {
+    if (!overlayActive || !overlayAlignActive) return;
+    e.preventDefault();
+    const t = overlayTransform[overlayAlignTarget];
+    overlayDrag = { startX: e.clientX, startY: e.clientY, origTx: t.tx, origTy: t.ty };
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!overlayDrag) return;
+    e.preventDefault();
+    const scale = zoomPan ? zoomPan.state.scale : 1;
+    const t = overlayTransform[overlayAlignTarget];
+    t.tx = overlayDrag.origTx + (e.clientX - overlayDrag.startX) / scale;
+    t.ty = overlayDrag.origTy + (e.clientY - overlayDrag.startY) / scale;
+    scheduleOverlayRecompute();
+  });
+  window.addEventListener('mouseup', () => {
+    overlayDrag = null;
+  });
+}
+
+function syncOverlayRotateGroup() {
+  const rotation = overlayTransform[overlayAlignTarget].rotation;
+  document.querySelectorAll('#overlay-rotate-group button').forEach((b) => {
+    b.classList.toggle('active', Number(b.dataset.rotation) === rotation);
+  });
+}
+
+function wireOverlayControls() {
+  const aChip = document.getElementById('overlay-toggle-a-chip');
+  const bChip = document.getElementById('overlay-toggle-b-chip');
+  document.getElementById('overlay-toggle-a').addEventListener('change', (e) => {
+    overlayLayers.showA = e.target.checked;
+    aChip.classList.toggle('checked', e.target.checked);
+    computeOverlay({ fit: true });
+  });
+  document.getElementById('overlay-toggle-b').addEventListener('change', (e) => {
+    overlayLayers.showB = e.target.checked;
+    bChip.classList.toggle('checked', e.target.checked);
+    computeOverlay({ fit: true });
+  });
+
+  const targetGroup = document.getElementById('overlay-target-group');
+  targetGroup.querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      overlayAlignTarget = btn.dataset.target;
+      targetGroup.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
+      syncOverlayRotateGroup();
+    });
+  });
+
+  const rotateGroup = document.getElementById('overlay-rotate-group');
+  rotateGroup.querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      overlayTransform[overlayAlignTarget].rotation = Number(btn.dataset.rotation);
+      rotateGroup.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
+      computeOverlay();
+    });
+  });
+
+  const alignBtn = document.getElementById('overlay-align-btn');
+  alignBtn.addEventListener('click', () => {
+    overlayAlignActive = !overlayAlignActive;
+    alignBtn.classList.toggle('active', overlayAlignActive);
+    document.getElementById('zoom-wrap').classList.toggle('align-active', overlayAlignActive);
+  });
+
+  document.getElementById('overlay-reset-btn').addEventListener('click', () => {
+    overlayTransform[overlayAlignTarget] = { tx: 0, ty: 0, rotation: 0 };
+    syncOverlayRotateGroup();
+    computeOverlay();
+  });
+
+  document.getElementById('overlay-exit-btn').addEventListener('click', () => exitOverlay(true));
+}
+
+async function enterOverlay(aVersionId, bVersionId) {
   overlayActive = true;
-  overlayLayers = { old: oldVersionId, new: newVersionId, showOld: true, showNew: true };
+  overlayLayers = { a: aVersionId, b: bVersionId, showA: true, showB: true };
+  overlayTransform = { a: { tx: 0, ty: 0, rotation: 0 }, b: { tx: 0, ty: 0, rotation: 0 } };
+  overlayAlignTarget = 'b';
+  overlayAlignActive = false;
   document.getElementById('markup-svg').style.display = 'none';
   clearMeasure();
 
@@ -314,27 +523,44 @@ function enterOverlay(oldVersionId, newVersionId) {
   }
   bar.innerHTML = `
     <div class="overlay-controls">
-      <label><input type="checkbox" id="overlay-toggle-old" checked> Old (blue)</label>
-      <label><input type="checkbox" id="overlay-toggle-new" checked> New (red)</label>
+      <div class="overlay-controls-group">
+        <label class="chip-toggle checked" id="overlay-toggle-a-chip"><input type="checkbox" id="overlay-toggle-a" checked><span class="dot"></span>A (blue)</label>
+        <label class="chip-toggle checked" id="overlay-toggle-b-chip"><input type="checkbox" id="overlay-toggle-b" checked><span class="dot"></span>B (red)</label>
+      </div>
+      <div class="overlay-controls-group">
+        <span class="overlay-controls-label">Adjusting</span>
+        <div class="segmented" id="overlay-target-group">
+          <button type="button" data-target="a">A</button>
+          <button type="button" data-target="b" class="active">B</button>
+        </div>
+      </div>
+      <div class="overlay-controls-group">
+        <button type="button" id="overlay-align-btn" title="Drag the drawing to align it">Align</button>
+        <div class="segmented" id="overlay-rotate-group">
+          <button type="button" data-rotation="0" class="active">0&deg;</button>
+          <button type="button" data-rotation="90">90&deg;</button>
+          <button type="button" data-rotation="180">180&deg;</button>
+          <button type="button" data-rotation="270">270&deg;</button>
+        </div>
+        <button type="button" id="overlay-reset-btn">Reset</button>
+      </div>
       <button type="button" id="overlay-exit-btn">Exit overlay</button>
     </div>
   `;
-  document.getElementById('overlay-toggle-old').addEventListener('change', (e) => {
-    overlayLayers.showOld = e.target.checked;
-    computeOverlay();
-  });
-  document.getElementById('overlay-toggle-new').addEventListener('change', (e) => {
-    overlayLayers.showNew = e.target.checked;
-    computeOverlay();
-  });
-  document.getElementById('overlay-exit-btn').addEventListener('click', () => exitOverlay(true));
+  wireOverlayControls();
 
-  computeOverlay();
+  const statusEl = document.getElementById('pdf-status');
+  statusEl.textContent = 'Loading overlay...';
+  await loadOverlayImages();
+  computeOverlay({ fit: true });
 }
 
 function exitOverlay(rerender) {
   if (!overlayActive) return;
   overlayActive = false;
+  overlayAlignActive = false;
+  overlayDrag = null;
+  document.getElementById('zoom-wrap').classList.remove('align-active');
   document.getElementById('markup-svg').style.display = '';
   const bar = document.getElementById('overlay-controls-bar');
   if (bar) bar.remove();
@@ -402,19 +628,19 @@ async function pickOverlayTarget(otherSheet) {
         const otherPublished = elm.dataset.published;
         const current = allVersions.find((v) => v.id === displayedVersionId);
         closeModal();
-        const [oldV, newV] =
+        const [aV, bV] =
           current.published_at <= otherPublished ? [displayedVersionId, otherVersionId] : [otherVersionId, displayedVersionId];
-        enterOverlay(oldV, newV);
+        enterOverlay(aV, bV);
       });
     });
   } else {
     closeModal();
     const current = allVersions.find((v) => v.id === displayedVersionId);
-    const [oldV, newV] =
+    const [aV, bV] =
       current.published_at <= otherSheet.current_published_at
         ? [displayedVersionId, otherSheet.current_version_id]
         : [otherSheet.current_version_id, displayedVersionId];
-    enterOverlay(oldV, newV);
+    enterOverlay(aV, bV);
   }
 }
 
@@ -663,7 +889,7 @@ function setupMeasureTools() {
     btn.addEventListener('click', () => {
       if (overlayActive) return;
       if (!scaleFeetPerInch) {
-        alert('Set a scale first.');
+        showToast('Set a scale first.', 'error');
         return;
       }
       const turningOn = measureTool !== def.tool;
@@ -709,7 +935,11 @@ function setupScaleSelect(sheet) {
     if (val === '') {
       scaleFeetPerInch = null;
     } else if (val === 'custom') {
-      const input = prompt('Enter feet represented by 1 inch on the printed sheet (e.g. 4 for 1/4"=1\'-0"):');
+      const input = await promptModal({
+        title: 'Custom scale',
+        message: 'Feet represented by 1 inch on the printed sheet (e.g. 4 for 1/4"=1\'-0"):',
+        required: false,
+      });
       const parsed = parseFloat(input);
       if (!parsed || parsed <= 0) {
         select.value = '';
@@ -757,6 +987,7 @@ async function loadSheetOffline() {
 (async function init() {
   const me = await requireSession();
   if (!me) return;
+  canManage = me.role === 'admin' || me.role === 'editor';
 
   let sheet;
   let versions;
@@ -796,8 +1027,10 @@ async function loadSheetOffline() {
   }
 
   setupDownloadButton();
+  setupEditSheetButton();
   updateVersionBadge();
   setupZoomPan();
+  setupOverlayAlignDrag();
   setupScaleSelect(sheet);
   setupMeasureTools();
 

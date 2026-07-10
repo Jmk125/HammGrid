@@ -1,4 +1,4 @@
-import { renderShell, openModal, closeModal } from '/js/shell.js';
+import { renderShell, openModal, closeModal, confirmModal, promptModal, showToast, copyToClipboard } from '/js/shell.js';
 
 const projectId = new URLSearchParams(window.location.search).get('projectId');
 let allFolders = [];
@@ -44,7 +44,7 @@ document.getElementById('new-share-permissions').addEventListener('click', () =>
 }));
 
 document.getElementById('share-scope').addEventListener('change', (e) => {
-  document.getElementById('share-revision').style.display = e.target.value === 'snapshot' ? '' : 'none';
+  document.getElementById('share-revision-field').style.display = e.target.value === 'snapshot' ? '' : 'none';
 });
 
 async function updateShare(id, body) {
@@ -56,6 +56,7 @@ async function loadShares() {
   const { shares } = await api('GET', `/api/projects/${projectId}/shares`);
   const tbody = document.querySelector('#shares-table tbody');
   tbody.innerHTML = '';
+  document.getElementById('shares-empty-msg').style.display = shares.length ? 'none' : '';
   for (const s of shares) {
     const url = `${window.location.origin}/share.html?token=${s.token}`;
     const expired = s.expires_at && s.expires_at < new Date().toISOString();
@@ -69,15 +70,33 @@ async function loadShares() {
       <td>${escapeShareHtml(s.created_by_name)}</td>
       <td><span class="pill ${status === 'active' ? 'new' : 'suspicious'}">${status}</span></td>
       <td>${s.allow_personal_markups ? 'Personal markups' : 'View only'}${s.allow_documents ? ' + docs' : ''}</td>
-      <td><input readonly value="${escapeShareHtml(url)}" style="width:260px" onclick="this.select()"></td>
+      <td class="row"></td>
       <td class="row"></td>`;
+
+    const linkCell = tr.children[7];
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'copy-link-btn';
+    copyBtn.textContent = 'Copy link';
+    copyBtn.addEventListener('click', async () => {
+      const ok = await copyToClipboard(url);
+      const original = copyBtn.textContent;
+      copyBtn.textContent = ok ? 'Copied!' : 'Copy failed';
+      copyBtn.classList.toggle('copied', ok);
+      copyBtn.classList.toggle('danger', !ok);
+      setTimeout(() => {
+        copyBtn.textContent = original;
+        copyBtn.classList.remove('copied', 'danger');
+      }, 1500);
+    });
+    linkCell.appendChild(copyBtn);
 
     const actions = tr.lastElementChild;
     const renameBtn = document.createElement('button');
     renameBtn.type = 'button';
     renameBtn.textContent = 'Rename';
     renameBtn.addEventListener('click', async () => {
-      const nextName = prompt('Share link name:', s.name || '');
+      const nextName = await promptModal({ title: 'Rename share link', defaultValue: s.name || '', required: false });
       if (nextName === null) return;
       await updateShare(s.id, { name: nextName });
     });
@@ -104,8 +123,15 @@ async function loadShares() {
     deleteBtn.className = 'danger';
     deleteBtn.textContent = 'Delete';
     deleteBtn.addEventListener('click', async () => {
-      if (!confirm('Delete this share link permanently? This cannot be undone.')) return;
+      const ok = await confirmModal({
+        title: 'Delete share link?',
+        message: 'This cannot be undone. Anyone using this link will immediately lose access.',
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
       await api('DELETE', `/api/projects/${projectId}/shares/${s.id}`);
+      showToast('Share link deleted.', 'success');
       await loadShares();
     });
     actions.appendChild(deleteBtn);
@@ -125,9 +151,8 @@ document.getElementById('new-share-form').addEventListener('submit', async (e) =
     expires_at: document.getElementById('share-expires').value || null,
     ...newSharePermissions,
   };
-  const { share } = await api('POST', `/api/projects/${projectId}/shares`, body);
-  document.getElementById('new-share-result').textContent =
-    `Created: ${window.location.origin}/share.html?token=${share.token}`;
+  await api('POST', `/api/projects/${projectId}/shares`, body);
+  showToast('Share link created - copy it from the table below.', 'success');
   document.getElementById('share-name').value = '';
   newSharePermissions = { allow_personal_markups: false, allow_documents: false, document_folder_ids: [], document_ids: [] };
   updateNewPermissionsButton();

@@ -90,17 +90,116 @@ router.get('/:revisionId', requireAuth, (req, res) => {
   res.json({ revision });
 });
 
+// Destructive and unrecoverable (like project delete), so it requires the
+// caller to echo back the revision's exact title - same defense-in-depth
+// reasoning as projects.routes.js's delete route.
+router.delete('/:revisionId', requireRole('admin'), (req, res) => {
+  const revision = getRevisionOr404(req, res);
+  if (!revision) return;
+
+  if (req.body.confirm_name !== revision.title) {
+    return res.status(400).json({ error: 'confirm_name must exactly match the revision title' });
+  }
+
+  // The DB's own FK (shares.snapshot_revision_id has no ON DELETE action)
+  // would reject this anyway, but checking first keeps the operation
+  // atomic and gives a real error message instead of a raw SQLite
+  // constraint failure after some sheets have already been reassigned.
+  const snapshotCount = db
+    .prepare('SELECT COUNT(*) AS c FROM shares WHERE snapshot_revision_id = ?')
+    .get(revision.id).c;
+  if (snapshotCount > 0) {
+    return res.status(400).json({
+      error: `${snapshotCount} share link(s) snapshot this revision - delete or update them first.`,
+    });
+  }
+
+  const filesToDelete = [];
+  let sheetsDeleted = 0;
+
+  const deleteTxn = db.transaction(() => {
+    const versions = db
+      .prepare('SELECT id, sheet_id, pdf_path, thumb_path, preview_path, overlay_path FROM sheet_versions WHERE revision_id = ?')
+      .all(revision.id);
+
+    // Any sheet whose *current* version came from this revision needs a new
+    // current_version_id before this revision can be removed - reassigned to
+    // its latest surviving version, or the sheet is deleted outright if this
+    // revision was its only version (a sheet can't exist with zero versions).
+    const affectedSheets = db
+      .prepare(
+        `SELECT s.id FROM sheets s
+         JOIN sheet_versions sv ON sv.id = s.current_version_id
+         WHERE sv.revision_id = ?`
+      )
+      .all(revision.id);
+
+    const sheetsToDelete = [];
+    for (const { id: sheetId } of affectedSheets) {
+      const nextVersion = db
+        .prepare(
+          `SELECT id FROM sheet_versions WHERE sheet_id = ? AND revision_id != ? ORDER BY created_at DESC LIMIT 1`
+        )
+        .get(sheetId, revision.id);
+      if (nextVersion) {
+        db.prepare('UPDATE sheets SET current_version_id = ? WHERE id = ?').run(nextVersion.id, sheetId);
+      } else {
+        sheetsToDelete.push(sheetId);
+      }
+    }
+
+    if (sheetsToDelete.length > 0) {
+      const placeholders = sheetsToDelete.map(() => '?').join(',');
+      db.prepare(`DELETE FROM sheets WHERE id IN (${placeholders})`).run(...sheetsToDelete);
+      sheetsDeleted = sheetsToDelete.length;
+    }
+
+    for (const v of versions) {
+      for (const p of [v.pdf_path, v.thumb_path, v.preview_path, v.overlay_path]) {
+        if (p) filesToDelete.push(p);
+      }
+    }
+
+    db.prepare('DELETE FROM revisions WHERE id = ?').run(revision.id);
+
+    db.prepare('INSERT INTO activity_log (project_id, actor, action, detail) VALUES (?, ?, ?, ?)').run(
+      revision.project_id,
+      String(req.session.user.id),
+      'revision_delete',
+      JSON.stringify({
+        revision_id: revision.id,
+        revision_title: revision.title,
+        version_count: versions.length,
+        sheets_deleted: sheetsDeleted,
+      })
+    );
+  });
+
+  try {
+    deleteTxn();
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: 'Delete failed', detail: err.message });
+  }
+
+  for (const p of filesToDelete) fs.rm(p, { force: true }, () => {});
+  fs.rm(path.join(config.storageDir, 'staging', String(revision.id)), { recursive: true, force: true }, () => {});
+
+  res.json({ ok: true, sheets_deleted: sheetsDeleted });
+});
+
 // One file per request (not batched) so the client can show real per-file
 // progress and so one huge file in a batch can't stall the others. Responds
 // as soon as the file is saved and hands burst off to the background -
 // the client polls /upload-jobs/:jobId for completion, and the job keeps
 // running server-side even if the client navigates away or disconnects.
+// Uploading is allowed regardless of revision.status - a revision can be
+// "modified" (more sheets added) after it's already published, not just
+// while still a draft. Publishing again just processes whatever's newly
+// staged; see the publish route below.
 router.post('/:revisionId/upload', requireRole('admin', 'editor'), upload.single('file'), (req, res) => {
   const revision = getRevisionOr404(req, res);
   if (!revision) return;
-  if (revision.status !== 'draft') {
-    return res.status(400).json({ error: 'Revision is already published' });
-  }
   if (!req.file) {
     return res.status(400).json({ error: 'No PDF file uploaded' });
   }
@@ -207,9 +306,6 @@ router.post('/:revisionId/read-preview', requireRole('admin', 'editor'), async (
 router.post('/:revisionId/ocr', requireRole('admin', 'editor'), (req, res) => {
   const revision = getRevisionOr404(req, res);
   if (!revision) return;
-  if (revision.status !== 'draft') {
-    return res.status(400).json({ error: 'Revision is already published' });
-  }
 
   const { scope, number_box, title_box, staged_sheet_ids } = req.body;
   if (!scope || !number_box || !title_box || !Array.isArray(staged_sheet_ids) || staged_sheet_ids.length === 0) {
@@ -289,12 +385,12 @@ router.post('/:revisionId/ocr', requireRole('admin', 'editor'), (req, res) => {
   })();
 });
 
+// Not gated to draft-only - publishing an already-published revision again
+// just commits whatever's newly staged since (the "modify an existing
+// revision" flow), same validations apply either way.
 router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, res) => {
   const revision = getRevisionOr404(req, res);
   if (!revision) return;
-  if (revision.status !== 'draft') {
-    return res.status(400).json({ error: 'Revision is already published' });
-  }
 
   const staged = db.prepare('SELECT * FROM staged_sheets WHERE revision_id = ?').all(revision.id);
   if (staged.length === 0) {
@@ -335,8 +431,14 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
     // Forward slashes work fine as real filesystem paths on Windows too, so
     // the portable form is used for the actual file write as well as the
     // value stored in the DB - one value, no separate "for fs" vs "for DB"
-    // variants needed.
-    const overlayDest = toPortablePath(path.join(destDir, `v${revision.id}_overlay.webp`));
+    // variants needed. Suffixed with the staged_sheet's own id (globally
+    // unique, known up front) rather than just the revision id - a revision
+    // can now be published into more than once (the "modify an existing
+    // revision" flow), and a second round replacing the same sheet again
+    // would otherwise reuse the exact same v<revisionId>_overlay.webp path,
+    // silently overwriting a file an earlier sheet_versions row still points
+    // at.
+    const overlayDest = toPortablePath(path.join(destDir, `v${revision.id}_s${s.id}_overlay.webp`));
     try {
       await queue.enqueue(() => runPython(OVERLAY_SCRIPT, [oldVersion.pdf_path, s.pdf_path, overlayDest]));
       overlayPaths[s.id] = overlayDest;
@@ -369,9 +471,12 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
 
       const destDir = path.join(config.storageDir, 'projects', String(revision.project_id), 'sheets', String(sheetId));
       fs.mkdirSync(destDir, { recursive: true });
-      const destPdf = toPortablePath(path.join(destDir, `v${revision.id}.pdf`));
-      const destThumb = s.thumb_path ? toPortablePath(path.join(destDir, `v${revision.id}_thumb.webp`)) : null;
-      const destPreview = s.preview_path ? toPortablePath(path.join(destDir, `v${revision.id}_preview.webp`)) : null;
+      // Same v<revisionId>_s<stagedSheetId> suffix reasoning as the overlay
+      // path above - guarantees a fresh filename even when this revision has
+      // already been published once before and is now being added to again.
+      const destPdf = toPortablePath(path.join(destDir, `v${revision.id}_s${s.id}.pdf`));
+      const destThumb = s.thumb_path ? toPortablePath(path.join(destDir, `v${revision.id}_s${s.id}_thumb.webp`)) : null;
+      const destPreview = s.preview_path ? toPortablePath(path.join(destDir, `v${revision.id}_s${s.id}_preview.webp`)) : null;
 
       fs.renameSync(s.pdf_path, destPdf);
       if (destThumb) fs.renameSync(s.thumb_path, destThumb);
@@ -394,7 +499,10 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
     }
 
     db.prepare('DELETE FROM staged_sheets WHERE revision_id = ?').run(revision.id);
-    db.prepare("UPDATE revisions SET status = 'published', published_at = datetime('now') WHERE id = ?").run(
+    // COALESCE keeps the original published_at if this revision was already
+    // published before (the "modify" flow re-publishing additions) - only a
+    // true first publish should set it.
+    db.prepare("UPDATE revisions SET status = 'published', published_at = COALESCE(published_at, datetime('now')) WHERE id = ?").run(
       revision.id
     );
     db.prepare('INSERT INTO activity_log (project_id, actor, action, detail) VALUES (?, ?, ?, ?)').run(

@@ -152,7 +152,11 @@ button {
   border: 1px solid var(--border);
   background: #fff;
   cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
+button:hover:not(:disabled) { border-color: #b7c0cc; }
+button.primary:hover:not(:disabled) { background: #1d4ed8; border-color: #1d4ed8; }
+button.danger:hover:not(:disabled) { background: #b91c1c; border-color: #b91c1c; }
 button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
 button.danger { background: var(--danger); color: #fff; border-color: var(--danger); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -162,10 +166,56 @@ input, select {
   padding: 6px 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color 0.15s ease;
 }
+input:hover, select:hover { border-color: #b7c0cc; }
+input:focus, select:focus { border-color: var(--accent); outline: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Native <select> gets a custom chevron instead of the raw OS control. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%23667085'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.25a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z' clip-rule='evenodd'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  background-size: 14px;
+  padding-right: 28px;
+  cursor: pointer;
+}
+
+input[type="checkbox"], input[type="radio"] {
+  accent-color: var(--accent);
+  width: auto;
+  padding: 0;
+  cursor: pointer;
+}
+
+input[type="date"] { cursor: pointer; }
+input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.55; }
+input[type="date"]::-webkit-calendar-picker-indicator:hover { opacity: 1; }
+
+/* Native file inputs: style the button portion, leave the "no file chosen"
+   text plain rather than trying to fight the browser's own filename display. */
+input[type="file"] { border: none; padding: 0; background: none; }
+input[type="file"]::file-selector-button {
+  font: inherit;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  margin-right: 10px;
+  transition: background 0.15s ease;
+}
+input[type="file"]::file-selector-button:hover { background: var(--bg); }
 
 table { border-collapse: collapse; width: 100%; }
 th, td { padding: 8px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+thead th { background: var(--bg); font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+tbody tr:hover td { background: var(--accent-light); }
 tr.needs-attention td { background: var(--warn-bg); }
 tr.ignored td { opacity: 0.5; }
 
@@ -245,6 +295,89 @@ tr.ignored td { opacity: 0.5; }
 .sheet-card .sheet-number { font-weight: 700; font-size: 13px; }
 .sheet-card .sheet-title { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+.sheet-card.selectable { cursor: pointer; }
+.sheet-card.selectable:hover { transform: none; box-shadow: 0 4px 14px rgba(15,43,70,0.15); }
+.sheet-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.sheet-card .card-checkbox {
+  position: absolute;
+  top: 8px; left: 8px;
+  z-index: 6;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.92);
+  border: 1.5px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.sheet-card .card-checkbox input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; }
+.sheet-card .card-checkbox .checkmark { width: 12px; height: 12px; }
+.sheet-card.selected .card-checkbox { background: var(--accent); border-color: var(--accent); }
+.sheet-card.selected .card-checkbox .checkmark {
+  border-right: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  width: 6px; height: 11px;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+/* ---------- Floating multi-select action bar (viewer grid) ---------- */
+.selection-bar {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--navy);
+  color: #fff;
+  padding: 10px 16px;
+  border-radius: 999px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.3);
+}
+.selection-bar .muted { color: #b8c4d4; }
+.selection-bar button { border-color: rgba(255,255,255,0.35); background: transparent; color: #fff; }
+.selection-bar button.primary { background: var(--accent); border-color: var(--accent); }
+.selection-bar button:hover:not(:disabled):not(.primary) { background: rgba(255,255,255,0.1); }
+
+/* ---------- Chip toggle: app-styled checkbox, used anywhere a native
+   checkbox would otherwise look like raw HTML (select-all, overlay layer
+   visibility). JS toggles the .checked class on the label in step with the
+   actual input, so this doesn't rely on :has() support. ---------- */
+.chip-toggle {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px; font-weight: 600;
+  cursor: pointer; user-select: none;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.chip-toggle input { display: none; }
+.chip-toggle .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; opacity: 0.35; flex-shrink: 0; transition: opacity 0.15s ease; }
+.chip-toggle.checked { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip-toggle.checked .dot { opacity: 1; }
+.selection-bar .chip-toggle { background: transparent; border-color: rgba(255,255,255,0.35); color: #fff; }
+.selection-bar .chip-toggle.checked { background: var(--accent); border-color: var(--accent); }
+
+/* ---------- Segmented control: app-styled button group where exactly one
+   option is active (overlay rotation angle, align target A/B). ---------- */
+.segmented { display: inline-flex; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+.segmented button {
+  background: var(--surface);
+  border: none;
+  border-radius: 0;
+  color: var(--muted);
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.segmented button + button { border-left: 1px solid var(--border); }
+.segmented button.active { background: var(--accent); color: #fff; }
+.segmented button:hover:not(.active) { background: var(--accent-light); color: var(--text); }
+
 /* ---------- Project cards (dashboard) ---------- */
 .project-grid {
   display: grid;
@@ -299,6 +432,12 @@ tr.ignored td { opacity: 0.5; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; max-width: 420px; }
 .field input, .field select { width: 100%; }
 .field label { font-size: 13px; font-weight: 600; color: var(--muted); }
+
+/* Multi-column responsive form layout - each child is expected to be a
+   .field (or similar label+control pair), unlike .row which is for loose
+   inline controls/buttons with no label rhythm. */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 4px 16px; align-items: start; }
+.form-grid .field { max-width: none; margin-bottom: 8px; }
 
 /* ---------- Document folder browser + mini-explorer picker ---------- */
 .doc-breadcrumb { font-size: 14px; }
@@ -389,6 +528,7 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   touch-action: none;
 }
 .zoom-wrap.panning { cursor: grabbing; }
+.zoom-wrap.align-active { cursor: move; }
 .zoom-pan-inner {
   position: absolute;
   top: 0; left: 0;
@@ -577,7 +717,10 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .overlay-picker-item { padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 13px; }
 .overlay-picker-item:hover { background: var(--accent-light); }
 
-.overlay-controls { display: flex; gap: 16px; align-items: center; margin-bottom: 10px; }
+.overlay-controls { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.overlay-controls-group { display: flex; align-items: center; gap: 8px; }
+.overlay-controls-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.overlay-controls button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* ---------- Toasts ---------- */
 #toast-container {
@@ -633,6 +776,10 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .upload-row-status { width: 150px; flex-shrink: 0; color: var(--muted); }
 .upload-row-status.done { color: var(--ok); }
 .upload-row-status.error { color: var(--danger); }
+
+/* ---------- Share links table ---------- */
+.copy-link-btn { font-size: 12px; padding: 5px 10px; }
+.copy-link-btn.copied { background: var(--ok); color: #fff; border-color: var(--ok); }
 
 /* ---------- Share permissions modal ---------- */
 .permission-modal-shell { width: min(920px, calc(100vw - 48px)); }
