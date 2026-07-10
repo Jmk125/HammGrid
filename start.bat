@@ -6,6 +6,8 @@ set "PATH=%NODE_DIR%;%PATH%"
 
 cd /d "%~dp0"
 
+set "PORT=3010"
+
 echo Starting Drawing App server (Ctrl+C to stop)...
 echo.
 
