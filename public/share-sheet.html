@@ -1,15 +1,26 @@
+<!DOCTYPE html>
 <title>Shared Sheet</title>
 <link rel="stylesheet" href="/css/style.css">
 <body>
   <div class="topbar">
-    <span class="brand">HammGrid &mdash; Shared Set</span>
+    <a class="brand" id="back-link" href="#">&larr; Shared Set</a>
+    <div class="row"><button id="download-share-sheet-btn" type="button" title="Download drawing">⬇</button><div class="row" id="share-markup-tools" style="display:none;">
+      <button class="tool-btn" data-tool="rect" type="button">Rect</button>
+      <button class="tool-btn" data-tool="text" type="button">Text</button>
+      <label>Color <input id="markup-color" type="color" value="#e11d48"></label>
+    </div></div>
   </div>
-  <main>
-    <p><a id="back-link" href="#">&larr; Back to set</a></p>
-    <div class="pdf-viewer-wrap">
-      <canvas id="pdf-canvas"></canvas>
+  <main class="wide">
+    <div class="zoom-wrap" id="zoom-wrap" style="height: calc(100vh - 92px); border-radius: 0;">
+      <div class="zoom-pan-inner" id="zoom-pan-inner">
+        <div class="markup-stage" style="position:relative;">
+          <canvas id="pdf-canvas"></canvas>
+          <svg id="markup-svg" style="position:absolute; left:0; top:0; width:100%; height:100%;"></svg>
+        </div>
+      </div>
     </div>
     <p class="muted" id="pdf-status"></p>
   </main>
+  <script src="/js/api.js"></script>
   <script type="module" src="/js/share-sheet.js"></script>
 </body>
