@@ -137,6 +137,7 @@ CREATE TABLE IF NOT EXISTS shares (
   allow_personal_markups INTEGER NOT NULL DEFAULT 0,
   allow_documents INTEGER NOT NULL DEFAULT 0,
   document_folder_ids TEXT NOT NULL DEFAULT '[]',
+  document_ids TEXT NOT NULL DEFAULT '[]',
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -2,6 +2,8 @@ import { renderShell, openModal, closeModal } from '/js/shell.js';
 
 const projectId = new URLSearchParams(window.location.search).get('projectId');
 let allFolders = [];
+let allDocuments = [];
+let newSharePermissions = { allow_personal_markups: false, allow_documents: false, document_folder_ids: [], document_ids: [] };
 
 function escapeShareHtml(str) {
   return String(str || '').replace(/[&<>'"]/g, (c) => ({
@@ -20,10 +22,12 @@ async function load() {
     disciplineSelect.appendChild(new Option(d, d));
   }
 
-  const folderData = await api('GET', `/api/projects/${projectId}/documents/folders`);
+  const [folderData, documentData] = await Promise.all([
+    api('GET', `/api/projects/${projectId}/documents/folders`),
+    api('GET', `/api/projects/${projectId}/documents`),
+  ]);
   allFolders = folderData.folders || [];
-  const folderSelect = document.getElementById('share-folders');
-  for (const f of allFolders) folderSelect.appendChild(new Option(f.name, f.id));
+  allDocuments = documentData.documents || [];
 
   const { revisions } = await api('GET', `/api/projects/${projectId}/revisions`);
   const revisionSelect = document.getElementById('share-revision');
@@ -34,9 +38,10 @@ async function load() {
   await loadShares();
 }
 
-document.getElementById('share-documents').addEventListener('change', (e) => {
-  document.getElementById('share-folders').style.display = e.target.checked ? '' : 'none';
-});
+document.getElementById('new-share-permissions').addEventListener('click', () => editPermissions(newSharePermissions, (next) => {
+  newSharePermissions = next;
+  updateNewPermissionsButton();
+}));
 
 document.getElementById('share-scope').addEventListener('change', (e) => {
   document.getElementById('share-revision').style.display = e.target.value === 'snapshot' ? '' : 'none';
@@ -118,39 +123,87 @@ document.getElementById('new-share-form').addEventListener('submit', async (e) =
     snapshot_revision_id: scope === 'snapshot' ? Number(document.getElementById('share-revision').value) : null,
     discipline_filter: document.getElementById('share-discipline').value || null,
     expires_at: document.getElementById('share-expires').value || null,
-    allow_personal_markups: document.getElementById('share-personal-markups').checked,
-    allow_documents: document.getElementById('share-documents').checked,
-    document_folder_ids: [...document.getElementById('share-folders').selectedOptions].map((o) => Number(o.value)),
+    ...newSharePermissions,
   };
   const { share } = await api('POST', `/api/projects/${projectId}/shares`, body);
   document.getElementById('new-share-result').textContent =
     `Created: ${window.location.origin}/share.html?token=${share.token}`;
   document.getElementById('share-name').value = '';
+  newSharePermissions = { allow_personal_markups: false, allow_documents: false, document_folder_ids: [], document_ids: [] };
+  updateNewPermissionsButton();
   await loadShares();
 });
 
-function folderIdsForShare(share) {
-  try { return JSON.parse(share.document_folder_ids || '[]'); } catch (e) { return []; }
+
+function parseIds(value) {
+  try { return JSON.parse(value || '[]'); } catch (e) { return []; }
 }
 
-function editPermissions(share) {
-  const folderIds = folderIdsForShare(share);
+function permissionState(source) {
+  return {
+    allow_personal_markups: Boolean(source.allow_personal_markups),
+    allow_documents: Boolean(source.allow_documents),
+    document_folder_ids: Array.isArray(source.document_folder_ids) ? source.document_folder_ids : parseIds(source.document_folder_ids),
+    document_ids: Array.isArray(source.document_ids) ? source.document_ids : parseIds(source.document_ids),
+  };
+}
+
+function updateNewPermissionsButton() {
+  const btn = document.getElementById('new-share-permissions');
+  const parts = ['Live Drawings'];
+  if (newSharePermissions.allow_documents) parts.push('Documents');
+  if (newSharePermissions.allow_personal_markups) parts.push('Personal Markups');
+  btn.textContent = `Permissions: ${parts.join(', ')}`;
+}
+
+function renderDocumentAccessTree(state) {
+  const folderIds = new Set(state.document_folder_ids || []);
+  const docIds = new Set(state.document_ids || []);
+  const folderRows = allFolders.map((f) => `
+    <label style="display:block; margin-left:${f.parent_folder_id ? 24 : 0}px;">
+      <input type="checkbox" class="perm-folder" value="${f.id}" ${folderIds.has(f.id) ? 'checked' : ''}> 📁 ${escapeShareHtml(f.name)}
+    </label>`).join('');
+  const docRows = allDocuments.map((d) => `
+    <label style="display:block; margin-left:32px;">
+      <input type="checkbox" class="perm-doc" value="${d.id}" ${docIds.has(d.id) ? 'checked' : ''}> ${escapeShareHtml(d.name)}
+    </label>`).join('');
+  return folderRows + docRows;
+}
+
+function editPermissions(source, onSave) {
+  const state = permissionState(source);
   const backdrop = openModal(`
     <h2>Share permissions</h2>
-    <label><input type="checkbox" id="edit-personal" ${share.allow_personal_markups ? 'checked' : ''}> Allow personal markups</label>
-    <label><input type="checkbox" id="edit-documents" ${share.allow_documents ? 'checked' : ''}> Allow documents</label>
-    <div class="field"><label>Allowed document folders</label>
-      <select id="edit-folders" multiple size="8">${allFolders.map((f) => `<option value="${f.id}" ${folderIds.includes(f.id) ? 'selected' : ''}>${escapeShareHtml(f.name)}</option>`).join('')}</select>
+    <label><input type="checkbox" checked disabled> Live Drawings</label>
+    <p class="muted">Shared links always include drawings and published markups.</p>
+    <label><input type="checkbox" id="edit-personal" ${state.allow_personal_markups ? 'checked' : ''}> Personal Markups</label>
+    <label><input type="checkbox" id="edit-documents" ${state.allow_documents ? 'checked' : ''}> Documents</label>
+    <div id="document-permissions" class="card" style="margin-top:10px; ${state.allow_documents ? '' : 'display:none;'}">
+      <label><input type="checkbox" id="all-docs"> All documents/folders</label>
+      <div style="max-height:320px; overflow:auto; margin-top:8px;">${renderDocumentAccessTree(state)}</div>
     </div>
     <div class="row"><button id="save-permissions" class="primary">Save</button><button id="cancel-permissions">Cancel</button></div>
   `);
+  const docsToggle = backdrop.querySelector('#edit-documents');
+  docsToggle.addEventListener('change', () => {
+    backdrop.querySelector('#document-permissions').style.display = docsToggle.checked ? '' : 'none';
+  });
+  backdrop.querySelector('#all-docs').addEventListener('change', (e) => {
+    backdrop.querySelectorAll('.perm-folder,.perm-doc').forEach((cb) => { cb.checked = e.target.checked; });
+  });
   backdrop.querySelector('#cancel-permissions').addEventListener('click', closeModal);
   backdrop.querySelector('#save-permissions').addEventListener('click', async () => {
-    await updateShare(share.id, {
+    const next = {
       allow_personal_markups: backdrop.querySelector('#edit-personal').checked,
-      allow_documents: backdrop.querySelector('#edit-documents').checked,
-      document_folder_ids: [...backdrop.querySelector('#edit-folders').selectedOptions].map((o) => Number(o.value)),
-    });
+      allow_documents: docsToggle.checked,
+      document_folder_ids: [...backdrop.querySelectorAll('.perm-folder:checked')].map((o) => Number(o.value)),
+      document_ids: [...backdrop.querySelectorAll('.perm-doc:checked')].map((o) => Number(o.value)),
+    };
+    if (onSave) {
+      onSave(next);
+    } else {
+      await updateShare(source.id, next);
+    }
     closeModal();
   });
 }
@@ -165,5 +218,6 @@ function editPermissions(share) {
     active: 'invite',
     me,
   });
+  updateNewPermissionsButton();
   await load();
 })();

@@ -5,9 +5,13 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 
 const router = express.Router({ mergeParams: true });
 
-function normalizeFolderIds(ids) {
+function normalizeIdList(ids) {
   if (!Array.isArray(ids)) return '[]';
   return JSON.stringify([...new Set(ids.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))]);
+}
+
+function normalizeFolderIds(ids) {
+  return normalizeIdList(ids);
 }
 
 router.get('/', requireRole('admin', 'editor'), (req, res) => {
@@ -24,7 +28,7 @@ router.get('/', requireRole('admin', 'editor'), (req, res) => {
 });
 
 router.post('/', requireRole('admin', 'editor'), (req, res) => {
-  const { name, scope, snapshot_revision_id, discipline_filter, expires_at, allow_personal_markups, allow_documents, document_folder_ids } = req.body;
+  const { name, scope, snapshot_revision_id, discipline_filter, expires_at, allow_personal_markups, allow_documents, document_folder_ids, document_ids } = req.body;
   if (!['live', 'snapshot'].includes(scope)) {
     return res.status(400).json({ error: 'scope must be live or snapshot' });
   }
@@ -35,8 +39,8 @@ router.post('/', requireRole('admin', 'editor'), (req, res) => {
   const token = crypto.randomBytes(24).toString('base64url');
   const result = db
     .prepare(
-      `INSERT INTO shares (project_id, token, name, scope, snapshot_revision_id, discipline_filter, expires_at, allow_personal_markups, allow_documents, document_folder_ids, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO shares (project_id, token, name, scope, snapshot_revision_id, discipline_filter, expires_at, allow_personal_markups, allow_documents, document_folder_ids, document_ids, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       req.params.projectId,
@@ -49,6 +53,7 @@ router.post('/', requireRole('admin', 'editor'), (req, res) => {
       allow_personal_markups ? 1 : 0,
       allow_documents ? 1 : 0,
       normalizeFolderIds(document_folder_ids),
+      normalizeIdList(document_ids),
       req.session.user.id
     );
 
@@ -90,7 +95,8 @@ router.patch('/:id', requireAuth, (req, res) => {
   const hasPersonalMarkups = Object.prototype.hasOwnProperty.call(req.body, 'allow_personal_markups');
   const hasDocuments = Object.prototype.hasOwnProperty.call(req.body, 'allow_documents');
   const hasDocumentFolders = Object.prototype.hasOwnProperty.call(req.body, 'document_folder_ids');
-  if (!hasName && !hasRevoked && !hasPersonalMarkups && !hasDocuments && !hasDocumentFolders) {
+  const hasDocumentIds = Object.prototype.hasOwnProperty.call(req.body, 'document_ids');
+  if (!hasName && !hasRevoked && !hasPersonalMarkups && !hasDocuments && !hasDocumentFolders && !hasDocumentIds) {
     return res.status(400).json({ error: 'Nothing to update' });
   }
   if (hasRevoked && ![true, false, 0, 1].includes(req.body.revoked)) {
@@ -102,8 +108,9 @@ router.patch('/:id', requireAuth, (req, res) => {
   const nextPersonalMarkups = hasPersonalMarkups ? (req.body.allow_personal_markups ? 1 : 0) : share.allow_personal_markups;
   const nextDocuments = hasDocuments ? (req.body.allow_documents ? 1 : 0) : share.allow_documents;
   const nextDocumentFolders = hasDocumentFolders ? normalizeFolderIds(req.body.document_folder_ids) : share.document_folder_ids;
-  db.prepare('UPDATE shares SET name = ?, revoked = ?, allow_personal_markups = ?, allow_documents = ?, document_folder_ids = ? WHERE id = ?')
-    .run(nextName, nextRevoked, nextPersonalMarkups, nextDocuments, nextDocumentFolders, share.id);
+  const nextDocumentIds = hasDocumentIds ? normalizeIdList(req.body.document_ids) : share.document_ids;
+  db.prepare('UPDATE shares SET name = ?, revoked = ?, allow_personal_markups = ?, allow_documents = ?, document_folder_ids = ?, document_ids = ? WHERE id = ?')
+    .run(nextName, nextRevoked, nextPersonalMarkups, nextDocuments, nextDocumentFolders, nextDocumentIds, share.id);
 
   const action = hasRevoked
     ? nextRevoked ? 'share_deactivate' : 'share_activate'
@@ -114,6 +121,7 @@ router.patch('/:id', requireAuth, (req, res) => {
     allow_personal_markups: Boolean(nextPersonalMarkups),
     allow_documents: Boolean(nextDocuments),
     document_folder_ids: JSON.parse(nextDocumentFolders || '[]'),
+    document_ids: JSON.parse(nextDocumentIds || '[]'),
   });
 
   const updated = db.prepare('SELECT * FROM shares WHERE id = ?').get(share.id);

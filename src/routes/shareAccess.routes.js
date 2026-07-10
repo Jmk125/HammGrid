@@ -35,6 +35,7 @@ router.get('/:token', requireValidShare, (req, res) => {
       allow_personal_markups: Boolean(req.share.allow_personal_markups),
       allow_documents: Boolean(req.share.allow_documents),
       document_folder_ids: JSON.parse(req.share.document_folder_ids || '[]'),
+      document_ids: JSON.parse(req.share.document_ids || '[]'),
     },
     sheets: sheets.map((s) => ({
       id: s.id,
