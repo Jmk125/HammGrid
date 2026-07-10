@@ -65,15 +65,46 @@ CREATE TABLE IF NOT EXISTS sheet_versions (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Free-form file explorer for RFIs, submittals, progress photos, or
+-- anything else - not a rigid category enum. Folders can nest.
+CREATE TABLE IF NOT EXISTS document_folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  parent_folder_id INTEGER REFERENCES document_folders(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Stable entity (like sheets) - current_version_id points at whichever
+-- document_versions row is the latest revision, but old revisions stay
+-- reachable through document_versions directly.
 CREATE TABLE IF NOT EXISTS documents (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK (kind IN ('rfi', 'submittal')),
-  number TEXT,
-  title TEXT,
-  date TEXT,
-  status TEXT,
-  pdf_path TEXT,
+  folder_id INTEGER REFERENCES document_folders(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  -- ON DELETE SET NULL (unlike sheets.current_version_id, which has no
+  -- explicit action) - deleting a folder cascades through documents to
+  -- document_versions in one DELETE statement, and without this, SQLite's
+  -- cascade processing order can try to delete a document_versions row
+  -- while a documents row still points at it via current_version_id,
+  -- which is a real FK deadlock (reproduced directly - the identical
+  -- sheets/sheet_versions shape only avoids it because it happens to be
+  -- triggered via a different path in practice, not because the pattern is
+  -- inherently safe).
+  current_version_id INTEGER REFERENCES document_versions(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Each upload/revision (like sheet_versions) - revision_name/issue_date are
+-- optional since the very first upload often doesn't have either yet.
+CREATE TABLE IF NOT EXISTS document_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  revision_name TEXT,
+  issue_date TEXT,
+  pdf_path TEXT NOT NULL,
+  uploaded_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -150,6 +181,12 @@ CREATE INDEX IF NOT EXISTS idx_sheets_project ON sheets(project_id);
 CREATE INDEX IF NOT EXISTS idx_sheet_versions_sheet ON sheet_versions(sheet_id);
 CREATE INDEX IF NOT EXISTS idx_sheet_versions_revision ON sheet_versions(revision_id);
 CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id);
+CREATE INDEX IF NOT EXISTS idx_document_folders_project ON document_folders(project_id);
+CREATE INDEX IF NOT EXISTS idx_document_folders_parent ON document_folders(parent_folder_id);
+CREATE INDEX IF NOT EXISTS idx_document_versions_document ON document_versions(document_id);
+-- idx_documents_folder is created in db/index.js instead, AFTER the
+-- documents-table migration adds the folder_id column - on a pre-existing
+-- DB that column doesn't exist yet at the point this file is exec'd.
 CREATE INDEX IF NOT EXISTS idx_markups_sheet ON markups(sheet_id);
 CREATE INDEX IF NOT EXISTS idx_markups_linked_document ON markups(linked_document_id);
 CREATE INDEX IF NOT EXISTS idx_shares_project ON shares(project_id);

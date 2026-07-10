@@ -1,6 +1,7 @@
 const express = require('express');
+const fs = require('fs');
 const db = require('../db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const { streamFile } = require('../lib/streamFile');
 
 const router = express.Router();
@@ -8,13 +9,67 @@ const router = express.Router();
 router.get('/:id', requireAuth, (req, res) => {
   const document = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
   if (!document) return res.status(404).json({ error: 'Not found' });
-  res.json({ document });
+  const versions = db
+    .prepare(
+      `SELECT dv.*, u.name AS uploaded_by_name FROM document_versions dv
+       LEFT JOIN users u ON u.id = dv.uploaded_by
+       WHERE dv.document_id = ?
+       ORDER BY dv.created_at DESC, dv.id DESC`
+    )
+    .all(document.id);
+  res.json({ document, versions });
 });
 
 router.get('/:id/pdf', requireAuth, (req, res) => {
-  const document = db.prepare('SELECT pdf_path FROM documents WHERE id = ?').get(req.params.id);
-  if (!document || !document.pdf_path) return res.status(404).end();
-  streamFile(res, document.pdf_path, 'application/pdf');
+  const row = db
+    .prepare(
+      `SELECT dv.pdf_path AS p FROM documents d
+       JOIN document_versions dv ON dv.id = d.current_version_id
+       WHERE d.id = ?`
+    )
+    .get(req.params.id);
+  if (!row || !row.p) return res.status(404).end();
+  streamFile(res, row.p, 'application/pdf');
+});
+
+router.patch('/:id', requireRole('admin', 'editor'), (req, res) => {
+  const document = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!document) return res.status(404).json({ error: 'Not found' });
+
+  const { name, folder_id } = req.body;
+  if (folder_id !== undefined && folder_id !== null) {
+    const folder = db
+      .prepare('SELECT id FROM document_folders WHERE id = ? AND project_id = ?')
+      .get(folder_id, document.project_id);
+    if (!folder) return res.status(400).json({ error: 'folder_id not found in this project' });
+  }
+
+  db.prepare('UPDATE documents SET name = ?, folder_id = ? WHERE id = ?').run(
+    name !== undefined && name.trim() ? name.trim() : document.name,
+    folder_id !== undefined ? folder_id : document.folder_id,
+    document.id
+  );
+  const updated = db.prepare('SELECT * FROM documents WHERE id = ?').get(document.id);
+  res.json({ document: updated });
+});
+
+router.delete('/:id', requireRole('admin', 'editor'), (req, res) => {
+  const document = db.prepare('SELECT * FROM documents WHERE id = ?').get(req.params.id);
+  if (!document) return res.status(404).json({ error: 'Not found' });
+
+  const paths = db.prepare('SELECT pdf_path FROM document_versions WHERE document_id = ?').all(document.id);
+  try {
+    db.prepare('DELETE FROM documents WHERE id = ?').run(document.id);
+  } catch (err) {
+    if (err.code && err.code.startsWith('SQLITE_CONSTRAINT')) {
+      return res.status(400).json({ error: 'This document is linked to one or more markups - unlink them first' });
+    }
+    throw err;
+  }
+  for (const p of paths) {
+    if (p.pdf_path) fs.rm(p.pdf_path, { force: true }, () => {});
+  }
+  res.json({ ok: true });
 });
 
 module.exports = router;

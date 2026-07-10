@@ -100,9 +100,14 @@ router.delete('/:id', requireRole('admin'), (req, res) => {
   // Documents live in a flat, non-project-scoped folder, so their file paths
   // have to be collected before the cascade delete removes the DB rows that
   // point to them. Revision ids are needed for the same reason (staging
-  // directories are keyed by revision_id, not project_id).
+  // directories are keyed by revision_id, not project_id). Document files
+  // now live on document_versions (each revision), not documents itself.
   const documentPaths = db
-    .prepare('SELECT pdf_path FROM documents WHERE project_id = ?')
+    .prepare(
+      `SELECT dv.pdf_path FROM document_versions dv
+       JOIN documents d ON d.id = dv.document_id
+       WHERE d.project_id = ?`
+    )
     .all(project.id)
     .map((d) => d.pdf_path)
     .filter(Boolean);
