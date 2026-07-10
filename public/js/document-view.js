@@ -54,6 +54,12 @@ document.getElementById('back-btn').addEventListener('click', () => {
   }
 });
 
+document.getElementById('download-doc-btn').addEventListener('click', () => {
+  window.location.href = shareToken
+    ? `/api/share/${shareToken}/documents/${documentId}/download`
+    : versionId ? `/api/document-versions/${versionId}/download` : `/api/documents/${documentId}/download`;
+});
+
 document.getElementById('logout').addEventListener('click', async () => {
   await api('POST', '/api/auth/logout');
   window.location.href = '/login.html';

@@ -116,6 +116,24 @@ function insertSheetLabel(sheet, title) {
   label.querySelector('.title').textContent = title || '';
 }
 
+
+function setupDownloadButton() {
+  const row = document.querySelector('#topbar > .row');
+  if (!row || document.getElementById('download-sheet-btn')) return;
+  const btn = document.createElement('button');
+  btn.id = 'download-sheet-btn';
+  btn.type = 'button';
+  btn.title = 'Download drawing';
+  btn.textContent = '⬇';
+  btn.addEventListener('click', () => {
+    const includePublished = confirm('Include published markups in the downloaded PDF?');
+    const includePersonal = confirm('Include your personal markups in the downloaded PDF?');
+    const qs = new URLSearchParams({ published: includePublished ? '1' : '0', personal: includePersonal ? '1' : '0' });
+    window.location.href = `/api/sheet-versions/${displayedVersionId}/download?${qs}`;
+  });
+  row.prepend(btn);
+}
+
 // ---------- PDF rendering ----------
 // Reads the PDF from OPFS if this version has been synced - no network in
 // the path of viewing a sheet, per CLAUDE.md - falling back to the
@@ -777,6 +795,7 @@ async function loadSheetOffline() {
     });
   }
 
+  setupDownloadButton();
   updateVersionBadge();
   setupZoomPan();
   setupScaleSelect(sheet);

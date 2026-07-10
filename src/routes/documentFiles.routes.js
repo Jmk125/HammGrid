@@ -20,6 +20,15 @@ router.get('/:id', requireAuth, (req, res) => {
   res.json({ document, versions });
 });
 
+
+router.get('/:id/download', requireAuth, (req, res) => {
+  const row = db
+    .prepare(`SELECT d.name, dv.pdf_path AS p FROM documents d JOIN document_versions dv ON dv.id = d.current_version_id WHERE d.id = ?`)
+    .get(req.params.id);
+  if (!row || !row.p) return res.status(404).end();
+  res.download(row.p, `${row.name || 'document'}.pdf`);
+});
+
 router.get('/:id/pdf', requireAuth, (req, res) => {
   const row = db
     .prepare(

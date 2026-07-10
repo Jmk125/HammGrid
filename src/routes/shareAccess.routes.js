@@ -3,6 +3,7 @@ const db = require('../db');
 const { resolveShare, getShareSheets, getShareDocuments, canAccessShareDocument, logShareActivity } = require('../lib/shareAccess');
 const { streamZip, streamMergedPdf } = require('../lib/exportPdfs');
 const { streamFile } = require('../lib/streamFile');
+const { annotatePdfToResponse } = require('../lib/annotatePdf');
 
 const router = express.Router();
 
@@ -87,6 +88,15 @@ router.get('/:token/documents', requireValidShare, (req, res) => {
   res.json(getShareDocuments(req.share));
 });
 
+
+router.get('/:token/documents/:documentId/download', requireValidShare, (req, res) => {
+  const document = canAccessShareDocument(req.share, req.params.documentId);
+  if (!document) return res.status(404).json({ error: 'Not found' });
+  const row = db.prepare(`SELECT dv.pdf_path AS p FROM documents d JOIN document_versions dv ON dv.id = d.current_version_id WHERE d.id = ?`).get(document.id);
+  if (!row || !row.p) return res.status(404).end();
+  res.download(row.p, `${document.name || 'document'}.pdf`);
+});
+
 router.get('/:token/documents/:documentId/pdf', requireValidShare, (req, res) => {
   const document = canAccessShareDocument(req.share, req.params.documentId);
   if (!document) return res.status(404).json({ error: 'Not found' });
@@ -98,6 +108,24 @@ router.get('/:token/documents/:documentId/pdf', requireValidShare, (req, res) =>
 });
 
 router.get('/:token/sheet-versions/:versionId/pdf', requireValidShare, requireVersionInShare, serveShareFile('pdf_path', 'application/pdf'));
+
+router.get('/:token/sheet-versions/:versionId/download', requireValidShare, requireVersionInShare, (req, res) => {
+  const sheet = getShareSheets(req.share).find((s) => String(s.version_id) === req.params.versionId);
+  if (!sheet) return res.status(404).json({ error: 'Not found' });
+  const row = db.prepare('SELECT pdf_path FROM sheet_versions WHERE id = ?').get(req.params.versionId);
+  if (!row || !row.pdf_path) return res.status(404).end();
+  const markups = [];
+  if (req.query.published === '1') {
+    markups.push(...db.prepare(`SELECT type, geometry, style FROM markups WHERE sheet_id = ? AND visibility = 'published' ORDER BY created_at`).all(sheet.id)
+      .map((m) => ({ ...m, geometry: JSON.parse(m.geometry), style: JSON.parse(m.style || '{}') })));
+  }
+  if (req.query.personal === '1') {
+    markups.push(...db.prepare(`SELECT type, geometry, style FROM share_markups WHERE share_id = ? AND sheet_id = ? ORDER BY created_at`).all(req.share.id, sheet.id)
+      .map((m) => ({ ...m, geometry: JSON.parse(m.geometry), style: JSON.parse(m.style || '{}') })));
+  }
+  annotatePdfToResponse(res, row.pdf_path, markups, `${sheet.sheet_number || 'sheet'}.pdf`);
+});
+
 router.get('/:token/sheet-versions/:versionId/thumb', requireValidShare, requireVersionInShare, serveShareFile('thumb_path', 'image/webp'));
 router.get('/:token/sheet-versions/:versionId/preview', requireValidShare, requireVersionInShare, serveShareFile('preview_path', 'image/webp'));
 
