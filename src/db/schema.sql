@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS shares (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   token TEXT NOT NULL UNIQUE,
+  name TEXT,
   scope TEXT NOT NULL CHECK (scope IN ('live', 'snapshot')),
   snapshot_revision_id INTEGER REFERENCES revisions(id),
   discipline_filter TEXT,

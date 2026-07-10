@@ -104,12 +104,21 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
   }
 
   function getSvgPoint(evt) {
+    const p = eventPoint(evt);
     const rect = svgEl.getBoundingClientRect();
     const { w, h } = vbSize();
     return {
-      x: ((evt.clientX - rect.left) / rect.width) * w,
-      y: ((evt.clientY - rect.top) / rect.height) * h,
+      x: ((p.clientX - rect.left) / rect.width) * w,
+      y: ((p.clientY - rect.top) / rect.height) * h,
     };
+  }
+
+  function eventPoint(evt) {
+    return evt.changedTouches ? evt.changedTouches[0] : evt;
+  }
+
+  function isPrimaryTouch(evt) {
+    return !evt.touches || evt.touches.length === 1;
   }
 
   function findMarkup(id) {
@@ -212,6 +221,13 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
         startBodyDrag(m, e);
       }
     });
+    node.addEventListener('touchstart', (e) => {
+      if (editingId === m.id && isPrimaryTouch(e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        startBodyDrag(m, e);
+      }
+    }, { passive: false });
     node.addEventListener('click', (e) => {
       e.stopPropagation();
       if (editingId === m.id) return;
@@ -235,6 +251,12 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
         e.stopPropagation();
         handleDrag = { markup: m, onDrag };
       });
+      c.addEventListener('touchstart', (e) => {
+        if (!isPrimaryTouch(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        handleDrag = { markup: m, onDrag };
+      }, { passive: false });
       group.appendChild(c);
     }
 
@@ -529,9 +551,10 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
     if (e.target === svgEl) deselect();
   });
 
-  svgEl.addEventListener('mousedown', async (e) => {
-    if (activeTool === 'select' || e.target !== svgEl) return;
-    const pt = getSvgPoint(e);
+  async function startDrawing(evt) {
+    if (activeTool === 'select' || evt.target !== svgEl) return;
+    evt.preventDefault();
+    const pt = getSvgPoint(evt);
 
     if (activeTool === 'text') {
       const text = prompt('Text:');
@@ -549,11 +572,12 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
     previewEl.setAttribute('fill', 'none');
     previewEl.setAttribute('stroke-dasharray', '4 2');
     svgEl.appendChild(previewEl);
-  });
+  }
 
-  svgEl.addEventListener('mousemove', (e) => {
+  function updateDrawing(evt) {
     if (!drawing) return;
-    const pt = getSvgPoint(e);
+    evt.preventDefault();
+    const pt = getSvgPoint(evt);
     const { type, start } = drawing;
     if (type === 'line' || type === 'arrow') {
       previewEl.setAttribute('x1', start.x);
@@ -574,7 +598,55 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
         previewEl.setAttribute('height', h);
       }
     }
+  }
+
+  async function finishDrawing(evt) {
+    if (!drawing) return false;
+    evt.preventDefault();
+    const pt = getSvgPoint(evt);
+    const { type, start } = drawing;
+    if (previewEl) previewEl.remove();
+    drawing = null;
+
+    const { w, h } = vbSize();
+    let geometry;
+    if (type === 'line' || type === 'arrow') {
+      if (Math.hypot(pt.x - start.x, pt.y - start.y) < 4) {
+        activateTool('select');
+        return true;
+      }
+      geometry = { x1: start.x / w, y1: start.y / h, x2: pt.x / w, y2: pt.y / h };
+    } else {
+      const x0 = Math.min(pt.x, start.x);
+      const y0 = Math.min(pt.y, start.y);
+      const bw = Math.abs(pt.x - start.x);
+      const bh = Math.abs(pt.y - start.y);
+      if (bw < 4 || bh < 4) {
+        activateTool('select');
+        return true;
+      }
+      geometry = { x: x0 / w, y: y0 / h, w: bw / w, h: bh / h };
+    }
+    const extraStyle = type.startsWith('cloud') ? { bumpSize: CLOUD_BUMP_SIZE[type] } : undefined;
+    await createMarkup(type, geometry, extraStyle);
+    activateTool('select');
+    return true;
+  }
+
+  svgEl.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    startDrawing(e);
   });
+  svgEl.addEventListener('mousemove', updateDrawing);
+
+  svgEl.addEventListener('touchstart', (e) => {
+    if (!isPrimaryTouch(e)) return;
+    startDrawing(e);
+  }, { passive: false });
+  svgEl.addEventListener('touchmove', (e) => {
+    if (!isPrimaryTouch(e)) return;
+    updateDrawing(e);
+  }, { passive: false });
 
   window.addEventListener('mousemove', (e) => {
     if (handleDrag) {
@@ -599,14 +671,39 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
     }
   });
 
-  window.addEventListener('mouseup', async (e) => {
+  window.addEventListener('touchmove', (e) => {
+    if (!isPrimaryTouch(e)) return;
+    if (handleDrag || bodyDrag) e.preventDefault();
+    if (handleDrag) {
+      const pt = getSvgPoint(e);
+      handleDrag.onDrag(pt);
+      renderAll();
+    } else if (bodyDrag) {
+      const pt = getSvgPoint(e);
+      const { w, h } = vbSize();
+      const dx = (pt.x - bodyDrag.start.x) / w;
+      const dy = (pt.y - bodyDrag.start.y) / h;
+      const g = bodyDrag.origGeometry;
+      const m = bodyDrag.markup;
+      if (m.type === 'line' || m.type === 'arrow') {
+        m.geometry = { x1: g.x1 + dx, y1: g.y1 + dy, x2: g.x2 + dx, y2: g.y2 + dy };
+      } else if (m.type === 'text') {
+        m.geometry = { ...g, x: g.x + dx, y: g.y + dy };
+      } else {
+        m.geometry = { ...g, x: g.x + dx, y: g.y + dy };
+      }
+      renderAll();
+    }
+  }, { passive: false });
+
+  async function finishMarkupDrag() {
     if (handleDrag) {
       const m = handleDrag.markup;
       handleDrag = null;
       const { markup } = await api('PATCH', `/api/markups/${m.id}`, { geometry: m.geometry });
       Object.assign(m, markup);
       renderAll();
-      return;
+      return true;
     }
     if (bodyDrag) {
       const m = bodyDrag.markup;
@@ -614,37 +711,28 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
       const { markup } = await api('PATCH', `/api/markups/${m.id}`, { geometry: m.geometry });
       Object.assign(m, markup);
       renderAll();
-      return;
+      return true;
     }
-    if (!drawing) return;
-    const pt = getSvgPoint(e);
-    const { type, start } = drawing;
-    if (previewEl) previewEl.remove();
-    drawing = null;
+    return false;
+  }
 
-    const { w, h } = vbSize();
-    let geometry;
-    if (type === 'line' || type === 'arrow') {
-      if (Math.hypot(pt.x - start.x, pt.y - start.y) < 4) {
-        activateTool('select');
-        return;
-      }
-      geometry = { x1: start.x / w, y1: start.y / h, x2: pt.x / w, y2: pt.y / h };
-    } else {
-      const x0 = Math.min(pt.x, start.x);
-      const y0 = Math.min(pt.y, start.y);
-      const bw = Math.abs(pt.x - start.x);
-      const bh = Math.abs(pt.y - start.y);
-      if (bw < 4 || bh < 4) {
-        activateTool('select');
-        return;
-      }
-      geometry = { x: x0 / w, y: y0 / h, w: bw / w, h: bh / h };
-    }
-    const extraStyle = type.startsWith('cloud') ? { bumpSize: CLOUD_BUMP_SIZE[type] } : undefined;
-    await createMarkup(type, geometry, extraStyle);
-    activateTool('select');
+  window.addEventListener('mouseup', async (e) => {
+    if (await finishMarkupDrag()) return;
+    await finishDrawing(e);
   });
+  window.addEventListener('touchend', async (e) => {
+    if (e.touches.length > 0) return;
+    if (await finishMarkupDrag()) return;
+    await finishDrawing(e);
+  }, { passive: false });
+  window.addEventListener('touchcancel', () => {
+    handleDrag = null;
+    bodyDrag = null;
+    drawing = null;
+    if (previewEl) previewEl.remove();
+    previewEl = null;
+  });
+
 
   return {
     async load() {

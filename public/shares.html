@@ -13,6 +13,7 @@
         <div class="card">
           <h2>New share link</h2>
           <form id="new-share-form" class="row">
+            <input id="share-name" placeholder="Link name / recipient" autocomplete="off">
             <select id="share-scope">
               <option value="live">Live (always current)</option>
               <option value="snapshot">Snapshot (frozen at a revision)</option>
@@ -29,7 +30,7 @@
 
         <div class="card">
           <table id="shares-table">
-            <thead><tr><th>Scope</th><th>Discipline</th><th>Expires</th><th>Created by</th><th>Status</th><th>Link</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Scope</th><th>Discipline</th><th>Expires</th><th>Created by</th><th>Status</th><th>Link</th><th>Actions</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
