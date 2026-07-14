@@ -41,6 +41,16 @@ function handleSync(req, res) {
       (!hasSince && cachedVersionIds.size === 0)
   );
   const currentSheetIds = currentRows.map((s) => s.id);
+  const currentSheets = currentRows.map((s) => ({
+    id: s.id,
+    sheet_number: s.sheet_number,
+    discipline: s.discipline,
+    current_version: {
+      id: s.version_id,
+      revision_id: s.revision_id,
+      title: s.title,
+    },
+  }));
 
   const markups = db
     .prepare(
@@ -55,6 +65,7 @@ function handleSync(req, res) {
   res.json({
     since: requestTime,
     current_sheet_ids: currentSheetIds,
+    current_sheets: currentSheets,
     sheets: sheets.map((s) => ({
       id: s.id,
       sheet_number: s.sheet_number,
