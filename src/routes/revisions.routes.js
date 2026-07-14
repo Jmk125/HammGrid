@@ -572,15 +572,18 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
   for (const p of filesToCleanup) fs.rm(p, { force: true }, () => {});
   fs.rm(path.join(config.storageDir, 'staging', String(revision.id)), { recursive: true, force: true }, () => {});
 
-  try {
-    await scanAutoLinksForSheets({
-      projectId: revision.project_id,
-      sourceSheets: publishedSourceSheets,
-      userId: req.session.user.id,
-    });
-  } catch (err) {
-    console.error('Post-publish sheet-link rescan failed', err);
-  }
+  const scanUserId = req.session.user.id;
+  setImmediate(async () => {
+    try {
+      await scanAutoLinksForSheets({
+        projectId: revision.project_id,
+        sourceSheets: publishedSourceSheets,
+        userId: scanUserId,
+      });
+    } catch (err) {
+      console.error('Post-publish sheet-link rescan failed', err);
+    }
+  });
 
     res.json({ ok: true, published_sheets: toPublish.length });
   } finally {

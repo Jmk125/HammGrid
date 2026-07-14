@@ -29,7 +29,7 @@ router.get('/', requireAuth, (req, res) => {
        JOIN sheets ts ON ts.id = sl.target_sheet_id
        LEFT JOIN sheet_versions sv ON sv.id = ts.current_version_id
        WHERE sl.source_sheet_id = ? AND source.project_id = ?
-         AND (sl.link_type = 'manual' OR sl.source_version_id IS NULL OR sl.source_version_id = source.current_version_id)
+         AND (sl.link_type = 'manual' OR sl.source_version_id = source.current_version_id)
        ORDER BY sl.created_at, sl.id`
     )
     .all(req.params.sheetId, req.params.projectId);

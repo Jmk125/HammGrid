@@ -154,6 +154,19 @@ async function refreshCachedSheetMetadata(projectId, currentSheets) {
   }
 }
 
+
+export async function ensureProjectCacheFresh(projectId, project = {}) {
+  if (!project.created_at) return;
+  const db = await openDb();
+  const key = `project-created-at:${projectId}`;
+  const row = await idbGet(db, 'meta', key);
+  if (row && row.value && row.value !== project.created_at) {
+    await deleteCachedProject(projectId);
+  }
+  const freshDb = await openDb();
+  await putMeta(freshDb, key, project.created_at);
+}
+
 export async function syncProject(projectId, { onProgress } = {}) {
   const db = await openDb();
   const cursorKey = `sync-cursor:${projectId}`;
@@ -274,6 +287,7 @@ export async function deleteCachedProject(projectId) {
   await Promise.all([
     idbDelete(db, 'meta', `sync-cursor:${projectId}`),
     idbDelete(db, 'meta', `sync-state:${projectId}`),
+    idbDelete(db, 'meta', `project-created-at:${projectId}`),
   ]);
 }
 

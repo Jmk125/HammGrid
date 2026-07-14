@@ -1,4 +1,4 @@
-import { syncProject, getCachedSheets, getCachedAsset, getProjectSyncInfo } from '/js/offline-store.js';
+import { syncProject, getCachedSheets, getCachedAsset, getProjectSyncInfo, ensureProjectCacheFresh } from '/js/offline-store.js';
 import { renderShell, openModal, closeModal } from '/js/shell.js';
 
 const projectId = new URLSearchParams(window.location.search).get('projectId');
@@ -322,6 +322,7 @@ document.getElementById('search-filter').addEventListener('input', () => renderG
 
   try {
     await loadFilters();
+    await ensureProjectCacheFresh(projectId, currentProject || {});
   } catch (err) {
     // offline on first-ever load with no cached project metadata - filters just stay empty
   }
