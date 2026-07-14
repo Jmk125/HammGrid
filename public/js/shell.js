@@ -76,13 +76,13 @@ export function alertModal({ title = 'Notice', message = '', okLabel = 'OK' } = 
 
 // Promise-based replacement for the native confirm() dialog - resolves true/false,
 // styled like the rest of the app instead of a jarring native browser popup.
-export function confirmModal({ title = 'Are you sure?', message = '', confirmLabel = 'Confirm', danger = false } = {}) {
+export function confirmModal({ title = 'Are you sure?', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false } = {}) {
   return new Promise((resolve) => {
     openModal(`
       <h2>${escapeHtml(title)}</h2>
       ${message ? `<p>${escapeHtml(message)}</p>` : ''}
       <div class="modal-actions">
-        <button type="button" id="modal-cancel">Cancel</button>
+        <button type="button" id="modal-cancel">${escapeHtml(cancelLabel)}</button>
         <button type="button" id="modal-confirm" class="${danger ? 'danger' : 'primary'}">${escapeHtml(confirmLabel)}</button>
       </div>
     `);
@@ -140,6 +140,122 @@ export function promptModal({ title = 'Enter a value', message = '', placeholder
       if (e.key === 'Enter') submit();
     });
   });
+}
+
+
+// ---------- Per-project sheet history ----------
+const SHEET_HISTORY_LIMIT = 10;
+
+function sheetHistoryKey(projectId) {
+  return `hammgrid-sheet-history:${projectId}`;
+}
+
+function normalizeHistoryEntry(entry) {
+  if (!entry || entry.sheetId === undefined || entry.sheetId === null) return null;
+  return {
+    sheetId: String(entry.sheetId),
+    sheetNumber: entry.sheetNumber || 'Sheet',
+    title: entry.title || '',
+  };
+}
+
+function getSheetHistory(projectId) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(sheetHistoryKey(projectId)) || '[]');
+    return Array.isArray(raw) ? raw.map(normalizeHistoryEntry).filter(Boolean).slice(0, SHEET_HISTORY_LIMIT) : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveSheetHistory(projectId, history) {
+  localStorage.setItem(sheetHistoryKey(projectId), JSON.stringify(history.slice(0, SHEET_HISTORY_LIMIT)));
+}
+
+function recordSheetVisit(projectId, entry) {
+  const normalized = normalizeHistoryEntry(entry);
+  if (!projectId || !normalized) return;
+  const history = getSheetHistory(projectId);
+  if (history[0] && history[0].sheetId === normalized.sheetId) {
+    history[0] = normalized;
+    saveSheetHistory(projectId, history);
+    return;
+  }
+  saveSheetHistory(projectId, [normalized, ...history.filter((h) => h.sheetId !== normalized.sheetId)]);
+}
+
+function rotateSheetHistoryTo(projectId, sheetId) {
+  const history = getSheetHistory(projectId);
+  const idx = history.findIndex((h) => h.sheetId === String(sheetId));
+  if (idx <= 0) return history;
+  const rotated = [...history.slice(idx), ...history.slice(0, idx)].slice(0, SHEET_HISTORY_LIMIT);
+  saveSheetHistory(projectId, rotated);
+  return rotated;
+}
+
+function sheetHref(projectId, sheetId) {
+  return `/sheet.html?projectId=${encodeURIComponent(projectId)}&sheetId=${encodeURIComponent(sheetId)}`;
+}
+
+function renderSheetHistoryControls(topbarEl, projectId) {
+  if (!projectId) return;
+  const history = getSheetHistory(projectId);
+  const rightRow = topbarEl.querySelector('.topbar-actions');
+  if (!rightRow) return;
+
+  const backBtn = document.createElement('button');
+  backBtn.id = 'sheet-history-back-btn';
+  backBtn.type = 'button';
+  backBtn.title = 'Previous sheet';
+  backBtn.textContent = '←';
+  backBtn.disabled = history.length < 2;
+  backBtn.addEventListener('click', () => {
+    const latest = getSheetHistory(projectId);
+    if (latest.length < 2) return;
+    const target = latest[1];
+    saveSheetHistory(projectId, [...latest.slice(1), latest[0]].slice(0, SHEET_HISTORY_LIMIT));
+    window.location.href = sheetHref(projectId, target.sheetId);
+  });
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sheet-history-wrap';
+  const clockBtn = document.createElement('button');
+  clockBtn.id = 'sheet-history-btn';
+  clockBtn.type = 'button';
+  clockBtn.title = 'Recent sheets';
+  clockBtn.textContent = '◷';
+  wrap.appendChild(clockBtn);
+
+  const menu = document.createElement('div');
+  menu.className = 'sheet-history-menu';
+  menu.style.display = 'none';
+  if (history.length === 0) {
+    menu.innerHTML = '<div class="sheet-history-empty">No recent sheets yet.</div>';
+  } else {
+    for (const [idx, item] of history.entries()) {
+      const a = document.createElement('a');
+      a.href = sheetHref(projectId, item.sheetId);
+      a.innerHTML = `<b>${escapeHtml(item.sheetNumber)}</b>${item.title ? `<span>${escapeHtml(item.title)}</span>` : ''}`;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        rotateSheetHistoryTo(projectId, item.sheetId);
+        window.location.href = a.href;
+      });
+      if (idx === 0) a.classList.add('current');
+      menu.appendChild(a);
+    }
+  }
+  wrap.appendChild(menu);
+  clockBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+  });
+  document.addEventListener('click', () => {
+    menu.style.display = 'none';
+  });
+
+  rightRow.prepend(wrap);
+  rightRow.prepend(backBtn);
 }
 
 // ---------- Toasts + cross-page background job notifications ----------
@@ -271,8 +387,9 @@ function exportModal(projectId) {
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
 }
 
-export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, onOverlayClick }) {
+export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, onOverlayClick, sheetHistoryEntry }) {
   const canManage = me.role === 'admin' || me.role === 'editor';
+  if (sheetHistoryEntry) recordSheetVisit(projectId, sheetHistoryEntry);
   checkPendingJobs();
 
   topbarEl.innerHTML = `
@@ -280,7 +397,7 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
       ${sidebarEl ? '<button class="sidebar-toggle" id="sidebar-toggle-btn" type="button">&#9776;</button>' : ''}
       <a class="brand" href="/dashboard.html">HammGrid</a>
     </div>
-    <div class="row">
+    <div class="row topbar-actions">
       ${onOverlayClick ? '<button id="overlay-btn" type="button">Overlay</button>' : ''}
       ${projectId && canManage ? '<button class="primary" id="new-revision-btn" type="button">+ New Revision</button>' : ''}
       <span id="whoami" class="muted"></span>
@@ -292,6 +409,7 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
     await api('POST', '/api/auth/logout');
     window.location.href = '/login.html';
   });
+  if (active === 'viewer' && projectId) renderSheetHistoryControls(topbarEl, projectId);
   const newRevBtn = topbarEl.querySelector('#new-revision-btn');
   if (newRevBtn) newRevBtn.addEventListener('click', () => newRevisionModal(projectId));
   const overlayBtn = topbarEl.querySelector('#overlay-btn');

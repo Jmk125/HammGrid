@@ -75,6 +75,35 @@ a { color: var(--accent); }
 .topbar .sheet-label .num { font-weight: 700; font-size: 15px; }
 .topbar .sheet-label .title { color: #b8c4d4; font-size: 13px; }
 
+.sheet-history-wrap { position: relative; display: inline-flex; }
+.sheet-history-menu {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  z-index: 30;
+  min-width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+}
+.sheet-history-menu a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border);
+}
+.sheet-history-menu a:last-child { border-bottom: none; }
+.sheet-history-menu a:hover { background: var(--bg); }
+.sheet-history-menu a.current { background: var(--accent-light); }
+.sheet-history-menu a span, .sheet-history-empty { color: var(--muted); font-size: 12px; }
+.sheet-history-empty { padding: 10px 12px; white-space: nowrap; }
+
 /* ---------- App shell (sidebar + content) ---------- */
 .app-shell {
   display: flex;
@@ -83,6 +112,10 @@ a { color: var(--accent); }
 }
 
 .sidebar {
+  position: sticky;
+  top: 53px;
+  max-height: calc(100vh - 53px);
+  overflow-y: auto;
   width: var(--sidebar-w);
   flex-shrink: 0;
   background: var(--surface);
@@ -90,9 +123,8 @@ a { color: var(--accent); }
   min-height: calc(100vh - 53px);
   padding: 12px 0;
   transition: width 0.15s ease, opacity 0.15s ease;
-  overflow: hidden;
 }
-.sidebar.collapsed { width: 0; padding: 0; opacity: 0; }
+.sidebar.collapsed { width: 0; padding: 0; opacity: 0; overflow: hidden; }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
 .sidebar a {
   display: flex;
@@ -515,6 +547,15 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .markup-stage { position: relative; display: inline-block; }
 .markup-stage canvas { display: block; }
 .markup-stage svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+#sheet-link-layer { pointer-events: none; }
+#sheet-link-layer .sheet-link-hotspot {
+  fill: rgba(37, 99, 235, 0.16);
+  stroke: rgba(37, 99, 235, 0.88);
+  stroke-width: 2;
+  cursor: pointer;
+  pointer-events: auto;
+}
+#sheet-link-layer .sheet-link-hotspot:hover { fill: rgba(37, 99, 235, 0.28); }
 
 .tool-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
