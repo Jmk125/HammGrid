@@ -124,6 +124,19 @@ CREATE TABLE IF NOT EXISTS markups (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS sheet_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  source_sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  source_version_id INTEGER REFERENCES sheet_versions(id) ON DELETE SET NULL,
+  target_sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  rect TEXT NOT NULL,
+  label TEXT,
+  link_type TEXT NOT NULL CHECK (link_type IN ('auto', 'manual')) DEFAULT 'auto',
+  created_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS shares (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -206,6 +219,8 @@ CREATE INDEX IF NOT EXISTS idx_document_versions_document ON document_versions(d
 -- documents-table migration adds the folder_id column - on a pre-existing
 -- DB that column doesn't exist yet at the point this file is exec'd.
 CREATE INDEX IF NOT EXISTS idx_markups_sheet ON markups(sheet_id);
+CREATE INDEX IF NOT EXISTS idx_sheet_links_source ON sheet_links(source_sheet_id);
+CREATE INDEX IF NOT EXISTS idx_sheet_links_project ON sheet_links(project_id);
 CREATE INDEX IF NOT EXISTS idx_markups_linked_document ON markups(linked_document_id);
 CREATE INDEX IF NOT EXISTS idx_shares_project ON shares(project_id);
 CREATE INDEX IF NOT EXISTS idx_shares_token ON shares(token);
