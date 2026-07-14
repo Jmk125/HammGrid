@@ -6,7 +6,8 @@
     "start": "PORT=3010 node src/server.js",
     "dev": "PORT=3010 nodemon src/server.js",
     "create-admin": "node src/scripts/create-admin.js",
-    "fix-path-separators": "node src/scripts/fix-path-separators.js"
+    "fix-path-separators": "node src/scripts/fix-path-separators.js",
+    "set-password": "node src/scripts/set-password.js"
   },
   "keywords": [],
   "author": "",

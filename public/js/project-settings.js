@@ -1,6 +1,9 @@
+import { deleteCachedProject } from '/js/offline-store.js';
 import { renderShell, openModal, closeModal, showToast, getPendingJobsForProject, untrackPendingJob } from '/js/shell.js';
 
-const projectId = new URLSearchParams(window.location.search).get('projectId');
+const params = new URLSearchParams(window.location.search);
+const projectId = params.get('projectId');
+const sheetLinkJobId = params.get('sheetLinkJobId');
 let currentProject = null;
 let currentUser = null;
 // jobIds with an active poll loop already running, so a table rebuild
@@ -42,6 +45,7 @@ function openDeleteConfirm() {
     confirmBtn.disabled = true;
     try {
       await api('DELETE', `/api/projects/${projectId}`, { confirm_name: input.value });
+      await deleteCachedProject(projectId);
       window.location.href = '/dashboard.html';
     } catch (err) {
       const errEl = document.getElementById('delete-error');
@@ -86,6 +90,67 @@ function openDeleteRevisionConfirm(revision) {
       confirmBtn.disabled = false;
     }
   });
+}
+
+async function loadSheetLinkSummary() {
+  const statusEl = document.getElementById('sheet-link-scan-status');
+  if (!statusEl) return;
+  try {
+    const { link_count } = await api('GET', `/api/projects/${projectId}/sheet-links/summary`);
+    statusEl.textContent = `${link_count} active link${link_count === 1 ? '' : 's'}.`;
+  } catch (err) {
+    statusEl.textContent = `Unable to load link summary: ${err.message}`;
+  }
+}
+
+async function pollSheetLinkScan(jobId) {
+  const statusEl = document.getElementById('sheet-link-scan-status');
+  const scanBtn = document.getElementById('scan-sheet-links-btn');
+  for (;;) {
+    const { job } = await api('GET', `/api/projects/${projectId}/sheet-links/jobs/${jobId}`);
+    if (job.status === 'processing') {
+      const progress = job.progress;
+      statusEl.textContent = progress ? `Scanning ${progress.current} / ${progress.total} sheets...` : 'Scanning...';
+      await new Promise((r) => setTimeout(r, 1500));
+      continue;
+    }
+    scanBtn.disabled = false;
+    if (job.status === 'done') {
+      const created = job.result ? job.result.created_links : null;
+      statusEl.textContent = created === null ? 'Scan complete.' : `Scan complete: ${created} link${created === 1 ? '' : 's'} found.`;
+      showToast('Sheet-link scan finished.', 'success');
+      await loadSheetLinkSummary();
+    } else {
+      statusEl.textContent = `Scan failed: ${job.error || 'Unknown error'}`;
+      showToast(`Sheet-link scan failed: ${job.error || 'Unknown error'}`, 'error');
+    }
+    return;
+  }
+}
+
+function setupSheetLinkScan() {
+  const card = document.getElementById('sheet-links-card');
+  const scanBtn = document.getElementById('scan-sheet-links-btn');
+  if (!card || !scanBtn) return;
+  if (!currentUser || !['admin', 'editor'].includes(currentUser.role)) return;
+  card.style.display = '';
+  if (sheetLinkJobId) {
+    scanBtn.disabled = true;
+    pollSheetLinkScan(sheetLinkJobId);
+  }
+  scanBtn.addEventListener('click', async () => {
+    scanBtn.disabled = true;
+    const statusEl = document.getElementById('sheet-link-scan-status');
+    statusEl.textContent = 'Starting scan...';
+    try {
+      const { job_id } = await api('POST', `/api/projects/${projectId}/sheet-links/scan`);
+      await pollSheetLinkScan(job_id);
+    } catch (err) {
+      scanBtn.disabled = false;
+      statusEl.textContent = `Scan failed: ${err.message}`;
+    }
+  });
+  loadSheetLinkSummary();
 }
 
 async function loadRevisions() {
@@ -215,6 +280,7 @@ document.getElementById('settings-form').addEventListener('submit', async (e) =>
     me,
   });
   await loadDetails();
+  setupSheetLinkScan();
   await loadRevisions();
 
   if (me.role === 'admin') {

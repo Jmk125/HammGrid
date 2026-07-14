@@ -11,21 +11,46 @@ const router = express.Router({ mergeParams: true });
 // breaks. Grabbing it via a query fixed at the start of the request means
 // nothing committed after this point is silently missed - it just lands in
 // the next sync instead.
-router.get('/', requireAuth, (req, res) => {
+function handleSync(req, res) {
   const requestTime = db.prepare("SELECT datetime('now') AS now").get().now;
-  const since = req.query.since || '0000-00-00 00:00:00';
+  const rawSince = req.method === 'POST' ? req.body.since : req.query.since;
+  const hasSince = !!rawSince;
+  const since = rawSince || '0000-00-00 00:00:00';
+  const cachedVersionIds = new Set(
+    (req.method === 'POST' && Array.isArray(req.body.cached_version_ids) ? req.body.cached_version_ids : [])
+      .map((id) => Number(id))
+      .filter(Number.isFinite)
+  );
 
-  const sheets = db
+  const currentRows = db
     .prepare(
       `SELECT s.id, s.sheet_number, s.discipline,
               sv.id AS version_id, sv.revision_id, sv.title, r.published_at
        FROM sheets s
        JOIN sheet_versions sv ON sv.id = s.current_version_id
        JOIN revisions r ON r.id = sv.revision_id
-       WHERE s.project_id = ? AND r.published_at > ?
+       WHERE s.project_id = ?
        ORDER BY r.published_at`
     )
-    .all(req.params.projectId, since);
+    .all(req.params.projectId);
+
+  const sheets = currentRows.filter(
+    (s) =>
+      (hasSince && s.published_at > since) ||
+      (cachedVersionIds.size > 0 && !cachedVersionIds.has(s.version_id)) ||
+      (!hasSince && cachedVersionIds.size === 0)
+  );
+  const currentSheetIds = currentRows.map((s) => s.id);
+  const currentSheets = currentRows.map((s) => ({
+    id: s.id,
+    sheet_number: s.sheet_number,
+    discipline: s.discipline,
+    current_version: {
+      id: s.version_id,
+      revision_id: s.revision_id,
+      title: s.title,
+    },
+  }));
 
   const markups = db
     .prepare(
@@ -39,6 +64,8 @@ router.get('/', requireAuth, (req, res) => {
 
   res.json({
     since: requestTime,
+    current_sheet_ids: currentSheetIds,
+    current_sheets: currentSheets,
     sheets: sheets.map((s) => ({
       id: s.id,
       sheet_number: s.sheet_number,
@@ -54,6 +81,9 @@ router.get('/', requireAuth, (req, res) => {
     })),
     markups: markups.map((m) => ({ ...m, geometry: JSON.parse(m.geometry), style: JSON.parse(m.style) })),
   });
-});
+}
+
+router.get('/', requireAuth, handleSync);
+router.post('/', requireAuth, handleSync);
 
 module.exports = router;

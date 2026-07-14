@@ -1,4 +1,5 @@
-import { openModal, closeModal, checkPendingJobs } from '/js/shell.js';
+import { getProjectSyncInfo } from '/js/offline-store.js';
+import { openModal, closeModal, checkPendingJobs, renderNetworkIndicator } from '/js/shell.js';
 
 let me;
 
@@ -6,12 +7,13 @@ function renderTopbar() {
   const topbar = document.getElementById('topbar');
   topbar.innerHTML = `
     <a class="brand" href="/dashboard.html">HammGrid</a>
-    <div class="row">
+    <div class="row topbar-actions">
       ${me.role === 'admin' ? '<button class="icon-btn" id="new-project-btn" type="button" title="New project">+</button>' : ''}
       <span id="whoami" class="muted"></span>
       <button id="logout" type="button">Sign out</button>
     </div>
   `;
+  renderNetworkIndicator(topbar.querySelector('.topbar-actions'));
   topbar.querySelector('#whoami').textContent = `${me.name} (${me.role})`;
   topbar.querySelector('#logout').addEventListener('click', async () => {
     await api('POST', '/api/auth/logout');
@@ -54,6 +56,30 @@ function openNewProjectModal() {
   });
 }
 
+
+function syncLabel(info) {
+  if (!navigator.onLine) return { status: 'offline', text: info.cachedSheetCount ? 'Offline · cached' : 'Offline · not synced' };
+  if (info.status === 'syncing') return { status: 'syncing', text: 'Syncing…' };
+  if (info.status === 'synced') return { status: 'synced', text: 'Synced' };
+  if (info.status === 'needs-sync') return { status: 'needs-sync', text: 'Needs sync' };
+  if (info.status === 'empty') return { status: 'empty', text: 'No drawings' };
+  return { status: 'not-synced', text: 'Not synced' };
+}
+
+async function updateProjectCardSync(card, project) {
+  const pill = card.querySelector('.sync-pill');
+  try {
+    const info = await getProjectSyncInfo(project.id, project);
+    const label = syncLabel(info);
+    pill.className = `sync-pill ${label.status}`;
+    pill.textContent = label.text;
+    pill.title = info.lastSync ? `Last synced ${info.lastSync}` : 'This device has not synced this project yet.';
+  } catch (err) {
+    pill.className = 'sync-pill not-synced';
+    pill.textContent = 'Sync unknown';
+  }
+}
+
 async function loadProjects() {
   const { projects } = await api('GET', '/api/projects');
   const grid = document.getElementById('project-grid');
@@ -72,8 +98,10 @@ async function loadProjects() {
       <div class="body">
         <div class="project-name">${p.name}</div>
         <div class="project-meta">${metaParts}</div>
+        <span class="sync-pill syncing">Checking sync…</span>
       </div>`;
     grid.appendChild(a);
+    updateProjectCardSync(a, p);
   }
 }
 
