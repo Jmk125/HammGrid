@@ -37,14 +37,25 @@ const firstThumbnailStmt = db.prepare(
    ORDER BY sv.id ASC LIMIT 1`
 );
 
+const syncSummaryStmt = db.prepare(
+  `SELECT COUNT(s.id) AS current_sheet_count, MAX(r.published_at) AS latest_published_at
+   FROM sheets s
+   LEFT JOIN sheet_versions sv ON sv.id = s.current_version_id
+   LEFT JOIN revisions r ON r.id = sv.revision_id
+   WHERE s.project_id = ?`
+);
+
 router.get('/', requireAuth, (req, res) => {
   const projects = db.prepare('SELECT * FROM projects ORDER BY name').all();
   res.json({
     projects: projects.map((p) => {
       const first = firstThumbnailStmt.get(p.id);
+      const syncSummary = syncSummaryStmt.get(p.id);
       return {
         ...parseProject(p),
         first_thumbnail_url: first ? `/api/sheet-versions/${first.version_id}/thumb` : null,
+        latest_published_at: syncSummary.latest_published_at,
+        current_sheet_count: syncSummary.current_sheet_count,
       };
     }),
   });
@@ -53,7 +64,14 @@ router.get('/', requireAuth, (req, res) => {
 router.get('/:id', requireAuth, (req, res) => {
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
   if (!project) return res.status(404).json({ error: 'Not found' });
-  res.json({ project: parseProject(project) });
+  const syncSummary = syncSummaryStmt.get(project.id);
+  res.json({
+    project: {
+      ...parseProject(project),
+      latest_published_at: syncSummary.latest_published_at,
+      current_sheet_count: syncSummary.current_sheet_count,
+    },
+  });
 });
 
 router.post('/', requireRole('admin'), (req, res) => {
