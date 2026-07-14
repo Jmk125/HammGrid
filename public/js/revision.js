@@ -597,6 +597,8 @@ async function pollJob(jobId, statusEl, fillEl, fileName) {
 }
 
 document.getElementById('publish-btn').addEventListener('click', async () => {
+  const publishBtn = document.getElementById('publish-btn');
+  if (publishBtn.disabled) return;
   const errorEl = document.getElementById('publish-error');
   errorEl.style.display = 'none';
   const alreadyPublished = revisionStatus === 'published';
@@ -606,6 +608,9 @@ document.getElementById('publish-btn').addEventListener('click', async () => {
     confirmLabel: 'Publish',
   });
   if (!ok) return;
+  publishBtn.disabled = true;
+  const originalPublishText = publishBtn.textContent;
+  publishBtn.textContent = 'Publishing...';
   try {
     const result = await api('POST', `/api/projects/${projectId}/revisions/${revisionId}/publish`);
     const scanLinks = await confirmModal({
@@ -629,6 +634,9 @@ document.getElementById('publish-btn').addEventListener('click', async () => {
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.style.display = 'block';
+  } finally {
+    publishBtn.disabled = false;
+    publishBtn.textContent = originalPublishText;
   }
 });
 
