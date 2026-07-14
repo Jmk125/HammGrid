@@ -83,6 +83,10 @@ a { color: var(--accent); }
 }
 
 .sidebar {
+  position: sticky;
+  top: 53px;
+  max-height: calc(100vh - 53px);
+  overflow-y: auto;
   width: var(--sidebar-w);
   flex-shrink: 0;
   background: var(--surface);
@@ -90,9 +94,8 @@ a { color: var(--accent); }
   min-height: calc(100vh - 53px);
   padding: 12px 0;
   transition: width 0.15s ease, opacity 0.15s ease;
-  overflow: hidden;
 }
-.sidebar.collapsed { width: 0; padding: 0; opacity: 0; }
+.sidebar.collapsed { width: 0; padding: 0; opacity: 0; overflow: hidden; }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
 .sidebar a {
   display: flex;
