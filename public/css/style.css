@@ -75,6 +75,35 @@ a { color: var(--accent); }
 .topbar .sheet-label .num { font-weight: 700; font-size: 15px; }
 .topbar .sheet-label .title { color: #b8c4d4; font-size: 13px; }
 
+.sheet-history-wrap { position: relative; display: inline-flex; }
+.sheet-history-menu {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  z-index: 30;
+  min-width: 260px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+}
+.sheet-history-menu a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 12px;
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid var(--border);
+}
+.sheet-history-menu a:last-child { border-bottom: none; }
+.sheet-history-menu a:hover { background: var(--bg); }
+.sheet-history-menu a.current { background: var(--accent-light); }
+.sheet-history-menu a span, .sheet-history-empty { color: var(--muted); font-size: 12px; }
+.sheet-history-empty { padding: 10px 12px; white-space: nowrap; }
+
 /* ---------- App shell (sidebar + content) ---------- */
 .app-shell {
   display: flex;

@@ -1090,6 +1090,7 @@ async function loadSheetOffline() {
   displayedVersionId = sheet.current_version_id;
 
   if (!offlineMode) {
+    const currentVersion = versions.find((v) => v.id === sheet.current_version_id) || versions[0];
     await renderShell({
       topbarEl: document.getElementById('topbar'),
       sidebarEl: document.getElementById('sidebar'),
@@ -1097,6 +1098,11 @@ async function loadSheetOffline() {
       active: 'viewer',
       me,
       onOverlayClick: openOverlayPicker,
+      sheetHistoryEntry: {
+        sheetId,
+        sheetNumber: sheet.sheet_number,
+        title: currentVersion ? currentVersion.title : '',
+      },
     });
   }
 
