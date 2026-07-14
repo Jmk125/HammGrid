@@ -11,6 +11,7 @@ const queue = require('../lib/queue');
 const { computeMatch, needsAttention } = require('../lib/matching');
 const jobStore = require('../lib/jobStore');
 const { toPortablePath } = require('../lib/paths');
+const { scanAutoLinksForSheets } = require('../lib/sheetLinkScanner');
 
 // Burst walks every page sequentially (PyMuPDF render + thumbnail + preview),
 // so a large multi-hundred-page upload can legitimately take a while. This
@@ -21,6 +22,7 @@ const { toPortablePath } = require('../lib/paths');
 const BURST_TIMEOUT_MS = 30 * 60 * 1000;
 
 const router = express.Router({ mergeParams: true });
+const publishingRevisions = new Set();
 
 const BURST_SCRIPT = path.join(__dirname, '..', '..', 'pyproc', 'burst.py');
 const OCR_SCRIPT = path.join(__dirname, '..', '..', 'pyproc', 'ocr_region.py');
@@ -62,6 +64,19 @@ function getRevisionOr404(req, res) {
 
 function withStagedFlags(row) {
   return { ...row, needs_attention: needsAttention(row) };
+}
+
+function firstMissingStagedAsset(stagedRows) {
+  for (const row of stagedRows) {
+    for (const [label, filePath] of [
+      ['PDF', row.pdf_path],
+      ['thumbnail', row.thumb_path],
+      ['preview', row.preview_path],
+    ]) {
+      if (filePath && !fs.existsSync(filePath)) return { row, label, filePath };
+    }
+  }
+  return null;
 }
 
 router.get('/', requireAuth, (req, res) => {
@@ -397,10 +412,17 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
   const revision = getRevisionOr404(req, res);
   if (!revision) return;
 
-  const staged = db.prepare('SELECT * FROM staged_sheets WHERE revision_id = ?').all(revision.id);
-  if (staged.length === 0) {
-    return res.status(400).json({ error: 'No sheets to publish' });
+  const revisionLockKey = String(revision.id);
+  if (publishingRevisions.has(revisionLockKey)) {
+    return res.status(409).json({ error: 'This revision is already publishing. Please wait for it to finish.' });
   }
+  publishingRevisions.add(revisionLockKey);
+
+  try {
+    const staged = db.prepare('SELECT * FROM staged_sheets WHERE revision_id = ?').all(revision.id);
+    if (staged.length === 0) {
+      return res.status(400).json({ error: 'No sheets to publish' });
+    }
 
   const pending = staged.filter((s) => s.match_status === 'pending');
   if (pending.length > 0) {
@@ -417,6 +439,15 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
 
   const toPublish = staged.filter((s) => s.match_status !== 'ignored');
   const toDiscard = staged.filter((s) => s.match_status === 'ignored');
+  const missingAsset = firstMissingStagedAsset(toPublish);
+  if (missingAsset) {
+    console.error('Publish blocked because a staged asset is missing', missingAsset);
+    return res.status(400).json({
+      error: `Staged sheet ${missingAsset.row.id} is missing its ${missingAsset.label} file. Re-upload this sheet before publishing.`,
+    });
+  }
+  const filesToCleanup = [];
+  const publishedSourceSheets = [];
 
   // Pre-bake the current-vs-previous overlay for replacements (spec: pre-bake the
   // common comparison at publish time for instant load). This needs the queue's
@@ -483,9 +514,16 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
       const destThumb = s.thumb_path ? toPortablePath(path.join(destDir, `v${revision.id}_s${s.id}_thumb.webp`)) : null;
       const destPreview = s.preview_path ? toPortablePath(path.join(destDir, `v${revision.id}_s${s.id}_preview.webp`)) : null;
 
-      fs.renameSync(s.pdf_path, destPdf);
-      if (destThumb) fs.renameSync(s.thumb_path, destThumb);
-      if (destPreview) fs.renameSync(s.preview_path, destPreview);
+      fs.copyFileSync(s.pdf_path, destPdf);
+      filesToCleanup.push(s.pdf_path);
+      if (destThumb) {
+        fs.copyFileSync(s.thumb_path, destThumb);
+        filesToCleanup.push(s.thumb_path);
+      }
+      if (destPreview) {
+        fs.copyFileSync(s.preview_path, destPreview);
+        filesToCleanup.push(s.preview_path);
+      }
 
       const versionResult = db
         .prepare(
@@ -495,11 +533,17 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
         .run(sheetId, revision.id, title, destPdf, destThumb, destPreview, overlayPaths[s.id] || null, s.ocr_number_confidence);
 
       db.prepare('UPDATE sheets SET current_version_id = ? WHERE id = ?').run(versionResult.lastInsertRowid, sheetId);
+      publishedSourceSheets.push({
+        id: sheetId,
+        sheet_number: number,
+        current_version_id: versionResult.lastInsertRowid,
+        pdf_path: destPdf,
+      });
     }
 
     for (const s of toDiscard) {
       for (const p of [s.pdf_path, s.thumb_path, s.preview_path]) {
-        if (p) fs.rmSync(p, { force: true });
+        if (p) filesToCleanup.push(p);
       }
     }
 
@@ -525,7 +569,23 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
     return res.status(500).json({ error: 'Publish failed' });
   }
 
-  res.json({ ok: true, published_sheets: toPublish.length });
+  for (const p of filesToCleanup) fs.rm(p, { force: true }, () => {});
+  fs.rm(path.join(config.storageDir, 'staging', String(revision.id)), { recursive: true, force: true }, () => {});
+
+  try {
+    await scanAutoLinksForSheets({
+      projectId: revision.project_id,
+      sourceSheets: publishedSourceSheets,
+      userId: req.session.user.id,
+    });
+  } catch (err) {
+    console.error('Post-publish sheet-link rescan failed', err);
+  }
+
+    res.json({ ok: true, published_sheets: toPublish.length });
+  } finally {
+    publishingRevisions.delete(revisionLockKey);
+  }
 });
 
 module.exports = router;
