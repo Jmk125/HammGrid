@@ -608,8 +608,24 @@ document.getElementById('publish-btn').addEventListener('click', async () => {
   if (!ok) return;
   try {
     const result = await api('POST', `/api/projects/${projectId}/revisions/${revisionId}/publish`);
-    await alertModal({ title: 'Revision published', message: `Published ${result.published_sheets} sheet(s).` });
-    window.location.href = `/project-settings.html?projectId=${projectId}`;
+    const scanLinks = await confirmModal({
+      title: 'Revision published',
+      message: `Published ${result.published_sheets} sheet(s). Scan this project for clickable sheet links now? You can also run this later from Project Settings.`,
+      confirmLabel: 'Scan now',
+      cancelLabel: 'Later',
+    });
+    let scanJobId = '';
+    if (scanLinks) {
+      const scan = await api('POST', `/api/projects/${projectId}/sheet-links/scan`);
+      scanJobId = scan.job_id;
+      await alertModal({
+        title: 'Sheet-link scan started',
+        message: `Scanning ${scan.sheet_count} sheet(s) in the background. You can check progress from Project Settings.`,
+      });
+    }
+    const settingsQs = new URLSearchParams({ projectId });
+    if (scanJobId) settingsQs.set('sheetLinkJobId', scanJobId);
+    window.location.href = `/project-settings.html?${settingsQs}`;
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.style.display = 'block';
