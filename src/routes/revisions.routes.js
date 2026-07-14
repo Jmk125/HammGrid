@@ -11,6 +11,7 @@ const queue = require('../lib/queue');
 const { computeMatch, needsAttention } = require('../lib/matching');
 const jobStore = require('../lib/jobStore');
 const { toPortablePath } = require('../lib/paths');
+const { scanAutoLinksForSheets } = require('../lib/sheetLinkScanner');
 
 // Burst walks every page sequentially (PyMuPDF render + thumbnail + preview),
 // so a large multi-hundred-page upload can legitimately take a while. This
@@ -446,6 +447,7 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
     });
   }
   const filesToCleanup = [];
+  const publishedSourceSheets = [];
 
   // Pre-bake the current-vs-previous overlay for replacements (spec: pre-bake the
   // common comparison at publish time for instant load). This needs the queue's
@@ -531,6 +533,12 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
         .run(sheetId, revision.id, title, destPdf, destThumb, destPreview, overlayPaths[s.id] || null, s.ocr_number_confidence);
 
       db.prepare('UPDATE sheets SET current_version_id = ? WHERE id = ?').run(versionResult.lastInsertRowid, sheetId);
+      publishedSourceSheets.push({
+        id: sheetId,
+        sheet_number: number,
+        current_version_id: versionResult.lastInsertRowid,
+        pdf_path: destPdf,
+      });
     }
 
     for (const s of toDiscard) {
@@ -563,6 +571,16 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
 
   for (const p of filesToCleanup) fs.rm(p, { force: true }, () => {});
   fs.rm(path.join(config.storageDir, 'staging', String(revision.id)), { recursive: true, force: true }, () => {});
+
+  try {
+    await scanAutoLinksForSheets({
+      projectId: revision.project_id,
+      sourceSheets: publishedSourceSheets,
+      userId: req.session.user.id,
+    });
+  } catch (err) {
+    console.error('Post-publish sheet-link rescan failed', err);
+  }
 
     res.json({ ok: true, published_sheets: toPublish.length });
   } finally {

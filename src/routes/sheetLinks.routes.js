@@ -22,13 +22,14 @@ function sheetInSameProject(sheetId, projectId) {
 router.get('/', requireAuth, (req, res) => {
   const links = db
     .prepare(
-      `SELECT sl.id, sl.source_sheet_id, sl.target_sheet_id, sl.rect, sl.label, sl.link_type,
+      `SELECT sl.id, sl.source_sheet_id, sl.source_version_id, sl.target_sheet_id, sl.rect, sl.label, sl.link_type,
               ts.sheet_number AS target_sheet_number, sv.title AS target_title
        FROM sheet_links sl
        JOIN sheets source ON source.id = sl.source_sheet_id
        JOIN sheets ts ON ts.id = sl.target_sheet_id
        LEFT JOIN sheet_versions sv ON sv.id = ts.current_version_id
        WHERE sl.source_sheet_id = ? AND source.project_id = ?
+         AND (sl.link_type = 'manual' OR sl.source_version_id IS NULL OR sl.source_version_id = source.current_version_id)
        ORDER BY sl.created_at, sl.id`
     )
     .all(req.params.sheetId, req.params.projectId);
