@@ -18,6 +18,12 @@ function syncLabel(info) {
   return { status: 'not-synced', text: 'Not synced' };
 }
 
+
+function offlineShellNote() {
+  if ('serviceWorker' in navigator) return '';
+  return ' Offline app caching requires HTTPS or localhost; this browser cannot cache the app shell from this address.';
+}
+
 async function updateProjectSyncPill(override) {
   const pill = document.getElementById('project-sync-pill');
   if (!pill) return;
@@ -337,12 +343,12 @@ document.getElementById('search-filter').addEventListener('input', () => renderG
       onProgress: (done, total) => updateProjectSyncPill({ status: 'syncing', text: `Syncing ${done}/${total}` }),
     });
     statusEl.textContent = result.sheetCount || result.markupCount
-      ? `Synced ${result.sheetCount} sheet(s) and ${result.markupCount} markup update(s) at ${result.since}.`
-      : `Already synced at ${result.since}.`;
+      ? `Synced ${result.sheetCount} sheet(s) and ${result.markupCount} markup update(s) at ${result.since}.${offlineShellNote()}`
+      : `Already synced at ${result.since}.${offlineShellNote()}`;
     await renderFromCache();
     await updateProjectSyncPill();
   } catch (err) {
-    statusEl.textContent = 'Offline - showing last synced data.';
+    statusEl.textContent = `Offline - showing last synced data.${offlineShellNote()}`;
     await updateProjectSyncPill();
   }
 })();

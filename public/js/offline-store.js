@@ -1,10 +1,11 @@
 // Sheet/thumbnail/markup data lives here (IndexedDB for structured metadata,
-// OPFS for the binary PDF/WebP blobs) - not the HTTP cache - per CLAUDE.md's
-// offline requirements. This is what lets the thumbnail grid and sheet
-// viewer read with zero network in the path once synced.
+// OPFS for binary PDF/WebP blobs when available, with an IndexedDB blob
+// fallback for browsers/origins that do not expose OPFS) - not the HTTP cache.
+// This is what lets the thumbnail grid and sheet viewer read with zero
+// network in the path once synced.
 
 const DB_NAME = 'drawing-app';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -14,6 +15,7 @@ function openDb() {
       if (!db.objectStoreNames.contains('sheets')) db.createObjectStore('sheets', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('markups')) db.createObjectStore('markups', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'name' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -59,38 +61,57 @@ async function putMeta(db, key, value) {
 }
 
 async function opfsRoot() {
-  return navigator.storage.getDirectory();
-}
-
-async function writeOpfsFile(name, blob) {
-  const root = await opfsRoot();
-  const handle = await root.getFileHandle(name, { create: true });
-  const writable = await handle.createWritable();
-  await writable.write(blob);
-  await writable.close();
-}
-
-async function readOpfsFile(name) {
+  if (!navigator.storage || !navigator.storage.getDirectory) return null;
   try {
-    const root = await opfsRoot();
-    const handle = await root.getFileHandle(name);
-    return await handle.getFile();
+    return await navigator.storage.getDirectory();
   } catch (err) {
     return null;
   }
 }
 
-async function deleteOpfsFile(name) {
-  try {
-    const root = await opfsRoot();
-    await root.removeEntry(name);
-  } catch (err) {
-    // Missing files are already clean.
+async function writeAssetFile(name, blob) {
+  const root = await opfsRoot();
+  if (root) {
+    const handle = await root.getFileHandle(name, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return;
   }
+  const db = await openDb();
+  await idbPut(db, 'assets', { name, blob });
+}
+
+async function readAssetFile(name) {
+  const root = await opfsRoot();
+  if (root) {
+    try {
+      const handle = await root.getFileHandle(name);
+      return await handle.getFile();
+    } catch (err) {
+      // Fall through to IndexedDB in case this asset was cached before OPFS was available.
+    }
+  }
+  const db = await openDb();
+  const row = await idbGet(db, 'assets', name);
+  return row ? row.blob : null;
+}
+
+async function deleteAssetFile(name) {
+  const root = await opfsRoot();
+  if (root) {
+    try {
+      await root.removeEntry(name);
+    } catch (err) {
+      // Missing files are already clean.
+    }
+  }
+  const db = await openDb();
+  await idbDelete(db, 'assets', name);
 }
 
 async function deleteVersionAssets(versionId) {
-  await Promise.all(['pdf', 'thumb', 'preview'].map((kind) => deleteOpfsFile(`v${versionId}_${kind}`)));
+  await Promise.all(['pdf', 'thumb', 'preview'].map((kind) => deleteAssetFile(`v${versionId}_${kind}`)));
 }
 
 export async function requestPersistentStorage() {
@@ -180,9 +201,9 @@ export async function syncProject(projectId, { onProgress } = {}) {
         fetchBlob(cv.thumb_url),
         fetchBlob(cv.preview_url),
       ]);
-      await writeOpfsFile(`v${cv.id}_pdf`, pdfBlob);
-      await writeOpfsFile(`v${cv.id}_thumb`, thumbBlob);
-      await writeOpfsFile(`v${cv.id}_preview`, previewBlob);
+      await writeAssetFile(`v${cv.id}_pdf`, pdfBlob);
+      await writeAssetFile(`v${cv.id}_thumb`, thumbBlob);
+      await writeAssetFile(`v${cv.id}_preview`, previewBlob);
 
       await idbPut(db, 'sheets', {
         id: `${projectId}:${sheet.id}`,
@@ -286,5 +307,5 @@ export async function getProjectSyncInfo(projectId, project = {}) {
 
 // kind: 'pdf' | 'thumb' | 'preview'. Returns a File (Blob) or null if not cached.
 export async function getCachedAsset(versionId, kind) {
-  return readOpfsFile(`v${versionId}_${kind}`);
+  return readAssetFile(`v${versionId}_${kind}`);
 }
