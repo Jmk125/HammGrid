@@ -27,6 +27,11 @@ router.get('/', requireAuth, (req, res) => {
     )
     .all(req.params.projectId, since);
 
+  const currentSheetIds = db
+    .prepare('SELECT id FROM sheets WHERE project_id = ?')
+    .all(req.params.projectId)
+    .map((s) => s.id);
+
   const markups = db
     .prepare(
       `SELECT m.* FROM markups m
@@ -39,6 +44,7 @@ router.get('/', requireAuth, (req, res) => {
 
   res.json({
     since: requestTime,
+    current_sheet_ids: currentSheetIds,
     sheets: sheets.map((s) => ({
       id: s.id,
       sheet_number: s.sheet_number,
