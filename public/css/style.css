@@ -83,6 +83,10 @@ a { color: var(--accent); }
 }
 
 .sidebar {
+  position: sticky;
+  top: 53px;
+  max-height: calc(100vh - 53px);
+  overflow-y: auto;
   width: var(--sidebar-w);
   flex-shrink: 0;
   background: var(--surface);
@@ -90,9 +94,8 @@ a { color: var(--accent); }
   min-height: calc(100vh - 53px);
   padding: 12px 0;
   transition: width 0.15s ease, opacity 0.15s ease;
-  overflow: hidden;
 }
-.sidebar.collapsed { width: 0; padding: 0; opacity: 0; }
+.sidebar.collapsed { width: 0; padding: 0; opacity: 0; overflow: hidden; }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; white-space: nowrap; }
 .sidebar a {
   display: flex;
@@ -515,6 +518,16 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .markup-stage { position: relative; display: inline-block; }
 .markup-stage canvas { display: block; }
 .markup-stage svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+.sheet-link-layer { pointer-events: none; z-index: 1; }
+.sheet-link-layer .sheet-link-hotspot {
+  fill: rgba(37, 99, 235, 0.16);
+  stroke: rgba(37, 99, 235, 0.88);
+  stroke-width: 2;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.sheet-link-layer .sheet-link-hotspot:hover { fill: rgba(37, 99, 235, 0.28); }
+#markup-svg { z-index: 2; }
 
 .tool-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 

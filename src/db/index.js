@@ -144,6 +144,8 @@ addColumnIfMissing('shares', 'document_ids', "TEXT NOT NULL DEFAULT '[]'");
 
 db.exec('CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_documents_current_version ON documents(current_version_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_sheet_links_source ON sheet_links(source_sheet_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_sheet_links_project ON sheet_links(project_id)');
 
 // markups.linked_document_id needs the same ON DELETE SET NULL fix as
 // documents.current_version_id above, and for the same reason: deleting a
