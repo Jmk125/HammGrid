@@ -291,17 +291,31 @@ function escapeHtml(str) {
 
 function syncSheetLinkLayer() {
   const canvas = document.getElementById('pdf-canvas');
-  const svg = document.getElementById('sheet-link-svg');
+  const svg = document.getElementById('markup-svg');
   if (!svg) return;
   svg.setAttribute('viewBox', `0 0 ${canvas.width} ${canvas.height}`);
 }
 
+function ensureSheetLinkLayer() {
+  const svg = document.getElementById('markup-svg');
+  if (!svg) return null;
+  let layer = svg.querySelector('#sheet-link-layer');
+  if (!layer) {
+    layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    layer.id = 'sheet-link-layer';
+  }
+  // Keep links in the same SVG as markups so they can actually receive
+  // pointer events, but always underneath markup/measure geometry.
+  if (svg.firstChild !== layer) svg.insertBefore(layer, svg.firstChild);
+  return layer;
+}
+
 function renderSheetLinks(links, token) {
   if (token !== sheetLinkLoadToken) return;
-  const svg = document.getElementById('sheet-link-svg');
+  const layer = ensureSheetLinkLayer();
   const canvas = document.getElementById('pdf-canvas');
-  if (!svg || !canvas.width || !canvas.height) return;
-  svg.innerHTML = '';
+  if (!layer || !canvas.width || !canvas.height) return;
+  layer.innerHTML = '';
   syncSheetLinkLayer();
 
   for (const link of links) {
@@ -328,14 +342,14 @@ function renderSheetLinks(links, token) {
       e.stopPropagation();
       window.location.href = `/sheet.html?projectId=${projectId}&sheetId=${link.target_sheet_id}`;
     });
-    svg.appendChild(hotspot);
+    layer.appendChild(hotspot);
   }
 }
 
 async function loadSheetLinks() {
   const token = ++sheetLinkLoadToken;
-  const svg = document.getElementById('sheet-link-svg');
-  if (svg) svg.innerHTML = '';
+  const layer = ensureSheetLinkLayer();
+  if (layer) layer.innerHTML = '';
   try {
     const { links } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}/links`);
     renderSheetLinks(links, token);
