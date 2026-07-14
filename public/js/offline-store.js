@@ -85,13 +85,26 @@ export async function syncProject(projectId, { onProgress } = {}) {
   if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
   const data = await res.json();
 
+  // fetch() only rejects on a network-level failure - a 404/500 response
+  // still resolves successfully, and .blob() on it would silently cache the
+  // server's error JSON as if it were the real PDF/thumb/preview. Checking
+  // res.ok here means a bad asset fails the sync loudly (surfaced as
+  // "Offline - showing last synced data" client-side) instead of quietly
+  // corrupting what's cached.
+  function fetchBlob(url) {
+    return fetch(url).then((r) => {
+      if (!r.ok) throw new Error(`Failed to fetch ${url}: ${r.status}`);
+      return r.blob();
+    });
+  }
+
   let done = 0;
   for (const sheet of data.sheets) {
     const cv = sheet.current_version;
     const [pdfBlob, thumbBlob, previewBlob] = await Promise.all([
-      fetch(cv.pdf_url).then((r) => r.blob()),
-      fetch(cv.thumb_url).then((r) => r.blob()),
-      fetch(cv.preview_url).then((r) => r.blob()),
+      fetchBlob(cv.pdf_url),
+      fetchBlob(cv.thumb_url),
+      fetchBlob(cv.preview_url),
     ]);
     await writeOpfsFile(`v${cv.id}_pdf`, pdfBlob);
     await writeOpfsFile(`v${cv.id}_thumb`, thumbBlob);

@@ -21,6 +21,7 @@ let stagedSheets = [];
 let boxes = { number_box: null, title_box: null };
 let drawing = null; // {startX, startY} while dragging
 let revisionTitle = '';
+let lastCheckedRowIndex = null; // for shift-click range select in the review table
 let revisionStatus = '';
 
 // ---------- Accordion ----------
@@ -319,6 +320,7 @@ async function pollOcrJob(jobId, total, statusEl, fillEl) {
 function renderStagedTable() {
   const tbody = document.querySelector('#staged-table tbody');
   tbody.innerHTML = '';
+  lastCheckedRowIndex = null; // table is being rebuilt - stale reference otherwise
   for (const s of stagedSheets) {
     const tr = document.createElement('tr');
     if (s.match_status === 'ignored') {
@@ -345,7 +347,16 @@ function renderStagedTable() {
         `<span class="muted">#${s.ocr_number_confidence ?? '-'} / T${s.ocr_title_confidence ?? '-'}</span>`
       )
     );
-    tr.appendChild(td(`<button class="view-btn">View</button>`));
+    // A real <a target="_blank"> rather than a button whose click handler
+    // calls window.open() - browsers treat a native link-navigation click as
+    // a much more clearly "trusted" gesture than a script-triggered
+    // window.open(), which some browsers' popup heuristics can require an
+    // extra click to allow through (reported as "the View button needs two
+    // clicks, or click the row first" - this is the fix for that class of
+    // issue even though it wasn't reproducible in every environment tested).
+    const viewLabel = s.corrected_number || s.ocr_number || '';
+    const viewQs = new URLSearchParams({ stagedSheetId: s.id, label: viewLabel });
+    tr.appendChild(td(`<a class="view-btn" href="/document-view.html?${viewQs}" target="_blank" rel="noopener">View</a>`));
     tr.appendChild(td(`<button class="danger remove-btn">Remove</button>`));
 
     tr.querySelector('.f-number').addEventListener('change', (e) => patchField(s.id, 'corrected_number', e.target.value));
@@ -356,13 +367,37 @@ function renderStagedTable() {
     );
     tr.querySelector('select.f-status').addEventListener('change', (e) => patchField(s.id, 'match_status', e.target.value));
     tr.querySelector('.remove-btn').addEventListener('click', () => removeSheet(s.id));
-    tr.querySelector('.view-btn').addEventListener('click', () =>
-      window.open(`/api/staged-sheets/${s.id}/pdf`, '_blank')
-    );
-    tr.querySelector('.row-check').addEventListener('change', syncRefSheetToSelection);
 
     tbody.appendChild(tr);
   }
+  wireRowCheckboxes();
+}
+
+// Shift-click range select (like Windows Explorer/Excel): clicking a row's
+// checkbox while holding Shift extends the selection from the last row that
+// was clicked (not necessarily the last one checked - matches, e.g. Explorer,
+// where shift-clicking an already-checked row to uncheck it also anchors a
+// new range) through to the one just clicked, applying that checkbox's new
+// checked state to every row in between. Wired via `click` (not `change`) so
+// e.target.checked already reflects the state the click just produced, and
+// range-set checkboxes are applied directly rather than relying on each of
+// them firing their own `change` event (setting .checked in JS doesn't fire
+// one).
+function wireRowCheckboxes() {
+  const checkboxes = Array.from(document.querySelectorAll('.row-check'));
+  checkboxes.forEach((cb, index) => {
+    cb.addEventListener('click', (e) => {
+      if (e.shiftKey && lastCheckedRowIndex !== null) {
+        const start = Math.min(lastCheckedRowIndex, index);
+        const end = Math.max(lastCheckedRowIndex, index);
+        for (let i = start; i <= end; i++) {
+          checkboxes[i].checked = e.target.checked;
+        }
+      }
+      lastCheckedRowIndex = index;
+      syncRefSheetToSelection();
+    });
+  });
 }
 
 // When the user checks rows meaning to redraw/re-read just those sheets, jump
@@ -452,6 +487,21 @@ async function handleFiles(files) {
   await loadStaged();
 }
 
+// Only the raw byte transfer (this xhr) is actually unsafe to navigate away
+// from - closing the tab or leaving the page mid-transfer aborts the
+// connection outright. Once the server has the whole file and hands back a
+// job_id, everything from there (burst, OCR) is a real background job that
+// survives navigation (see pollJob/pollOcrJob's trackPendingJob calls) - so
+// this counter is only held for that first vulnerable window, not the
+// whole upload+process lifecycle.
+let activeUploadTransfers = 0;
+window.addEventListener('beforeunload', (e) => {
+  if (activeUploadTransfers > 0) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
+
 function uploadOneFile(file) {
   return new Promise((resolve) => {
     const row = document.createElement('div');
@@ -473,7 +523,12 @@ function uploadOneFile(file) {
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable) fill.style.width = `${(e.loaded / e.total) * 100}%`;
     });
+    activeUploadTransfers += 1;
+    const transferDone = () => {
+      activeUploadTransfers = Math.max(0, activeUploadTransfers - 1);
+    };
     xhr.addEventListener('load', async () => {
+      transferDone();
       let data = null;
       try {
         data = JSON.parse(xhr.responseText);
@@ -486,12 +541,12 @@ function uploadOneFile(file) {
         resolve();
         return;
       }
-      fill.style.width = '100%';
       status.textContent = 'Processing...';
-      await pollJob(data.job_id, status, file.name);
+      await pollJob(data.job_id, status, fill, file.name);
       resolve();
     });
     xhr.addEventListener('error', () => {
+      transferDone();
       status.textContent = 'Upload failed (network error)';
       status.classList.add('error');
       resolve();
@@ -500,11 +555,14 @@ function uploadOneFile(file) {
   });
 }
 
-async function pollJob(jobId, statusEl, fileName) {
+async function pollJob(jobId, statusEl, fillEl, fileName) {
   // Track it in case the user navigates away before this resolves - a job
   // that outlives this page still gets surfaced as a toast on whichever
-  // HammGrid page the user next loads (see shell.js checkPendingJobs()).
+  // HammGrid page the user next loads (see shell.js checkPendingJobs()), and
+  // as a live progress bar on project-settings.html's revisions table (see
+  // getPendingJobsForProject() there).
   trackPendingJob({ jobId, projectId, revisionId, label: `"${fileName}" in ${revisionTitle}` });
+  fillEl.style.width = '0%'; // repurposed from "upload transfer %" to "pages processed %" for this phase
 
   for (;;) {
     await new Promise((r) => setTimeout(r, 1500));
@@ -516,7 +574,13 @@ async function pollJob(jobId, statusEl, fileName) {
       statusEl.classList.add('error');
       return;
     }
+    if (job.progress) {
+      const { current, total } = job.progress;
+      fillEl.style.width = `${Math.round((current / total) * 100)}%`;
+      statusEl.textContent = `Processing ${current} / ${total} page(s)...`;
+    }
     if (job.status === 'done') {
+      fillEl.style.width = '100%';
       statusEl.textContent = 'Done';
       statusEl.classList.add('done');
       showToast(`"${fileName}" finished processing.`, 'success');

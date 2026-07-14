@@ -163,6 +163,16 @@ export function untrackPendingJob(jobId) {
   localStorage.setItem(PENDING_JOBS_KEY, JSON.stringify(jobs.filter((j) => j.jobId !== jobId)));
 }
 
+// For a page that wants to show *live* per-job progress (project-settings.js's
+// revisions table), rather than just the one-shot "done/error" toast
+// checkPendingJobs() below gives every page. Device-local by design, same as
+// the rest of this tracking - there's no server-side "who's watching this
+// job" broadcast, so this only ever reflects jobs started from this browser.
+export function getPendingJobsForProject(projectId) {
+  const jobs = JSON.parse(localStorage.getItem(PENDING_JOBS_KEY) || '[]');
+  return jobs.filter((j) => String(j.projectId) === String(projectId));
+}
+
 function getToastContainer() {
   let container = document.getElementById('toast-container');
   if (!container) {

@@ -54,8 +54,17 @@ def main():
 
     doc = fitz.open(args.input_pdf)
     results = []
+    total_pages = len(doc)
 
-    for i in range(len(doc)):
+    # Progress goes to stderr, one line per completed page, as
+    # "PROGRESS <done>/<total>" - stdout is reserved entirely for the final
+    # JSON array (see the mupdf_display_errors comment above for why stdout
+    # has to stay pristine). A large multi-hundred-page upload can take
+    # minutes; without this the caller has no visibility into it beyond
+    # "still running" for the whole duration.
+    print(f"PROGRESS 0/{total_pages}", file=sys.stderr, flush=True)
+
+    for i in range(total_pages):
         page_number = i + 1
         img, width_pt, height_pt = render_page(doc, i, args.preview_size)
 
@@ -85,6 +94,7 @@ def main():
             "page_width_pt": width_pt,
             "page_height_pt": height_pt,
         })
+        print(f"PROGRESS {page_number}/{total_pages}", file=sys.stderr, flush=True)
 
     doc.close()
     json.dump(results, sys.stdout)

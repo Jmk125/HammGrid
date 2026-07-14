@@ -68,8 +68,37 @@ app.use((req, res) => {
 });
 
 app.use((err, req, res, next) => {
+  // A client that disconnects mid-request (closes the tab, navigates away,
+  // or a flaky network) while a large PDF is still uploading is routine, not
+  // exceptional - multer correctly forwards that as an error here rather
+  // than throwing. But the connection is already gone by the time we get
+  // it, so writing a response to it can itself throw (e.g. attempting to
+  // .end() an already-destroyed socket) - Express's own default error
+  // handler explicitly guards against this same case. Skipping the response
+  // (and the try/catch below as a second layer of defense) is what actually
+  // stops one aborted upload from crashing the whole server for everyone
+  // else in the field.
   console.error(err);
-  res.status(500).json({ error: 'Internal server error' });
+  if (res.headersSent || res.destroyed) return next(err);
+  try {
+    res.status(500).json({ error: 'Internal server error' });
+  } catch (writeErr) {
+    console.error('Failed to write error response (connection likely already closed):', writeErr);
+  }
+});
+
+// Last-resort safety net: an uncaught exception or unhandled rejection
+// anywhere in the process must never take the whole server down - this is
+// shared infrastructure for a live field team (per CLAUDE.md), not a
+// single-user script, so "one bad request crashes it for everyone" is the
+// worst possible failure mode. Route-level fixes (like the error handler
+// above) are still the right first line of defense since they can respond
+// to the actual request; this only catches whatever slips past that.
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception (server staying up):', err);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('Unhandled promise rejection (server staying up):', err);
 });
 
 app.listen(config.port, () => {

@@ -1,8 +1,13 @@
-import { renderShell, openModal, closeModal, showToast } from '/js/shell.js';
+import { renderShell, openModal, closeModal, showToast, getPendingJobsForProject, untrackPendingJob } from '/js/shell.js';
 
 const projectId = new URLSearchParams(window.location.search).get('projectId');
 let currentProject = null;
 let currentUser = null;
+// jobIds with an active poll loop already running, so a table rebuild
+// (loadRevisions() gets called again for lots of reasons - delete, the
+// polling loop's own completion, etc.) never starts a second poll for the
+// same job.
+const activeJobPolls = new Set();
 
 async function loadDetails() {
   const { project } = await api('GET', `/api/projects/${projectId}`);
@@ -91,9 +96,10 @@ async function loadRevisions() {
   tbody.innerHTML = '';
   for (const r of revisions) {
     const tr = document.createElement('tr');
+    tr.dataset.revisionId = r.id;
     tr.innerHTML = `<td><a href="/revision.html?projectId=${projectId}&revisionId=${r.id}">${r.title}</a></td>
       <td>${r.source || ''}</td>
-      <td><span class="pill ${r.status}">${r.status}</span></td>
+      <td class="status-cell"><span class="pill ${r.status}">${r.status}</span></td>
       <td>${r.created_at}</td>
       <td class="row"></td>`;
 
@@ -117,6 +123,67 @@ async function loadRevisions() {
     }
 
     tbody.appendChild(tr);
+  }
+  startPendingJobPolls();
+}
+
+// Shows a live progress bar (reusing revision.js's upload-row-bar look) in
+// place of the status pill for any revision that has an upload or OCR-read
+// job still running, tracked in this browser via shell.js's
+// trackPendingJob() - lets someone who left mid-upload come back to
+// project-settings.html and see it's still going, then click through to
+// resume review right where they left off (the title link already goes to
+// revision.html?revisionId=...).
+function startPendingJobPolls() {
+  for (const job of getPendingJobsForProject(projectId)) {
+    if (activeJobPolls.has(job.jobId)) continue;
+    const row = document.querySelector(`#revisions-table tr[data-revision-id="${job.revisionId}"]`);
+    if (!row) continue; // this job's revision isn't in the current list for some reason
+    activeJobPolls.add(job.jobId);
+    pollRevisionJob(job);
+  }
+}
+
+async function pollRevisionJob(job) {
+  for (;;) {
+    const cell = document.querySelector(`#revisions-table tr[data-revision-id="${job.revisionId}"] .status-cell`);
+    if (!cell) {
+      activeJobPolls.delete(job.jobId);
+      return;
+    }
+    let status;
+    try {
+      ({ job: status } = await api('GET', `/api/projects/${projectId}/revisions/${job.revisionId}/upload-jobs/${job.jobId}`));
+    } catch (err) {
+      activeJobPolls.delete(job.jobId);
+      return;
+    }
+    if (status.status === 'processing') {
+      const pct = status.progress ? Math.round((status.progress.current / status.progress.total) * 100) : 0;
+      const label = status.progress ? `${status.progress.current} / ${status.progress.total}` : 'Processing...';
+      cell.innerHTML = `
+        <div class="row" style="gap:8px; flex-wrap:nowrap;">
+          <div class="upload-row-bar" style="width:80px;"><div class="upload-row-fill" style="width:${pct}%;"></div></div>
+          <span class="muted">${label}</span>
+        </div>`;
+    } else {
+      activeJobPolls.delete(job.jobId);
+      // renderShell() fires off shell.js's own one-shot checkPendingJobs()
+      // without awaiting it, so it's technically possible (if narrow) for
+      // that check and this poll loop to both observe the same just-
+      // finished job - only toast if this poll is the one that actually
+      // found it still tracked, so a finish landing in that gap doesn't
+      // show the same toast twice.
+      const stillTracked = getPendingJobsForProject(projectId).some((j) => j.jobId === job.jobId);
+      untrackPendingJob(job.jobId);
+      if (stillTracked) {
+        if (status.status === 'done') showToast(`${job.label} finished processing.`, 'success');
+        else if (status.status === 'error') showToast(`${job.label} failed: ${status.error}`, 'error');
+      }
+      await loadRevisions();
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1500));
   }
 }
 

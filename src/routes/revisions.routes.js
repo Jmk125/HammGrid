@@ -6,7 +6,7 @@ const multer = require('multer');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { runPython } = require('../lib/pyRunner');
+const { runPython, runPythonWithProgress } = require('../lib/pyRunner');
 const queue = require('../lib/queue');
 const { computeMatch, needsAttention } = require('../lib/matching');
 const jobStore = require('../lib/jobStore');
@@ -216,7 +216,12 @@ router.post('/:revisionId/upload', requireRole('admin', 'editor'), upload.single
 
       const batchDir = path.join(config.storageDir, 'staging', String(revision.id), crypto.randomUUID().slice(0, 8));
       const pages = await queue.enqueue(() =>
-        runPython(BURST_SCRIPT, [req.file.path, batchDir], { timeout: BURST_TIMEOUT_MS })
+        runPythonWithProgress(
+          BURST_SCRIPT,
+          [req.file.path, batchDir],
+          (current, total) => jobStore.updateProgress(jobId, current, total),
+          { timeout: BURST_TIMEOUT_MS }
+        )
       );
 
       const insertStmt = db.prepare(

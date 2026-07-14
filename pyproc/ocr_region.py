@@ -3,7 +3,7 @@ OCR the number-box and title-box regions of a single-sheet PDF.
 
 Usage:
     python ocr_region.py <sheet_pdf> <number_box_json> <title_box_json> \
-        [--dpi 400] [--tesseract-cmd PATH]
+        [--tesseract-cmd PATH]
 
 Box JSON is a normalized rect relative to the page: {"x":0,"y":0,"w":1,"h":1}
 (0-1 range), so the same region works across sheets whose page size varies
@@ -28,45 +28,67 @@ from PIL import Image
 # script prints, which is exactly what broke a large-format sheet upload.
 fitz.TOOLS.mupdf_display_errors(False)
 
-POINTS_PER_INCH = 72.0
-# Hard cap so a large-format sheet (E-size and bigger) can't blow past
-# MuPDF's internal "overly large image" limit at a fixed DPI - mirrors
-# burst.py's target-pixel-size approach instead of a blind DPI multiply.
-MAX_RENDER_PX = 6000
+# Each box is rendered directly from the PDF's vector data at a resolution
+# targeting this pixel height, rather than rasterizing the whole page once
+# (capped for large-format sheets) and cropping a low-res region out of it.
+# A number/title box is a tiny fraction of the page, so rendering it alone
+# at high effective DPI is cheap (MuPDF's clip rect limits the actual
+# rasterization work) and gives Tesseract far more detail per character
+# than upscaling a blurry crop after the fact.
+TARGET_BOX_HEIGHT_PX = 400
+# Safety cap on zoom for a pathologically short/degenerate box, so a near-
+# zero-height rect can't request an enormous render.
+MAX_ZOOM = 12.0
+
+# Sheet numbers are single-line, uppercase, and only ever contain these
+# characters (see NUMBER_PATTERN in revision.js: [A-Z]{1,2}-?\d+(\.\d+)?) -
+# restricting Tesseract to this whitelist stops it from ever emitting
+# unrelated symbols in the number field. This was added after a recurring
+# misread on one drawing set where "7" was consistently read as "/".
+NUMBER_TESSERACT_CONFIG = "--psm 7 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.-"
+# Titles are free text, so no whitelist - and no PSM override either.
+# Tesseract's default (psm 3, fully automatic page segmentation) measurably
+# beat every forced single-line/single-block mode in a side-by-side test
+# against a real title box: psm 6/7/11/12 all pulled in a few extra stray
+# characters from elsewhere in the box (dropping confidence from ~95% to
+# ~83%) that psm 3's own auto-segmentation correctly excluded. Don't
+# "helpfully" add a PSM override here without re-testing against a real
+# sample first - it's counIntuitive but the default outperforms the more
+# specific modes for this title-block layout - counterintuitive, but
+# verified, not assumed.
+TITLE_TESSERACT_CONFIG = ""
 
 
-def render_full_page(pdf_path, dpi):
+def render_box_region(pdf_path, box):
     doc = fitz.open(pdf_path)
     page = doc[0]
     rect = page.rect
-    longest_pt = max(rect.width, rect.height)
-    dpi_zoom = dpi / POINTS_PER_INCH
-    max_zoom = MAX_RENDER_PX / longest_pt if longest_pt > 0 else dpi_zoom
-    zoom = min(dpi_zoom, max_zoom)
-    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+    box_rect = fitz.Rect(
+        box["x"] * rect.width,
+        box["y"] * rect.height,
+        (box["x"] + box["w"]) * rect.width,
+        (box["y"] + box["h"]) * rect.height,
+    )
+    if box_rect.width <= 0 or box_rect.height <= 0:
+        doc.close()
+        return None
+    zoom = min(TARGET_BOX_HEIGHT_PX / box_rect.height, MAX_ZOOM)
+    pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=box_rect, alpha=False)
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
     doc.close()
     return img
 
 
-def crop_box(img, box):
-    w, h = img.size
-    left = max(0, round(box["x"] * w))
-    top = max(0, round(box["y"] * h))
-    right = min(w, round((box["x"] + box["w"]) * w))
-    bottom = min(h, round((box["y"] + box["h"]) * h))
-    if right <= left or bottom <= top:
-        return None
-    return img.crop((left, top, right, bottom))
-
-
-def _ocr_single(img):
-    # Upscale small crops; tesseract does noticeably better above ~200px tall.
+def _ocr_single(img, config):
+    # Defensive fallback - render_box_region already targets ~400px tall,
+    # but a very short/degenerate box can still come out smaller than that
+    # after the MAX_ZOOM cap, and tesseract does noticeably better above
+    # ~200px tall.
     if img.height < 200:
         scale = 200 / img.height
         img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
     gray = img.convert("L")
-    data = pytesseract.image_to_data(gray, output_type=Output.DICT)
+    data = pytesseract.image_to_data(gray, output_type=Output.DICT, config=config)
     words = []
     confidences = []
     for text, conf in zip(data["text"], data["conf"]):
@@ -80,7 +102,7 @@ def _ocr_single(img):
     return joined, avg_conf
 
 
-def ocr_crop(img):
+def ocr_crop(img, config):
     if img is None:
         return "", 0.0
 
@@ -95,7 +117,7 @@ def ocr_crop(img):
 
     best_text, best_conf = "", -1.0
     for candidate in candidates:
-        text, conf = _ocr_single(candidate)
+        text, conf = _ocr_single(candidate, config)
         if conf > best_conf:
             best_text, best_conf = text, conf
     return best_text, max(best_conf, 0.0)
@@ -106,7 +128,6 @@ def main():
     parser.add_argument("sheet_pdf")
     parser.add_argument("number_box")
     parser.add_argument("title_box")
-    parser.add_argument("--dpi", type=int, default=400)
     parser.add_argument("--tesseract-cmd", default=None)
     args = parser.parse_args()
 
@@ -116,10 +137,8 @@ def main():
     number_box = json.loads(args.number_box)
     title_box = json.loads(args.title_box)
 
-    img = render_full_page(args.sheet_pdf, args.dpi)
-
-    number_text, number_conf = ocr_crop(crop_box(img, number_box))
-    title_text, title_conf = ocr_crop(crop_box(img, title_box))
+    number_text, number_conf = ocr_crop(render_box_region(args.sheet_pdf, number_box), NUMBER_TESSERACT_CONFIG)
+    title_text, title_conf = ocr_crop(render_box_region(args.sheet_pdf, title_box), TITLE_TESSERACT_CONFIG)
 
     json.dump({
         "number_text": number_text,

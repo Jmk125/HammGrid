@@ -32,8 +32,30 @@ async function loadFilters() {
 
 let lastItems = [];
 
+// discipline_prefix_map only covers the disciplines a project's admin has
+// explicitly mapped a number prefix to - a one-off custom discipline typed
+// in during review (e.g. "Aquatics" for a pool project) has a real
+// sheets.discipline value but no prefix map entry, so it wouldn't otherwise
+// appear as a filter option at all. Rebuilds the option list in sorted order
+// (rather than just appending discovered ones at the end) so a custom
+// discipline lands alphabetically among the mapped ones instead of always
+// trailing last.
+function addMissingDisciplineOptions(items) {
+  const select = document.getElementById('discipline-filter');
+  const known = new Set([...select.options].slice(1).map((o) => o.value)); // skip "All"
+  const discovered = items.map((s) => s.discipline).filter(Boolean);
+  if (discovered.every((d) => known.has(d))) return; // nothing new - avoid disturbing the current selection/options for no reason
+  const all = [...new Set([...known, ...discovered])].sort();
+  const currentValue = select.value;
+  select.innerHTML = '';
+  select.appendChild(new Option('All', ''));
+  for (const d of all) select.appendChild(new Option(d, d));
+  select.value = currentValue;
+}
+
 function renderGrid(items) {
   lastItems = items;
+  addMissingDisciplineOptions(items);
   const discipline = document.getElementById('discipline-filter').value;
   const revisionId = document.getElementById('revision-filter').value;
   const search = document.getElementById('search-filter').value.trim().toLowerCase();
