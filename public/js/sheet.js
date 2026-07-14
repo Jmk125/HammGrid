@@ -1,6 +1,6 @@
 import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { initMarkups } from '/js/markups.js';
-import { getCachedAsset, getCachedSheets } from '/js/offline-store.js';
+import { getCachedAsset, getCachedSheets, updateCachedSheetMetadata } from '/js/offline-store.js';
 import { renderShell, openModal, closeModal, showToast, promptModal } from '/js/shell.js';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 
@@ -202,6 +202,7 @@ function openEditSheetModal() {
       });
       currentSheet.sheet_number = sheet.sheet_number;
       currentSheet.discipline = sheet.discipline;
+      await updateCachedSheetMetadata(projectId, sheet);
       const titleEl = document.querySelector('.sheet-label .title');
       insertSheetLabel(currentSheet, titleEl ? titleEl.textContent : '');
       closeModal();

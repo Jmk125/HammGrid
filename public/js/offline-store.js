@@ -100,6 +100,39 @@ export async function requestPersistentStorage() {
   }
 }
 
+
+export async function updateCachedSheetMetadata(projectId, sheet) {
+  const db = await openDb();
+  const key = `${projectId}:${sheet.id || sheet.sheet_id}`;
+  const existing = await idbGet(db, 'sheets', key);
+  if (!existing) return;
+  await idbPut(db, 'sheets', {
+    ...existing,
+    sheet_number: sheet.sheet_number ?? existing.sheet_number,
+    discipline: sheet.discipline ?? existing.discipline,
+    current_version_id: sheet.current_version_id ?? existing.current_version_id,
+    current_revision_id: sheet.current_revision_id ?? existing.current_revision_id,
+    current_title: sheet.current_title ?? existing.current_title,
+  });
+}
+
+async function refreshCachedSheetMetadata(projectId, currentSheets) {
+  if (!Array.isArray(currentSheets) || currentSheets.length === 0) return;
+  const db = await openDb();
+  for (const sheet of currentSheets) {
+    const key = `${projectId}:${sheet.id}`;
+    const existing = await idbGet(db, 'sheets', key);
+    if (!existing || existing.current_version_id !== sheet.current_version.id) continue;
+    await idbPut(db, 'sheets', {
+      ...existing,
+      sheet_number: sheet.sheet_number,
+      discipline: sheet.discipline,
+      current_revision_id: sheet.current_version.revision_id,
+      current_title: sheet.current_version.title,
+    });
+  }
+}
+
 export async function syncProject(projectId, { onProgress } = {}) {
   const db = await openDb();
   const cursorKey = `sync-cursor:${projectId}`;
@@ -132,6 +165,8 @@ export async function syncProject(projectId, { onProgress } = {}) {
         return r.blob();
       });
     }
+
+    await refreshCachedSheetMetadata(projectId, data.current_sheets);
 
     const previouslyCachedVersionIds = new Set(previousSheets.map((sheet) => sheet.current_version_id));
     const sheetsToDownload = data.sheets.filter((sheet) => !previouslyCachedVersionIds.has(sheet.current_version.id));
