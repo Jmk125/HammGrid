@@ -1,4 +1,4 @@
-import { syncProject, getCachedSheets, getCachedAsset } from '/js/offline-store.js';
+import { syncProject, getCachedSheets, getCachedAsset, getProjectSyncInfo } from '/js/offline-store.js';
 import { renderShell, openModal, closeModal } from '/js/shell.js';
 
 const projectId = new URLSearchParams(window.location.search).get('projectId');
@@ -6,10 +6,43 @@ const projectId = new URLSearchParams(window.location.search).get('projectId');
 let selectionMode = false;
 let selectedIds = new Set();
 let lastFiltered = [];
+let currentProject = null;
+
+
+function syncLabel(info) {
+  if (!navigator.onLine) return { status: 'offline', text: info.cachedSheetCount ? 'Offline · cached' : 'Offline · not synced' };
+  if (info.status === 'syncing') return { status: 'syncing', text: 'Syncing…' };
+  if (info.status === 'synced') return { status: 'synced', text: 'Synced' };
+  if (info.status === 'needs-sync') return { status: 'needs-sync', text: 'Needs sync' };
+  if (info.status === 'empty') return { status: 'empty', text: 'No drawings' };
+  return { status: 'not-synced', text: 'Not synced' };
+}
+
+async function updateProjectSyncPill(override) {
+  const pill = document.getElementById('project-sync-pill');
+  if (!pill) return;
+  if (override) {
+    pill.className = `sync-pill ${override.status}`;
+    pill.textContent = override.text;
+    return;
+  }
+  try {
+    const info = await getProjectSyncInfo(projectId, currentProject || {});
+    const label = syncLabel(info);
+    pill.className = `sync-pill ${label.status}`;
+    pill.textContent = label.text;
+    pill.title = info.lastSync ? `Last synced ${info.lastSync}` : 'This device has not synced this project yet.';
+  } catch (err) {
+    pill.className = 'sync-pill not-synced';
+    pill.textContent = 'Sync unknown';
+  }
+}
 
 async function loadFilters() {
   const { project } = await api('GET', `/api/projects/${projectId}`);
+  currentProject = project;
   document.getElementById('project-name').textContent = project.name;
+  updateProjectSyncPill();
 
   const disciplines = [...new Set(Object.values(project.discipline_prefix_map))].sort();
   const disciplineSelect = document.getElementById('discipline-filter');
@@ -299,10 +332,15 @@ document.getElementById('search-filter').addEventListener('input', () => renderG
   const statusEl = document.getElementById('sync-status');
   try {
     statusEl.textContent = 'Syncing...';
-    const result = await syncProject(projectId);
+    updateProjectSyncPill({ status: 'syncing', text: 'Syncing…' });
+    const result = await syncProject(projectId, {
+      onProgress: (done, total) => updateProjectSyncPill({ status: 'syncing', text: `Syncing ${done}/${total}` }),
+    });
     statusEl.textContent = `Synced ${result.sheetCount} sheet(s) at ${result.since}.`;
     await renderFromCache();
+    await updateProjectSyncPill();
   } catch (err) {
     statusEl.textContent = 'Offline - showing last synced data.';
+    await updateProjectSyncPill();
   }
 })();
