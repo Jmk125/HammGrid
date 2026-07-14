@@ -133,8 +133,12 @@ export async function syncProject(projectId, { onProgress } = {}) {
       });
     }
 
+    const previouslyCachedVersionIds = new Set(previousSheets.map((sheet) => sheet.current_version_id));
+    const sheetsToDownload = data.sheets.filter((sheet) => !previouslyCachedVersionIds.has(sheet.current_version.id));
+
     let done = 0;
-    for (const sheet of data.sheets) {
+    if (onProgress && sheetsToDownload.length > 0) onProgress(done, sheetsToDownload.length);
+    for (const sheet of sheetsToDownload) {
       const cv = sheet.current_version;
       const [pdfBlob, thumbBlob, previewBlob] = await Promise.all([
         fetchBlob(cv.pdf_url),
@@ -156,7 +160,7 @@ export async function syncProject(projectId, { onProgress } = {}) {
         current_title: cv.title,
       });
       done += 1;
-      if (onProgress) onProgress(done, data.sheets.length);
+      if (onProgress) onProgress(done, sheetsToDownload.length);
     }
 
     for (const m of data.markups) {
@@ -179,7 +183,7 @@ export async function syncProject(projectId, { onProgress } = {}) {
 
     await putMeta(db, cursorKey, data.since);
     await putMeta(db, stateKey, { status: 'synced', last_success_at: new Date().toISOString(), since: data.since });
-    return { sheetCount: data.sheets.length, markupCount: data.markups.length, since: data.since };
+    return { sheetCount: sheetsToDownload.length, markupCount: data.markups.length, since: data.since };
   } catch (err) {
     await putMeta(db, stateKey, { status: 'error', last_error_at: new Date().toISOString(), message: err.message });
     throw err;
