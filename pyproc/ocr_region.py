@@ -15,6 +15,7 @@ Prints JSON to stdout:
 """
 import argparse
 import json
+import re
 import sys
 
 import fitz  # PyMuPDF
@@ -40,12 +41,12 @@ TARGET_BOX_HEIGHT_PX = 400
 # zero-height rect can't request an enormous render.
 MAX_ZOOM = 12.0
 
-# Sheet numbers are single-line, uppercase, and only ever contain these
-# characters (see NUMBER_PATTERN in revision.js: [A-Z]{1,2}-?\d+(\.\d+)?) -
-# restricting Tesseract to this whitelist stops it from ever emitting
-# unrelated symbols in the number field. This was added after a recurring
-# misread on one drawing set where "7" was consistently read as "/".
-NUMBER_TESSERACT_CONFIG = "--psm 7 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.-"
+# Sheet numbers are single-line, uppercase, and almost always match the
+# small grammar in revision.js (discipline prefix + numeric run).  Keep this
+# whitelist tight, but allow slash because Tesseract commonly sees 7 as /;
+# normalize_sheet_number_text converts that contextual slash back to 7 rather
+# than making Tesseract drop the character entirely.
+NUMBER_TESSERACT_CONFIG = "--psm 7 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.-/"
 # Titles are free text, so no whitelist - and no PSM override either.
 # Tesseract's default (psm 3, fully automatic page segmentation) measurably
 # beat every forced single-line/single-block mode in a side-by-side test
@@ -57,6 +58,49 @@ NUMBER_TESSERACT_CONFIG = "--psm 7 -c tessedit_char_whitelist=0123456789ABCDEFGH
 # specific modes for this title-block layout - counterintuitive, but
 # verified, not assumed.
 TITLE_TESSERACT_CONFIG = ""
+
+
+def normalize_sheet_number_text(text):
+    """Clean common OCR confusions in drawing sheet numbers.
+
+    Sheet numbers are short identifiers with a small, predictable grammar
+    (discipline prefix + numeric run, optionally separated by a dash).  Use
+    that context to correct the recurring Tesseract mistakes we see in title
+    blocks without touching free-form titles.
+    """
+    cleaned = re.sub(r"\s+", "", (text or "").upper())
+    if not cleaned:
+        return ""
+
+    # Keep only characters that can appear in a sheet number.  Slash is kept
+    # long enough to recover the common 7-as-/ misread below.
+    cleaned = re.sub(r"[^A-Z0-9.\-/]", "", cleaned)
+
+    # A leading structural "S" is frequently recognized as 5 or 9.  This is
+    # safe in the prefix position when the next character starts the numeric
+    # portion or a normal S-### separator.
+    if len(cleaned) >= 2 and cleaned[0] in "59" and (cleaned[1].isdigit() or cleaned[1] in "-./"):
+        cleaned = "S" + cleaned[1:]
+
+    # Conversely, once we are in the numeric portion, an OCR "S" almost
+    # always means the digit 5.
+    chars = list(cleaned)
+    seen_digit = False
+    for i, ch in enumerate(chars):
+        if ch.isdigit():
+            seen_digit = True
+        elif seen_digit and ch == "S":
+            chars[i] = "5"
+    cleaned = "".join(chars)
+
+    # Let Tesseract emit slash so it does not drop a 7 entirely, then convert
+    # slash to 7 only where sheet numbers expect numeric characters.
+    prefix = re.match(r"^[A-Z]{1,3}-?", cleaned)
+    start = prefix.end() if prefix else 0
+    if start < len(cleaned):
+        cleaned = cleaned[:start] + cleaned[start:].replace("/", "7")
+
+    return cleaned
 
 
 def render_box_region(pdf_path, box):
@@ -120,6 +164,8 @@ def ocr_crop(img, config):
         text, conf = _ocr_single(candidate, config)
         if conf > best_conf:
             best_text, best_conf = text, conf
+    if config == NUMBER_TESSERACT_CONFIG:
+        best_text = normalize_sheet_number_text(best_text)
     return best_text, max(best_conf, 0.0)
 
 
