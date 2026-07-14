@@ -143,6 +143,26 @@ export function promptModal({ title = 'Enter a value', message = '', placeholder
 }
 
 
+
+export function renderNetworkIndicator(container) {
+  if (!container || container.querySelector('#network-indicator')) return;
+  const indicator = document.createElement('span');
+  indicator.id = 'network-indicator';
+  indicator.className = 'network-indicator';
+  container.prepend(indicator);
+
+  function update() {
+    const online = navigator.onLine;
+    indicator.className = `network-indicator ${online ? 'online' : 'offline'}`;
+    indicator.textContent = online ? '● Online' : '● Offline';
+    indicator.title = online ? 'Network connection detected' : 'No network connection detected';
+  }
+
+  window.addEventListener('online', update);
+  window.addEventListener('offline', update);
+  update();
+}
+
 // ---------- Per-project sheet history ----------
 const SHEET_HISTORY_LIMIT = 10;
 
@@ -409,6 +429,7 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
     await api('POST', '/api/auth/logout');
     window.location.href = '/login.html';
   });
+  renderNetworkIndicator(topbarEl.querySelector('.topbar-actions'));
   if (active === 'viewer' && projectId) renderSheetHistoryControls(topbarEl, projectId);
   const newRevBtn = topbarEl.querySelector('#new-revision-btn');
   if (newRevBtn) newRevBtn.addEventListener('click', () => newRevisionModal(projectId));

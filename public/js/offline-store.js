@@ -45,6 +45,10 @@ function idbPut(db, store, value) {
   });
 }
 
+async function putMeta(db, key, value) {
+  await idbPut(db, 'meta', { key, value });
+}
+
 async function opfsRoot() {
   return navigator.storage.getDirectory();
 }
@@ -77,13 +81,16 @@ export async function requestPersistentStorage() {
 export async function syncProject(projectId, { onProgress } = {}) {
   const db = await openDb();
   const cursorKey = `sync-cursor:${projectId}`;
+  const stateKey = `sync-state:${projectId}`;
   const cursorRow = await idbGet(db, 'meta', cursorKey);
   const since = cursorRow ? cursorRow.value : undefined;
 
-  const qs = since ? `?since=${encodeURIComponent(since)}` : '';
-  const res = await fetch(`/api/projects/${projectId}/sync${qs}`);
-  if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
-  const data = await res.json();
+  await putMeta(db, stateKey, { status: 'syncing', started_at: new Date().toISOString() });
+  try {
+    const qs = since ? `?since=${encodeURIComponent(since)}` : '';
+    const res = await fetch(`/api/projects/${projectId}/sync${qs}`);
+    if (!res.ok) throw new Error(`Sync failed: ${res.status}`);
+    const data = await res.json();
 
   // fetch() only rejects on a network-level failure - a 404/500 response
   // still resolves successfully, and .blob() on it would silently cache the
@@ -128,8 +135,13 @@ export async function syncProject(projectId, { onProgress } = {}) {
     await idbPut(db, 'markups', { ...m, project_id: Number(projectId) });
   }
 
-  await idbPut(db, 'meta', { key: cursorKey, value: data.since });
-  return { sheetCount: data.sheets.length, markupCount: data.markups.length, since: data.since };
+    await putMeta(db, cursorKey, data.since);
+    await putMeta(db, stateKey, { status: 'synced', last_success_at: new Date().toISOString(), since: data.since });
+    return { sheetCount: data.sheets.length, markupCount: data.markups.length, since: data.since };
+  } catch (err) {
+    await putMeta(db, stateKey, { status: 'error', last_error_at: new Date().toISOString(), message: err.message });
+    throw err;
+  }
 }
 
 export async function getCachedSheets(projectId) {
@@ -148,6 +160,28 @@ export async function getLastSyncTime(projectId) {
   const db = await openDb();
   const row = await idbGet(db, 'meta', `sync-cursor:${projectId}`);
   return row ? row.value : null;
+}
+
+export async function getProjectSyncInfo(projectId, project = {}) {
+  const db = await openDb();
+  const [cursorRow, stateRow, cachedSheets] = await Promise.all([
+    idbGet(db, 'meta', `sync-cursor:${projectId}`),
+    idbGet(db, 'meta', `sync-state:${projectId}`),
+    getCachedSheets(projectId),
+  ]);
+  const lastSync = cursorRow ? cursorRow.value : null;
+  const latestPublished = project.latest_published_at || null;
+  const currentSheetCount = Number(project.current_sheet_count || 0);
+  const cachedSheetCount = cachedSheets.length;
+  const state = stateRow ? stateRow.value : null;
+  let status = 'not-synced';
+  if (state && state.status === 'syncing') status = 'syncing';
+  else if (currentSheetCount === 0) status = 'empty';
+  else if (!lastSync || cachedSheetCount === 0) status = 'not-synced';
+  else if (latestPublished && lastSync < latestPublished) status = 'needs-sync';
+  else if (cachedSheetCount < currentSheetCount) status = 'needs-sync';
+  else status = 'synced';
+  return { status, lastSync, latestPublished, currentSheetCount, cachedSheetCount, state };
 }
 
 // kind: 'pdf' | 'thumb' | 'preview'. Returns a File (Blob) or null if not cached.
