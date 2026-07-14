@@ -331,12 +331,14 @@ document.getElementById('search-filter').addEventListener('input', () => renderG
 
   const statusEl = document.getElementById('sync-status');
   try {
-    statusEl.textContent = 'Syncing...';
-    updateProjectSyncPill({ status: 'syncing', text: 'Syncing…' });
+    statusEl.textContent = 'Checking for updates...';
+    updateProjectSyncPill({ status: 'syncing', text: 'Checking…' });
     const result = await syncProject(projectId, {
       onProgress: (done, total) => updateProjectSyncPill({ status: 'syncing', text: `Syncing ${done}/${total}` }),
     });
-    statusEl.textContent = `Synced ${result.sheetCount} sheet(s) at ${result.since}.`;
+    statusEl.textContent = result.sheetCount || result.markupCount
+      ? `Synced ${result.sheetCount} sheet(s) and ${result.markupCount} markup update(s) at ${result.since}.`
+      : `Already synced at ${result.since}.`;
     await renderFromCache();
     await updateProjectSyncPill();
   } catch (err) {

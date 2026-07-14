@@ -1,3 +1,4 @@
+import { deleteCachedProject } from '/js/offline-store.js';
 import { renderShell, openModal, closeModal, showToast, getPendingJobsForProject, untrackPendingJob } from '/js/shell.js';
 
 const params = new URLSearchParams(window.location.search);
@@ -44,6 +45,7 @@ function openDeleteConfirm() {
     confirmBtn.disabled = true;
     try {
       await api('DELETE', `/api/projects/${projectId}`, { confirm_name: input.value });
+      await deleteCachedProject(projectId);
       window.location.href = '/dashboard.html';
     } catch (err) {
       const errEl = document.getElementById('delete-error');
