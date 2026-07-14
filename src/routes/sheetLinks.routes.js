@@ -22,7 +22,7 @@ function sheetInSameProject(sheetId, projectId) {
 router.get('/', requireAuth, (req, res) => {
   const links = db
     .prepare(
-      `SELECT sl.id, sl.source_sheet_id, sl.target_sheet_id, sl.rect, sl.label,
+      `SELECT sl.id, sl.source_sheet_id, sl.target_sheet_id, sl.rect, sl.label, sl.link_type,
               ts.sheet_number AS target_sheet_number, sv.title AS target_title
        FROM sheet_links sl
        JOIN sheets source ON source.id = sl.source_sheet_id
@@ -54,8 +54,8 @@ router.post('/', requireRole('admin', 'editor'), (req, res) => {
 
   const result = db
     .prepare(
-      `INSERT INTO sheet_links (project_id, source_sheet_id, source_version_id, target_sheet_id, rect, label, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO sheet_links (project_id, source_sheet_id, source_version_id, target_sheet_id, rect, label, link_type, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, 'manual', ?)`
     )
     .run(projectId, sourceSheetId, source_version_id, targetSheetId, JSON.stringify(parsedRect), label || null, req.session.user.id);
 

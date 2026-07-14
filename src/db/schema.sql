@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS sheet_links (
   target_sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
   rect TEXT NOT NULL,
   label TEXT,
+  link_type TEXT NOT NULL CHECK (link_type IN ('auto', 'manual')) DEFAULT 'auto',
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
