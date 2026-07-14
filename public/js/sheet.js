@@ -25,6 +25,7 @@ const sheetId = params.get('sheetId');
 
 let markupsController = null;
 let currentSheet = null;
+let sheetLinkLoadToken = 0;
 let canManage = false;
 let allVersions = [];
 let displayedVersionId = null;
@@ -268,6 +269,8 @@ async function renderPdf(versionId) {
     if (currentRenderTask !== renderToken) return; // superseded while rendering
 
     statusEl.textContent = cachedFile ? '(from local cache)' : '';
+    syncSheetLinkLayer();
+    loadSheetLinks();
     if (markupsController) markupsController.resync();
     userHasZoomedOrPanned = false;
     fitToView();
@@ -284,6 +287,77 @@ async function renderPdf(versionId) {
 
 function escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+}
+
+function syncSheetLinkLayer() {
+  const canvas = document.getElementById('pdf-canvas');
+  const svg = document.getElementById('markup-svg');
+  if (!svg) return;
+  svg.setAttribute('viewBox', `0 0 ${canvas.width} ${canvas.height}`);
+}
+
+function ensureSheetLinkLayer() {
+  const svg = document.getElementById('markup-svg');
+  if (!svg) return null;
+  let layer = svg.querySelector('#sheet-link-layer');
+  if (!layer) {
+    layer = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    layer.id = 'sheet-link-layer';
+  }
+  // Keep links in the same SVG as markups so they can actually receive
+  // pointer events, but always underneath markup/measure geometry.
+  if (svg.firstChild !== layer) svg.insertBefore(layer, svg.firstChild);
+  return layer;
+}
+
+function renderSheetLinks(links, token) {
+  if (token !== sheetLinkLoadToken) return;
+  const layer = ensureSheetLinkLayer();
+  const canvas = document.getElementById('pdf-canvas');
+  if (!layer || !canvas.width || !canvas.height) return;
+  layer.innerHTML = '';
+  syncSheetLinkLayer();
+
+  for (const link of links) {
+    const rect = link.rect || {};
+    const x = Number(rect.x) * canvas.width;
+    const y = Number(rect.y) * canvas.height;
+    const w = Number(rect.w) * canvas.width;
+    const h = Number(rect.h) * canvas.height;
+    if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) continue;
+
+    const hotspot = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    hotspot.classList.add('sheet-link-hotspot');
+    hotspot.setAttribute('x', x);
+    hotspot.setAttribute('y', y);
+    hotspot.setAttribute('width', w);
+    hotspot.setAttribute('height', h);
+    hotspot.setAttribute('rx', Math.min(8, Math.max(2, Math.min(w, h) * 0.08)));
+    hotspot.setAttribute(
+      'aria-label',
+      `Open ${link.target_sheet_number || 'linked sheet'}${link.target_title ? ` - ${link.target_title}` : ''}`
+    );
+    hotspot.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.location.href = `/sheet.html?projectId=${projectId}&sheetId=${link.target_sheet_id}`;
+    });
+    layer.appendChild(hotspot);
+  }
+}
+
+async function loadSheetLinks() {
+  const token = ++sheetLinkLoadToken;
+  const layer = ensureSheetLinkLayer();
+  if (layer) layer.innerHTML = '';
+  try {
+    const { links } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}/links`);
+    renderSheetLinks(links, token);
+  } catch (err) {
+    // Links are helpful navigation sugar, not a blocker for opening a drawing.
+    // Keep failures out of the critical render path so sheets stay fast.
+    console.warn('Failed to load sheet links', err);
+  }
 }
 
 async function showVersion(versionId) {

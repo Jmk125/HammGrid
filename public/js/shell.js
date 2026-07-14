@@ -76,13 +76,13 @@ export function alertModal({ title = 'Notice', message = '', okLabel = 'OK' } = 
 
 // Promise-based replacement for the native confirm() dialog - resolves true/false,
 // styled like the rest of the app instead of a jarring native browser popup.
-export function confirmModal({ title = 'Are you sure?', message = '', confirmLabel = 'Confirm', danger = false } = {}) {
+export function confirmModal({ title = 'Are you sure?', message = '', confirmLabel = 'Confirm', cancelLabel = 'Cancel', danger = false } = {}) {
   return new Promise((resolve) => {
     openModal(`
       <h2>${escapeHtml(title)}</h2>
       ${message ? `<p>${escapeHtml(message)}</p>` : ''}
       <div class="modal-actions">
-        <button type="button" id="modal-cancel">Cancel</button>
+        <button type="button" id="modal-cancel">${escapeHtml(cancelLabel)}</button>
         <button type="button" id="modal-confirm" class="${danger ? 'danger' : 'primary'}">${escapeHtml(confirmLabel)}</button>
       </div>
     `);
