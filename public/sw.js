@@ -10,7 +10,7 @@
 // note install() below fails closed: cache.addAll() rejects the whole
 // install if ANY url here 404s (e.g. a renamed/deleted page), so keep this
 // list in sync with public/ or the service worker stops updating entirely.
-const CACHE_NAME = 'app-shell-v6';
+const CACHE_NAME = 'app-shell-v9';
 
 const PRECACHE_URLS = [
   '/',
