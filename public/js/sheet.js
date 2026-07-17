@@ -271,7 +271,7 @@ async function renderPdf(versionId) {
 
     statusEl.textContent = cachedFile ? '(from local cache)' : '';
     syncSheetLinkLayer();
-    loadSheetLinks();
+    loadSheetLinks(versionId);
     if (markupsController) markupsController.resync();
     userHasZoomedOrPanned = false;
     fitToView();
@@ -347,12 +347,16 @@ function renderSheetLinks(links, token) {
   }
 }
 
-async function loadSheetLinks() {
+async function loadSheetLinks(versionId) {
   const token = ++sheetLinkLoadToken;
   const layer = ensureSheetLinkLayer();
   if (layer) layer.innerHTML = '';
   try {
-    const { links } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}/links`);
+    // Scope auto-links to the version actually on screen - see the matching
+    // comment in sheetLinks.routes.js for why this can't just default to
+    // "current" here.
+    const qs = versionId ? `?versionId=${encodeURIComponent(versionId)}` : '';
+    const { links } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}/links${qs}`);
     renderSheetLinks(links, token);
   } catch (err) {
     // Links are helpful navigation sugar, not a blocker for opening a drawing.

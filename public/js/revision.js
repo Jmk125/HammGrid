@@ -1,4 +1,4 @@
-import { renderShell, trackPendingJob, showToast, confirmModal, alertModal } from '/js/shell.js';
+import { renderShell, trackPendingJob, showToast, confirmModal } from '/js/shell.js';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 
 const params = new URLSearchParams(window.location.search);
@@ -613,24 +613,14 @@ document.getElementById('publish-btn').addEventListener('click', async () => {
   publishBtn.textContent = 'Publishing...';
   try {
     const result = await api('POST', `/api/projects/${projectId}/revisions/${revisionId}/publish`);
-    const scanLinks = await confirmModal({
-      title: 'Revision published',
-      message: `Published ${result.published_sheets} sheet(s). Scan this project for clickable sheet links now? You can also run this later from Project Settings.`,
-      confirmLabel: 'Scan now',
-      cancelLabel: 'Later',
-    });
-    let scanJobId = '';
-    if (scanLinks) {
-      const scan = await api('POST', `/api/projects/${projectId}/sheet-links/scan`);
-      scanJobId = scan.job_id;
-      await alertModal({
-        title: 'Sheet-link scan started',
-        message: `Scanning ${scan.sheet_count} sheet(s) in the background. You can check progress from Project Settings.`,
-      });
-    }
-    const settingsQs = new URLSearchParams({ projectId });
-    if (scanJobId) settingsQs.set('sheetLinkJobId', scanJobId);
-    window.location.href = `/project-settings.html?${settingsQs}`;
+    // Sheet links for the newly-published sheets are rescanned automatically
+    // in the background by the publish endpoint itself - no need to prompt
+    // for (and pay the cost of) a full project-wide rescan here. That full
+    // rescan is still available on demand from Project Settings for the rarer
+    // case of picking up references to a brand-new sheet number from sheets
+    // that weren't touched by this revision.
+    showToast(`Published ${result.published_sheets} sheet(s).`, 'success');
+    window.location.href = `/project-settings.html?${new URLSearchParams({ projectId })}`;
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.style.display = 'block';
