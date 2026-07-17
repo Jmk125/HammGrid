@@ -41,6 +41,8 @@ addColumnIfMissing('shares', 'allow_documents', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('shares', 'document_folder_ids', "TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing('shares', 'document_ids', "TEXT NOT NULL DEFAULT '[]'");
 
+addColumnIfMissing('users', 'can_takeoff', 'INTEGER NOT NULL DEFAULT 0');
+
 // documents used to be a rigid kind('rfi'|'submittal')/number/title/date/
 // status/pdf_path row. It's now a folder-organized entity with versioned
 // revisions (document_folders/documents/document_versions, mirroring
@@ -140,6 +142,47 @@ addColumnIfMissing('shares', 'document_ids', "TEXT NOT NULL DEFAULT '[]'");
   rebuild();
   db.pragma('foreign_keys = ON');
   console.log('Rebuilt documents table to add ON DELETE SET NULL on current_version_id.');
+})();
+
+// take_off_items.type's CHECK constraint can't be widened with ALTER TABLE -
+// SQLite has no ALTER CONSTRAINT, so adding the 'count' type needs the same
+// disable-FK/rebuild/verify/re-enable procedure as the documents table above.
+// take_off_instances.item_id references this table, hence the FK dance.
+(function ensureTakeoffItemsCountType() {
+  const exists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='take_off_items'`).get();
+  if (!exists) return; // fresh install - schema.sql above already has the right shape
+  const sql = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='take_off_items'`).get().sql;
+  if (sql.includes("'count'")) return; // already migrated
+
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE take_off_items_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('linear', 'perimeter', 'area', 'count')),
+        shape TEXT CHECK (shape IN ('square', 'circle', 'triangle', 'diamond')),
+        color TEXT NOT NULL,
+        created_by INTEGER NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+    db.exec(`
+      INSERT INTO take_off_items_new (id, project_id, name, type, color, created_by, created_at)
+      SELECT id, project_id, name, type, color, created_by, created_at FROM take_off_items
+    `);
+    db.exec('DROP TABLE take_off_items');
+    db.exec('ALTER TABLE take_off_items_new RENAME TO take_off_items');
+    const violations = db.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length) {
+      throw new Error(`take_off_items rebuild left ${violations.length} dangling reference(s): ${JSON.stringify(violations)}`);
+    }
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_take_off_items_project ON take_off_items(project_id)');
+  console.log("Rebuilt take_off_items table to add the 'count' type and shape column.");
 })();
 
 db.exec('CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id)');

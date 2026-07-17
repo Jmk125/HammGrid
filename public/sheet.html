@@ -24,6 +24,8 @@
               </div>
             </div>
             <div class="markup-popup" id="markup-popup" style="display:none;"></div>
+            <div class="takeoff-crosshair-v" id="takeoff-crosshair-v" style="display:none;"></div>
+            <div class="takeoff-crosshair-h" id="takeoff-crosshair-h" style="display:none;"></div>
           </div>
           <p class="muted" id="pdf-status" style="padding: 4px 12px;"></p>
         </div>
@@ -57,6 +59,17 @@
                 <div class="icon-tool-grid" id="measure-tool-grid"></div>
                 <div class="measure-result" id="measure-result" style="display:none;"></div>
                 <button type="button" id="measure-clear-btn" style="width:100%;">Clear</button>
+              </div>
+            </div>
+
+            <div class="pane-section" id="section-takeoffs" style="display:none;">
+              <button class="pane-section-header" type="button" data-section="takeoffs">
+                <span>Take-offs</span>
+                <span class="chevron">&#9662;</span>
+              </button>
+              <div class="pane-section-body">
+                <div class="icon-tool-grid" id="takeoff-tool-grid"></div>
+                <div class="takeoff-items-list" id="takeoff-items-list"></div>
               </div>
             </div>
           </div>

@@ -32,6 +32,48 @@ router.get('/', requireAuth, (req, res) => {
   res.json({ sheets });
 });
 
+// Registered before /:sheetId - otherwise Express would swallow "search" as
+// a :sheetId value instead of matching this route.
+function buildFtsMatchExpr(rawQuery) {
+  const tokens = rawQuery
+    .split(/\s+/)
+    .map((t) => t.replace(/[^A-Za-z0-9./]/g, '')) // strip anything outside the tokenizer's allowed chars / FTS5 syntax chars
+    .filter(Boolean);
+  if (tokens.length === 0) return null;
+  // Quote each token (handles a leading digit or embedded '.'/'/' safely)
+  // and suffix with * for prefix matching, so results feel live as the user
+  // types - same instant-filter feel as the existing metadata search.
+  return tokens.map((t) => `"${t}"*`).join(' AND ');
+}
+
+router.get('/search', requireAuth, (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json({ sheet_ids: [] });
+
+  const matchExpr = buildFtsMatchExpr(q);
+  if (!matchExpr) return res.json({ sheet_ids: [] });
+
+  try {
+    const rows = db
+      .prepare(
+        `SELECT s.id AS sheet_id
+         FROM sheet_text_fts f
+         JOIN sheets s ON s.id = f.rowid
+         WHERE s.project_id = ? AND sheet_text_fts MATCH ?
+         ORDER BY rank
+         LIMIT 200`
+      )
+      .all(req.params.projectId, matchExpr);
+    res.json({ sheet_ids: rows.map((r) => r.sheet_id) });
+  } catch (err) {
+    // A malformed MATCH expression must degrade to "no content matches"
+    // rather than 500 the whole grid - client-side metadata filtering still
+    // works regardless.
+    console.warn('FTS search query failed', err);
+    res.json({ sheet_ids: [] });
+  }
+});
+
 router.get('/:sheetId', requireAuth, (req, res) => {
   const sheet = db
     .prepare('SELECT * FROM sheets WHERE id = ? AND project_id = ?')

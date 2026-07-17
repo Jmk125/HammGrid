@@ -1,9 +1,8 @@
 import { deleteCachedProject } from '/js/offline-store.js';
-import { renderShell, openModal, closeModal, showToast, getPendingJobsForProject, untrackPendingJob } from '/js/shell.js';
+import { renderShell, openModal, closeModal, showToast, trackPendingJob, getPendingJobsForProject, untrackPendingJob } from '/js/shell.js';
 
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
-const sheetLinkJobId = params.get('sheetLinkJobId');
 let currentProject = null;
 let currentUser = null;
 // jobIds with an active poll loop already running, so a table rebuild
@@ -103,25 +102,39 @@ async function loadSheetLinkSummary() {
   }
 }
 
+// Tracked via shell.js's trackPendingJob() (same localStorage mechanism the
+// upload flow uses) so leaving project-settings.html mid-scan and coming back
+// - or even reloading - reconnects to the live progress instead of showing
+// nothing, even though the scan itself keeps running server-side regardless.
 async function pollSheetLinkScan(jobId) {
   const statusEl = document.getElementById('sheet-link-scan-status');
   const scanBtn = document.getElementById('scan-sheet-links-btn');
   for (;;) {
-    const { job } = await api('GET', `/api/projects/${projectId}/sheet-links/jobs/${jobId}`);
+    let job;
+    try {
+      ({ job } = await api('GET', `/api/projects/${projectId}/sheet-links/jobs/${jobId}`));
+    } catch (err) {
+      untrackPendingJob(jobId); // job expired/server restarted - stop tracking it
+      if (scanBtn) scanBtn.disabled = false;
+      if (statusEl) statusEl.textContent = `Scan status unavailable: ${err.message}`;
+      return;
+    }
     if (job.status === 'processing') {
       const progress = job.progress;
-      statusEl.textContent = progress ? `Scanning ${progress.current} / ${progress.total} sheets...` : 'Scanning...';
+      if (statusEl) statusEl.textContent = progress ? `Scanning ${progress.current} / ${progress.total} sheets...` : 'Scanning...';
+      if (scanBtn) scanBtn.disabled = true;
       await new Promise((r) => setTimeout(r, 1500));
       continue;
     }
-    scanBtn.disabled = false;
+    untrackPendingJob(jobId);
+    if (scanBtn) scanBtn.disabled = false;
     if (job.status === 'done') {
       const created = job.result ? job.result.created_links : null;
-      statusEl.textContent = created === null ? 'Scan complete.' : `Scan complete: ${created} link${created === 1 ? '' : 's'} found.`;
+      if (statusEl) statusEl.textContent = created === null ? 'Scan complete.' : `Scan complete: ${created} link${created === 1 ? '' : 's'} found.`;
       showToast('Sheet-link scan finished.', 'success');
       await loadSheetLinkSummary();
     } else {
-      statusEl.textContent = `Scan failed: ${job.error || 'Unknown error'}`;
+      if (statusEl) statusEl.textContent = `Scan failed: ${job.error || 'Unknown error'}`;
       showToast(`Sheet-link scan failed: ${job.error || 'Unknown error'}`, 'error');
     }
     return;
@@ -134,9 +147,10 @@ function setupSheetLinkScan() {
   if (!card || !scanBtn) return;
   if (!currentUser || !['admin', 'editor'].includes(currentUser.role)) return;
   card.style.display = '';
-  if (sheetLinkJobId) {
+  const trackedJob = getPendingJobsForProject(projectId).find((j) => j.kind === 'sheet-link-scan');
+  if (trackedJob) {
     scanBtn.disabled = true;
-    pollSheetLinkScan(sheetLinkJobId);
+    pollSheetLinkScan(trackedJob.jobId);
   }
   scanBtn.addEventListener('click', async () => {
     scanBtn.disabled = true;
@@ -144,6 +158,7 @@ function setupSheetLinkScan() {
     statusEl.textContent = 'Starting scan...';
     try {
       const { job_id } = await api('POST', `/api/projects/${projectId}/sheet-links/scan`);
+      trackPendingJob({ jobId: job_id, projectId, kind: 'sheet-link-scan', label: 'Sheet-link scan' });
       await pollSheetLinkScan(job_id);
     } catch (err) {
       scanBtn.disabled = false;
@@ -151,6 +166,80 @@ function setupSheetLinkScan() {
     }
   });
   loadSheetLinkSummary();
+}
+
+async function loadSearchIndexSummary() {
+  const statusEl = document.getElementById('search-index-status');
+  if (!statusEl) return;
+  try {
+    const { indexed_count } = await api('GET', `/api/projects/${projectId}/sheet-text/summary`);
+    statusEl.textContent = `${indexed_count} sheet${indexed_count === 1 ? '' : 's'} indexed.`;
+  } catch (err) {
+    statusEl.textContent = `Unable to load index summary: ${err.message}`;
+  }
+}
+
+// Same trackPendingJob() reconnect approach as pollSheetLinkScan() above.
+async function pollSearchIndexJob(jobId) {
+  const statusEl = document.getElementById('search-index-status');
+  const indexBtn = document.getElementById('index-search-btn');
+  for (;;) {
+    let job;
+    try {
+      ({ job } = await api('GET', `/api/projects/${projectId}/sheet-text/jobs/${jobId}`));
+    } catch (err) {
+      untrackPendingJob(jobId); // job expired/server restarted - stop tracking it
+      if (indexBtn) indexBtn.disabled = false;
+      if (statusEl) statusEl.textContent = `Index status unavailable: ${err.message}`;
+      return;
+    }
+    if (job.status === 'processing') {
+      const progress = job.progress;
+      if (statusEl) statusEl.textContent = progress ? `Indexing ${progress.current} / ${progress.total} sheets...` : 'Indexing...';
+      if (indexBtn) indexBtn.disabled = true;
+      await new Promise((r) => setTimeout(r, 1500));
+      continue;
+    }
+    untrackPendingJob(jobId);
+    if (indexBtn) indexBtn.disabled = false;
+    if (job.status === 'done') {
+      const indexedSheets = job.result ? job.result.indexed_sheets : null;
+      if (statusEl) statusEl.textContent = indexedSheets === null ? 'Index build complete.' : `Index build complete: ${indexedSheets} sheet${indexedSheets === 1 ? '' : 's'} indexed.`;
+      showToast('Search index build finished.', 'success');
+      await loadSearchIndexSummary();
+    } else {
+      if (statusEl) statusEl.textContent = `Index build failed: ${job.error || 'Unknown error'}`;
+      showToast(`Search index build failed: ${job.error || 'Unknown error'}`, 'error');
+    }
+    return;
+  }
+}
+
+function setupSearchIndex() {
+  const card = document.getElementById('search-index-card');
+  const indexBtn = document.getElementById('index-search-btn');
+  if (!card || !indexBtn) return;
+  if (!currentUser || !['admin', 'editor'].includes(currentUser.role)) return;
+  card.style.display = '';
+  const trackedJob = getPendingJobsForProject(projectId).find((j) => j.kind === 'search-index');
+  if (trackedJob) {
+    indexBtn.disabled = true;
+    pollSearchIndexJob(trackedJob.jobId);
+  }
+  indexBtn.addEventListener('click', async () => {
+    indexBtn.disabled = true;
+    const statusEl = document.getElementById('search-index-status');
+    statusEl.textContent = 'Starting index build...';
+    try {
+      const { job_id } = await api('POST', `/api/projects/${projectId}/sheet-text/index`);
+      trackPendingJob({ jobId: job_id, projectId, kind: 'search-index', label: 'Search index build' });
+      await pollSearchIndexJob(job_id);
+    } catch (err) {
+      indexBtn.disabled = false;
+      statusEl.textContent = `Index build failed: ${err.message}`;
+    }
+  });
+  loadSearchIndexSummary();
 }
 
 async function loadRevisions() {
@@ -281,6 +370,7 @@ document.getElementById('settings-form').addEventListener('submit', async (e) =>
   });
   await loadDetails();
   setupSheetLinkScan();
+  setupSearchIndex();
   await loadRevisions();
 
   if (me.role === 'admin') {

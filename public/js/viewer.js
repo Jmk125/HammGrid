@@ -8,6 +8,16 @@ let selectedIds = new Set();
 let lastFiltered = [];
 let currentProject = null;
 
+// sheet_ids that matched the last content-search (drawing body text, not
+// metadata) response, or null if no content search has resolved yet for the
+// current term. Unioned into the metadata filter in renderGrid().
+let contentMatchIds = null;
+let searchDebounceTimer = null;
+
+function searchStorageKey() {
+  return `hammgrid-sheet-search:${projectId}`;
+}
+
 
 function syncLabel(info) {
   if (!navigator.onLine) return { status: 'offline', text: info.cachedSheetCount ? 'Offline · cached' : 'Offline · not synced' };
@@ -101,12 +111,23 @@ function renderGrid(items) {
   let filtered = items;
   if (discipline) filtered = filtered.filter((s) => s.discipline === discipline);
   if (revisionId) filtered = filtered.filter((s) => String(s.revision_id) === revisionId);
+  const isMetadataMatch = (s) =>
+    s.sheet_number.toLowerCase().includes(search) || (s.title || '').toLowerCase().includes(search);
   if (search) {
-    filtered = filtered.filter(
-      (s) => s.sheet_number.toLowerCase().includes(search) || (s.title || '').toLowerCase().includes(search)
-    );
+    filtered = filtered.filter((s) => isMetadataMatch(s) || (contentMatchIds && contentMatchIds.has(s.sheet_id)));
   }
-  filtered.sort((a, b) => a.sheet_number.localeCompare(b.sheet_number));
+  filtered.sort((a, b) => {
+    // A sheet whose own number/title names what you searched for (e.g. "Door
+    // Schedule" matching the actual door schedule sheet) is almost always
+    // what you're looking for, even if 20 other sheets mention the term
+    // somewhere in their drawing content - surface those first.
+    if (search) {
+      const aMeta = isMetadataMatch(a);
+      const bMeta = isMetadataMatch(b);
+      if (aMeta !== bMeta) return aMeta ? -1 : 1;
+    }
+    return a.sheet_number.localeCompare(b.sheet_number);
+  });
   lastFiltered = filtered;
 
   const grid = document.getElementById('grid');
@@ -303,9 +324,35 @@ async function renderFromLiveApi() {
 
 document.getElementById('discipline-filter').addEventListener('change', renderFromCache);
 document.getElementById('revision-filter').addEventListener('change', renderFromCache);
-// Search filters the already-loaded list client-side - no need to re-hit
-// cache/API on every keystroke like the dropdowns do.
-document.getElementById('search-filter').addEventListener('input', () => renderGrid(lastItems));
+// Metadata (sheet number/title) filtering is client-side and instant - no
+// need to re-hit cache/API on every keystroke like the dropdowns do. Drawing
+// *content* search needs a server round-trip (full-text index), so it's
+// debounced and unioned into the same filter once results land - see
+// contentMatchIds above and renderGrid()'s use of it.
+document.getElementById('search-filter').addEventListener('input', () => {
+  const term = document.getElementById('search-filter').value.trim();
+  renderGrid(lastItems); // immediate metadata-only pass
+
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+  if (!term) {
+    contentMatchIds = null;
+    localStorage.removeItem(searchStorageKey());
+    return;
+  }
+  localStorage.setItem(searchStorageKey(), term);
+  searchDebounceTimer = setTimeout(async () => {
+    try {
+      const { sheet_ids } = await api('GET', `/api/projects/${projectId}/sheets/search?q=${encodeURIComponent(term)}`);
+      // A stale response for an older keystroke shouldn't clobber a newer one.
+      if (document.getElementById('search-filter').value.trim() !== term) return;
+      contentMatchIds = new Set(sheet_ids);
+      renderGrid(lastItems);
+    } catch (err) {
+      // Offline or search endpoint unavailable - the metadata-only pass
+      // above already ran, so the grid still shows something useful.
+    }
+  }, 280);
+});
 
 (async function init() {
   const me = await requireSession();
@@ -319,6 +366,12 @@ document.getElementById('search-filter').addEventListener('input', () => renderG
   });
   setupSelectionToggleButton();
   setupSelectionBar();
+
+  const savedSearchTerm = localStorage.getItem(searchStorageKey());
+  if (savedSearchTerm) {
+    document.getElementById('search-filter').value = savedSearchTerm;
+    document.getElementById('search-filter').dispatchEvent(new Event('input'));
+  }
 
   try {
     await loadFilters();

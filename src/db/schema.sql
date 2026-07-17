@@ -124,6 +124,37 @@ CREATE TABLE IF NOT EXISTS markups (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- A take-off item is a named, colored, project-level running total (e.g. "2x4
+-- top plate") built from multiple placed instances. type is locked per item
+-- (not per instance) since an item has one unit of measure - mixing would
+-- make the total unit-ambiguous.
+CREATE TABLE IF NOT EXISTS take_off_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('linear', 'perimeter', 'area', 'count')),
+  -- Only meaningful (and required at the route level) when type = 'count' -
+  -- the marker glyph drawn at each counted click.
+  shape TEXT CHECK (shape IN ('square', 'circle', 'triangle', 'diamond')),
+  color TEXT NOT NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- sheet_id (not sheet_version_id), same as markups above - carries forward
+-- automatically across revisions with zero publish-route special-casing.
+-- quantity is precomputed client-side at placement time (same math as the
+-- measure tool) and never recomputed server-side.
+CREATE TABLE IF NOT EXISTS take_off_instances (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES take_off_items(id) ON DELETE CASCADE,
+  sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  geometry TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS sheet_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -135,6 +166,15 @@ CREATE TABLE IF NOT EXISTS sheet_links (
   link_type TEXT NOT NULL CHECK (link_type IN ('auto', 'manual')) DEFAULT 'auto',
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Full-text index of each sheet's drawing content (plain text extracted from
+-- the current published PDF), keyed by sheet_id as the explicit rowid so it
+-- always reflects whichever version is currently published - no separate
+-- version-scoping column needed, unlike sheet_links above.
+CREATE VIRTUAL TABLE IF NOT EXISTS sheet_text_fts USING fts5(
+  body,
+  tokenize = 'unicode61 remove_diacritics 2 tokenchars ''./'''
 );
 
 CREATE TABLE IF NOT EXISTS shares (
@@ -230,3 +270,6 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_project ON activity_log(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires);
 CREATE INDEX IF NOT EXISTS idx_staged_sheets_revision ON staged_sheets(revision_id);
 CREATE INDEX IF NOT EXISTS idx_ocr_regions_scope ON ocr_regions(project_id, scope);
+CREATE INDEX IF NOT EXISTS idx_take_off_items_project ON take_off_items(project_id);
+CREATE INDEX IF NOT EXISTS idx_take_off_instances_item ON take_off_instances(item_id);
+CREATE INDEX IF NOT EXISTS idx_take_off_instances_sheet ON take_off_instances(sheet_id);

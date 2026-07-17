@@ -12,6 +12,7 @@ const { computeMatch, needsAttention } = require('../lib/matching');
 const jobStore = require('../lib/jobStore');
 const { toPortablePath } = require('../lib/paths');
 const { scanAutoLinksForSheets } = require('../lib/sheetLinkScanner');
+const { indexTextForSheets } = require('../lib/sheetTextIndex');
 
 // Burst walks every page sequentially (PyMuPDF render + thumbnail + preview),
 // so a large multi-hundred-page upload can legitimately take a while. This
@@ -582,6 +583,11 @@ router.post('/:revisionId/publish', requireRole('admin', 'editor'), async (req, 
       });
     } catch (err) {
       console.error('Post-publish sheet-link rescan failed', err);
+    }
+    try {
+      await indexTextForSheets({ sourceSheets: publishedSourceSheets });
+    } catch (err) {
+      console.error('Post-publish text indexing failed', err);
     }
   });
 

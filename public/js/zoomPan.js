@@ -5,13 +5,23 @@
 // mouse positions) keeps working unmodified because getBoundingClientRect()
 // already reflects applied transforms.
 
-export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButton = 0, touchPan = panButton === 0 }) {
+export function setupZoomPan({
+  wrapEl,
+  innerEl,
+  isPanBlocked,
+  onChange,
+  panButton = 0,
+  touchPan = panButton === 0,
+  isButtonAllowed,
+}) {
   const state = { scale: 1, x: 0, y: 0 };
 
-  // When panning is bound to the right mouse button (box-drawing tool, so
-  // left-drag is free to draw), suppress the browser's right-click context
-  // menu on the wrap - otherwise every pan attempt pops it open instead.
-  if (panButton !== 0) {
+  // When panning isn't strictly left-button-only (the box-drawing tool's
+  // fixed right button, or a caller like sheet.js whose allowed button(s)
+  // vary by current tool state via isButtonAllowed), suppress the browser's
+  // right-click context menu on the wrap - otherwise every pan attempt pops
+  // it open instead.
+  if (panButton !== 0 || isButtonAllowed) {
     wrapEl.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
@@ -53,9 +63,10 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
 
   let pan = null;
   wrapEl.addEventListener('mousedown', (e) => {
-    if (e.button !== panButton) return;
+    const buttonOk = isButtonAllowed ? isButtonAllowed(e) : e.button === panButton;
+    if (!buttonOk) return;
     if (isPanBlocked && isPanBlocked(e)) return;
-    if (panButton !== 0) e.preventDefault();
+    if (e.button !== 0) e.preventDefault();
     pan = { startX: e.clientX, startY: e.clientY, origX: state.x, origY: state.y };
     wrapEl.classList.add('panning');
   });

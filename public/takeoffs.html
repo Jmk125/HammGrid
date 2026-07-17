@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<title>Take-offs — HammGrid</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f2b46">
+<body>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+        <h1>Take-offs</h1>
+        <p class="muted">Every take-off item in this project, with its total quantity across all sheets.</p>
+
+        <div class="card">
+          <table id="takeoff-items-table">
+            <thead>
+              <tr><th></th><th></th><th>Name</th><th>Type</th><th>Total</th><th>Instances</th><th>Actions</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p class="muted" id="takeoff-empty-msg" style="display:none;">No take-off items yet. Create one from a sheet's Take-offs pane.</p>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/js/api.js"></script>
+  <script type="module" src="/js/takeoffs.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
+</body>

@@ -332,14 +332,20 @@ export function showToast(message, type = 'info') {
   }, 6000);
 }
 
+// Job "kinds" tracked here each live under their own status route - upload/OCR
+// jobs are scoped to a revision, sheet-link scans to a project. Add a case
+// here (and in project-settings.js's own live-progress poll) for any new kind.
+function jobStatusUrl(job) {
+  if (job.kind === 'sheet-link-scan') return `/api/projects/${job.projectId}/sheet-links/jobs/${job.jobId}`;
+  if (job.kind === 'search-index') return `/api/projects/${job.projectId}/sheet-text/jobs/${job.jobId}`;
+  return `/api/projects/${job.projectId}/revisions/${job.revisionId}/upload-jobs/${job.jobId}`;
+}
+
 export async function checkPendingJobs() {
   const jobs = JSON.parse(localStorage.getItem(PENDING_JOBS_KEY) || '[]');
   for (const job of jobs) {
     try {
-      const { job: status } = await api(
-        'GET',
-        `/api/projects/${job.projectId}/revisions/${job.revisionId}/upload-jobs/${job.jobId}`
-      );
+      const { job: status } = await api('GET', jobStatusUrl(job));
       if (status.status === 'done') {
         showToast(`${job.label} finished processing.`, 'success');
         untrackPendingJob(job.jobId);
@@ -445,6 +451,7 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
     { key: 'activity', label: 'Activity Log', href: `/activity.html?projectId=${projectId}`, show: me.role === 'admin' },
     { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },
     { key: 'settings', label: 'Project Settings', href: `/project-settings.html?projectId=${projectId}`, show: canManage },
+    { key: 'takeoffs', label: 'Take-offs', href: `/takeoffs.html?projectId=${projectId}`, show: me.role === 'admin' || !!me.can_takeoff },
   ];
 
   sidebarEl.innerHTML = `
