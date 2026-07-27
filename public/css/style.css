@@ -1071,6 +1071,43 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .pane-section-body { padding: 2px 18px 16px; }
 .pane-section.collapsed .pane-section-body { display: none; }
 
+.help-body { font-size: 13px; }
+.help-heading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  margin: 16px 0 6px;
+}
+.help-heading:first-child { margin-top: 4px; }
+.help-topic {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  padding: 2px 10px;
+}
+.help-topic summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-weight: 600;
+  list-style: none;
+}
+.help-topic summary::-webkit-details-marker { display: none; }
+.help-topic summary::before { content: '\25B8'; display: inline-block; margin-right: 6px; color: var(--muted); transition: transform 0.15s ease; }
+.help-topic[open] summary::before { transform: rotate(90deg); }
+.help-topic p, .help-topic ul { margin: 0 0 8px; line-height: 1.45; }
+.help-topic ul { padding-left: 18px; }
+.help-topic li { margin-bottom: 4px; }
+.help-diagram { display: flex; justify-content: center; margin-bottom: 8px; }
+.help-svg { width: 100%; max-width: 220px; height: auto; }
+
+.help-page { max-width: 760px; }
+.help-page .help-heading { margin-top: 28px; font-size: 12px; }
+.help-page .help-topic { padding: 2px 16px; }
+.help-page .help-topic summary { font-size: 15px; padding: 12px 0; }
+.help-page .help-topic p, .help-page .help-topic ul { font-size: 14px; }
+.help-page .help-svg { max-width: 320px; }
+
 .icon-tool-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

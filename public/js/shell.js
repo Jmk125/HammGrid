@@ -453,6 +453,7 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
     { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },
     { key: 'settings', label: 'Project Settings', href: `/project-settings.html?projectId=${projectId}`, show: canManage },
     { key: 'takeoffs', label: 'Take-offs', href: `/takeoffs.html?projectId=${projectId}`, show: me.role === 'admin' || !!me.can_takeoff },
+    { key: 'help', label: 'Help', href: `/help.html?projectId=${projectId}`, show: true },
   ];
 
   sidebarEl.innerHTML = `

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<title>Help — HammGrid</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f2b46">
+<body>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide help-page">
+        <h1>Help</h1>
+        <p class="muted">A quick tour of how to use HammGrid - both general drawing management and, if enabled for you, take-off estimating.</p>
+
+        <div id="help-general">
+          <h4 class="help-heading">Drawing basics</h4>
+
+          <details class="help-topic">
+            <summary>Sheets, revisions &amp; version history</summary>
+            <p>The badge above a drawing shows which version you're looking at - click it to open a dropdown of every revision this sheet has had, and pick one to view it. If you're not on the current version, a "NOT CURRENT VERSION" watermark reminds you. The arrows on either side of the badge step forward/back through whatever filtered or searched list of sheets you came from on the Sheets page.</p>
+          </details>
+
+          <details class="help-topic">
+            <summary>Sheet links (click to jump)</summary>
+            <p>Drawings often reference other sheets (e.g. "SEE A-501"). Where those references were detected, a rectangular hotspot sits over the callout - left-click it to jump straight to that sheet, or right-click to open it in a new tab so you don't lose your place.</p>
+          </details>
+
+          <details class="help-topic">
+            <summary>Comparing two revisions (Overlay)</summary>
+            <p>The "Overlay" button in the top bar composites two versions of a sheet as a red/blue difference image - anything unchanged shows black, and anything that moved or changed shows as color. Pick another sheet or another version of this one, then use the layer-visibility toggles, drag-to-align, and 90&deg; rotate controls to line them up. "Exit overlay" returns to the normal single-sheet view.</p>
+          </details>
+
+          <details class="help-topic">
+            <summary>The right-hand pane on a sheet</summary>
+            <p>Drag the thin handle on the pane's left edge to resize it, or click the small arrow to collapse it entirely - both are remembered next time you open a sheet. Each section (Markup Tools, Measure, Take-offs) can be collapsed independently by clicking its header.</p>
+          </details>
+
+          <h4 class="help-heading">Markup tools</h4>
+
+          <details class="help-topic">
+            <summary>Drawing markups</summary>
+            <p>Line and Arrow are click-drag from one point to another. Rectangle is click-drag corner-to-corner. The two Cloud tools ("S"/"L" badges) are also click-drag boxes - the badge picks how big each bump is, and how many bumps fit is worked out automatically from the size of the box you draw. Text is a single click that immediately asks what to type.</p>
+            <p>The Color and Line width fields set the style for whatever you draw <em>next</em> - but if you've clicked a markup's "Edit" button in its popup, changing them updates that markup live instead. Viewers can only ever create <strong>private</strong> markups (visible only to them); Editors and Admins additionally see a "Draw as published" checkbox to make a new markup visible to everyone right away, or can Publish/Unpublish any markup afterward from its popup. Published markups render in a slightly darkened shade so they're visually distinct from drafts.</p>
+          </details>
+
+          <details class="help-topic">
+            <summary>Flags (the orange box)</summary>
+            <p>The flag tool (flag icon) is drawn just like a rectangle, but it's always orange and its popup opens immediately with three fields: a short <strong>Description</strong>, a longer <strong>Comment</strong> for detail, and an optional <strong>Tag</strong> - start typing a tag and any tag already used elsewhere in this project will suggest itself. Click anywhere inside a flag box (not just its edge) to reopen its popup and edit those fields or delete it.</p>
+            <p>Every flag you place also shows up on the project-wide <strong>Flags</strong> page (left sidebar) - sortable by drawing or tag, filterable by tag, with a link back to jump straight to each flag on its sheet.</p>
+          </details>
+
+          <h4 class="help-heading">Measuring</h4>
+
+          <details class="help-topic">
+            <summary>Quick measurements</summary>
+            <p>Pick a Scale first (required for any measurement or take-off). The three Measure tools are throwaway, one-off measurements - not saved to any item: Line is a 2-click distance, Perimeter keeps accumulating clicks along a path, and Area traces a closed shape. For Perimeter/Area, click near your starting point again (or press Enter) to close it off. Clear wipes whatever's in progress.</p>
+          </details>
+
+          <details class="help-topic">
+            <summary>Scale zones (mixed-scale sheets)</summary>
+            <p>If part of a sheet is plotted at a different scale than the rest - a common case is an enlarged detail callout sharing a sheet with a smaller-scale overall plan - a scale zone tells the app to use a different scale for anything measured inside a specific box. Click the gear icon next to the Scale dropdown, "+ Add zone", give it a label and a scale, then click two opposite corners on the drawing to box off that area. Any measurement or take-off whose center falls inside that box automatically uses the zone's scale instead of the sheet's normal one.</p>
+          </details>
+
+          <h4 class="help-heading">Frozen reference panes</h4>
+
+          <details class="help-topic">
+            <summary>Press F to keep key notes on screen</summary>
+            <div class="help-diagram">
+              <svg viewBox="0 0 200 90" class="help-svg">
+                <rect x="20" y="15" width="70" height="55" rx="3" fill="none" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="4 3"/>
+                <circle cx="20" cy="15" r="3" fill="var(--accent)"/>
+                <circle cx="90" cy="70" r="3" fill="var(--accent)"/>
+                <path d="M26 21 L84 64" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="2 2" fill="none"/>
+                <text x="20" y="10" font-size="8" fill="var(--muted)">click</text>
+                <text x="70" y="86" font-size="8" fill="var(--muted)">release</text>
+                <rect x="120" y="25" width="60" height="45" rx="4" fill="var(--bg)" stroke="var(--text)" stroke-width="1.5"/>
+                <rect x="120" y="25" width="60" height="10" rx="4" fill="var(--muted)"/>
+                <text x="150" y="55" font-size="8" text-anchor="middle" fill="var(--muted)">snapshot</text>
+                <path d="M92 45 L118 45" stroke="var(--text)" stroke-width="1.5" marker-end="url(#help-arrow)"/>
+                <defs>
+                  <marker id="help-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L7,3 z" fill="var(--text)"/>
+                  </marker>
+                </defs>
+              </svg>
+            </div>
+            <p>Press <strong>F</strong>, then click-drag a box around anything you want to keep visible - a key-notes legend, a schedule, a detail callout. It's captured as a snapshot and shown in a floating panel that stays fixed on screen: pan and zoom the drawing all you like, the panel doesn't move or resize. Drag its header to reposition it, and close it with the &times; when you're done. F is a one-shot - press it again for the next box, and it won't arm while another tool (markup/measure/take-off) is active or while you're typing in a field.</p>
+            <p>Check the small box in a panel's header to <strong>keep it across drawings</strong> - it'll then follow you to every other sheet in this project (same snapshot, same screen position) until you close it. Unchecking it just stops that following; closing a panel always removes it for good, pinned or not.</p>
+          </details>
+        </div>
+
+        <div id="help-takeoffs" style="display:none;">
+          <h4 class="help-heading">Take-offs</h4>
+
+          <details class="help-topic">
+            <summary>Placing a take-off</summary>
+            <p>Click one of the four type icons (Linear, Perimeter, Area, Count) to name/color a brand-new item and arm it for placement:</p>
+            <ul>
+              <li><strong>Linear</strong> - always exactly 2 clicks (start, end).</li>
+              <li><strong>Perimeter</strong> - keeps accumulating clicks along a path; click back near your start point, or press Enter, to finish.</li>
+              <li><strong>Area</strong> - same click-and-finish behavior as Perimeter by default, or switch to <strong>Box</strong> mode (segmented control that appears in the bottom toolbar) for a 2-click opposite-corner rectangle.</li>
+              <li><strong>Count</strong> - every click drops one more instance; there's no shape to finish.</li>
+            </ul>
+            <p>To resume an existing item instead of starting a new one, click its row in the items list below (this selects it and shows a "Start" button), or right-click an already-placed shape and choose "Continue Item."</p>
+          </details>
+
+          <details class="help-topic">
+            <summary>Keyboard shortcuts while placing</summary>
+            <div class="help-diagram">
+              <svg viewBox="0 0 200 70" class="help-svg">
+                <path d="M15 55 Q 60 5, 110 45" stroke="var(--accent)" stroke-width="2" fill="none"/>
+                <circle cx="15" cy="55" r="3.5" fill="var(--text)"/>
+                <circle cx="62" cy="18" r="3.5" fill="var(--accent)"/>
+                <circle cx="110" cy="45" r="3.5" fill="var(--text)"/>
+                <text x="10" y="68" font-size="8" fill="var(--muted)">last point</text>
+                <text x="45" y="12" font-size="8" fill="var(--accent)">1. click "through" point (A)</text>
+                <text x="90" y="58" font-size="8" fill="var(--muted)">2. click end point</text>
+              </svg>
+            </div>
+            <ul>
+              <li><strong>A</strong> - draws a true curved arc from your last point, through the next point you click, to the point after that (great for curved walls, ducts, or property lines). Not available for Count or during Area box mode.</li>
+              <li><strong>Shift</strong> (held while moving) - snaps the next point to 0&deg;/45&deg;/90&deg; angles relative to the last point. If "Lock axes" is checked in the bottom toolbar this inverts: snapping is on by default and Shift temporarily turns it off.</li>
+              <li><strong>Backspace</strong> - undoes one step: the last placed point, or the last completed instance for Count.</li>
+              <li><strong>Enter</strong> - finishes a Perimeter/Area/extended-Linear trace early (once it has at least 3 points).</li>
+              <li><strong>Escape</strong> - backs out of an in-progress arc, or fully cancels the armed tool.</li>
+            </ul>
+            <p>The "Snap to points" chip (bottom toolbar) makes the crosshair snap to nearby existing take-off vertices instead of the raw cursor position - handy for tracing shapes that share an edge.</p>
+          </details>
+
+          <details class="help-topic">
+            <summary>From Template / From Existing / From Assembly</summary>
+            <p><strong>From Template...</strong> creates a new item pre-filled from a saved blueprint (name, color, shape, formula) - manage the library of templates from the Take-offs page. <strong>From Existing...</strong> lets you place another instance of an item that already exists somewhere else in this project, without recreating it. <strong>From Assembly...</strong> arms a linked group of items at once - see "Box-draw assemblies" below.</p>
+          </details>
+
+          <details class="help-topic">
+            <summary>Editing a placed take-off</summary>
+            <p>Click any placed shape to enter point/segment edit mode - a bottom toolbar appears with <strong>Box select</strong> or <strong>Brush select</strong> to choose which vertices you're working with (everything is selected by default), a brush-size slider, and "Clear selection." Press Delete/Backspace to remove selected vertices, drag to move them, or hit "Start" to arm the item again and keep adding to it.</p>
+            <p>Right-click a placed shape for more options:</p>
+            <ul>
+              <li><strong>Continue Item</strong> - reopens that exact instance so your next clicks extend it from its last point.</li>
+              <li><strong>Subtract Area</strong> (area items only) - traces a hole to subtract from that shape's net area (e.g. an opening inside a slab).</li>
+              <li><strong>Change Item</strong> - moves the whole placed shape to a different item (existing or brand-new), same type only.</li>
+            </ul>
+            <p>While editing with a vertex selection made, right-click instead offers <strong>"Copy selection to new/existing item"</strong> - handy for reusing a traced edge as a different material without retracing it.</p>
+          </details>
+
+          <details class="help-topic">
+            <summary>Box-draw assemblies (windows, doors, etc.)</summary>
+            <p>An assembly links up to 5 slots - Area, Head, Sill, Left Jamb, Right Jamb - to real take-off items, so drawing <em>one</em> box places all of them at once: the full rectangle becomes the area item's instance, and each side becomes its matching linear item's instance. Unlinked slots are simply skipped, and left/right jamb can point at the same item if they match.</p>
+            <p>Build one via "From Assembly...", link its slots to items (existing or new), then draw boxes - the assembly stays armed for the next one. Click the pencil (Edit) button on the assembly's row any time to change its links without losing your place.</p>
+          </details>
+
+          <details class="help-topic">
+            <summary>The Take-offs page (project-wide)</summary>
+            <p>The Take-offs nav item opens a project-wide list: <strong>By Take-off</strong> (one row per item with its running total across every sheet), <strong>By Sheet</strong> (grouped the other way), <strong>Templates</strong> (the reusable blueprint library), and <strong>Assemblies</strong> (the assembly-template library). Folders group related items; CSV export downloads the current view.</p>
+          </details>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/js/api.js"></script>
+  <script type="module" src="/js/help.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
+</body>
