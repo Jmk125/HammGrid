@@ -12,14 +12,69 @@
         <h1>Take-offs</h1>
         <p class="muted">Every take-off item in this project, with its total quantity across all sheets.</p>
 
-        <div class="card">
+        <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+          <div class="row">
+            <input type="text" id="takeoff-search" placeholder="Search take-offs..." style="width:320px;">
+            <label id="takeoff-discipline-filter-wrap" style="display:none;">Discipline:
+              <select id="takeoff-discipline-filter"><option value="">All</option></select>
+            </label>
+          </div>
+          <div class="row">
+            <button type="button" id="takeoff-export-csv-btn">Export CSV</button>
+            <button type="button" id="takeoff-new-folder-btn">+ New Folder</button>
+            <button type="button" id="takeoff-expand-all-btn">Expand all</button>
+            <button type="button" id="takeoff-new-template-folder-btn" style="display:none;">+ New Folder</button>
+            <button type="button" id="takeoff-new-template-btn" style="display:none;">+ New Template</button>
+            <button type="button" id="takeoff-new-assembly-template-btn" style="display:none;">+ New Assembly Template</button>
+            <div class="segmented" id="takeoff-view-mode">
+              <button type="button" data-view="by-item" class="active">By Take-off</button>
+              <button type="button" data-view="by-sheet">By Sheet</button>
+              <button type="button" data-view="templates">Templates</button>
+              <button type="button" data-view="assemblies">Assemblies</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="takeoff-by-item-view">
           <table id="takeoff-items-table">
             <thead>
-              <tr><th></th><th></th><th>Name</th><th>Type</th><th>Total</th><th>Instances</th><th>Actions</th></tr>
+              <tr><th></th><th></th><th>Name</th><th>Type</th><th>Folder</th><th>Total</th><th>Take-off Qty</th><th>Perimeter</th><th>Instances</th><th>Actions</th></tr>
             </thead>
             <tbody></tbody>
           </table>
           <p class="muted" id="takeoff-empty-msg" style="display:none;">No take-off items yet. Create one from a sheet's Take-offs pane.</p>
+        </div>
+
+        <div class="card" id="takeoff-by-sheet-view" style="display:none;">
+          <table id="takeoff-by-sheet-table">
+            <thead>
+              <tr><th></th><th>Drawing</th><th>Take-offs</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p class="muted" id="takeoff-by-sheet-empty-msg" style="display:none;">No take-offs placed yet.</p>
+        </div>
+
+        <div class="card" id="takeoff-templates-view" style="display:none;">
+          <p class="muted">Reusable item blueprints - global across every project. Pick one from the sheet pane's "From Template" button, or start a new take-off item from scratch.</p>
+          <table id="takeoff-templates-table">
+            <thead>
+              <tr><th></th><th>Name</th><th>Type</th><th>Folder</th><th>Formula</th><th>Actions</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p class="muted" id="takeoff-templates-empty-msg" style="display:none;">No templates yet.</p>
+        </div>
+
+        <div class="card" id="takeoff-assembly-templates-view" style="display:none;">
+          <p class="muted">Reusable box take-off blueprints - global across every project. Each defines the 5 slot labels (Area, Head, Sill, Left Jamb, Right Jamb); link them to real take-off items from a sheet's "From Assembly" button.</p>
+          <table id="takeoff-assembly-templates-table">
+            <thead>
+              <tr><th>Name</th><th>Slots</th><th>Actions</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p class="muted" id="takeoff-assembly-templates-empty-msg" style="display:none;">No assembly templates yet.</p>
         </div>
       </main>
     </div>

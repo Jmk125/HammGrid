@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS markups (
   sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
   author_id INTEGER NOT NULL REFERENCES users(id),
   visibility TEXT NOT NULL CHECK (visibility IN ('private', 'published')) DEFAULT 'private',
-  type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect')),
+  type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect', 'flag')),
   geometry TEXT NOT NULL,
   style TEXT NOT NULL DEFAULT '{}',
   -- ON DELETE SET NULL: deleting a linked document should just unlink it
@@ -128,6 +128,17 @@ CREATE TABLE IF NOT EXISTS markups (
 -- top plate") built from multiple placed instances. type is locked per item
 -- (not per instance) since an item has one unit of measure - mixing would
 -- make the total unit-ambiguous.
+-- Project-scoped organizational grouping for the Take-offs list page (By
+-- Take-off view only - By Sheet already has its own structure). Unlike
+-- templates, folders are tied to one project's own item list.
+CREATE TABLE IF NOT EXISTS take_off_folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS take_off_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -137,6 +148,90 @@ CREATE TABLE IF NOT EXISTS take_off_items (
   -- the marker glyph drawn at each counted click.
   shape TEXT CHECK (shape IN ('square', 'circle', 'triangle', 'diamond')),
   color TEXT NOT NULL,
+  -- Optional PlanSwift-style output formula: properties is a JSON array of
+  -- {name, value} numeric constants (e.g. "Wall Height" = 8), formula is a
+  -- text expression like "takeoff * Wall_Height" evaluated client-side only
+  -- (see public/js/takeoffFormula.js) against the raw measured quantity plus
+  -- these properties. NULL formula (the common case) means "just show the
+  -- raw quantity" - unchanged from before this column existed.
+  properties TEXT NOT NULL DEFAULT '[]',
+  formula TEXT,
+  output_label TEXT,
+  -- NULL = "no folder" (the default) - deleting a folder unfiles its items
+  -- rather than deleting them.
+  folder_id INTEGER REFERENCES take_off_folders(id) ON DELETE SET NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Global (not project_id-scoped) organizational grouping for templates -
+-- separate from take_off_folders, which is per-project, since templates
+-- themselves are shared across every project (e.g. "Steel", "Masonry").
+CREATE TABLE IF NOT EXISTS take_off_template_folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Reusable item blueprints (name/type/shape/color/properties/formula) a user
+-- can pick from instead of building the same structure from scratch every
+-- time - global, not project_id-scoped, since these represent a firm's
+-- standardized assemblies (e.g. "8in CMU Wall") reused across every job.
+CREATE TABLE IF NOT EXISTS take_off_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('linear', 'perimeter', 'area', 'count')),
+  shape TEXT CHECK (shape IN ('square', 'circle', 'triangle', 'diamond')),
+  color TEXT NOT NULL,
+  properties TEXT NOT NULL DEFAULT '[]',
+  formula TEXT,
+  output_label TEXT,
+  folder_id INTEGER REFERENCES take_off_template_folders(id) ON DELETE SET NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- A box take-off's 4 edges are geometrically unambiguous (2-click opposite
+-- corners), so an assembly maps them - plus the box's own area - to real
+-- take-off items: drawing one box creates one instance per linked slot, all
+-- ordinary rows against ordinary items (this table and take_off_assemblies
+-- below never appear in reports/exports, they're purely a sheet.js
+-- authoring-time orchestrator). Global template - just the 5 slots' default
+-- labels, never linked to real items; take_off_assemblies (project-scoped)
+-- is what actually gets linked/armed/placed with.
+CREATE TABLE IF NOT EXISTS take_off_assembly_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  area_label TEXT NOT NULL DEFAULT 'Area',
+  top_label TEXT NOT NULL DEFAULT 'Head',
+  bottom_label TEXT NOT NULL DEFAULT 'Sill',
+  left_label TEXT NOT NULL DEFAULT 'Left Jamb',
+  right_label TEXT NOT NULL DEFAULT 'Right Jamb',
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The live, project-scoped, linkable assembly - shows up in the sheet pane,
+-- gets armed for box placement, and gets relinked over time. Flat *_item_id
+-- columns rather than a slots child table since there are always exactly
+-- these 5 named slots, never a variable number. ON DELETE SET NULL means
+-- deleting a linked item just quietly unlinks that slot - no special
+-- handling needed, self-healing like every other FK in this schema.
+CREATE TABLE IF NOT EXISTS take_off_assemblies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  area_label TEXT NOT NULL DEFAULT 'Area',
+  top_label TEXT NOT NULL DEFAULT 'Head',
+  bottom_label TEXT NOT NULL DEFAULT 'Sill',
+  left_label TEXT NOT NULL DEFAULT 'Left Jamb',
+  right_label TEXT NOT NULL DEFAULT 'Right Jamb',
+  area_item_id INTEGER REFERENCES take_off_items(id) ON DELETE SET NULL,
+  top_item_id INTEGER REFERENCES take_off_items(id) ON DELETE SET NULL,
+  bottom_item_id INTEGER REFERENCES take_off_items(id) ON DELETE SET NULL,
+  left_item_id INTEGER REFERENCES take_off_items(id) ON DELETE SET NULL,
+  right_item_id INTEGER REFERENCES take_off_items(id) ON DELETE SET NULL,
   created_by INTEGER NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -151,6 +246,33 @@ CREATE TABLE IF NOT EXISTS take_off_instances (
   sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
   geometry TEXT NOT NULL,
   quantity REAL NOT NULL,
+  -- Outer-boundary perimeter in feet, area take-offs only (NULL for
+  -- linear/perimeter/count) - same "precomputed client-side, never
+  -- recomputed server-side" rule as quantity above. Lets a flooring take-off
+  -- also answer "how much rubber base does this room need" without a second
+  -- manual perimeter trace.
+  perimeter REAL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- A sheet's scale is normally the single scale_feet_per_inch column on
+-- sheets, but a drawing with enlarged detail plans at a different scale can
+-- define zones here to override that region - a rectangle (drawing-space,
+-- same coordinate system as take_off_instances.geometry points, always
+-- axis-aligned since it's drawn via the same 2-click opposite-corners flow
+-- as take-off box mode) plus its own scale_feet_per_inch. Anything measured
+-- or taken off outside every zone still falls back to the sheet's normal
+-- scale.
+CREATE TABLE IF NOT EXISTS scale_zones (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  scale_feet_per_inch REAL NOT NULL,
+  x REAL NOT NULL,
+  y REAL NOT NULL,
+  width REAL NOT NULL,
+  height REAL NOT NULL,
   created_by INTEGER NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -259,6 +381,7 @@ CREATE INDEX IF NOT EXISTS idx_document_versions_document ON document_versions(d
 -- documents-table migration adds the folder_id column - on a pre-existing
 -- DB that column doesn't exist yet at the point this file is exec'd.
 CREATE INDEX IF NOT EXISTS idx_markups_sheet ON markups(sheet_id);
+CREATE INDEX IF NOT EXISTS idx_scale_zones_sheet ON scale_zones(sheet_id);
 CREATE INDEX IF NOT EXISTS idx_sheet_links_source ON sheet_links(source_sheet_id);
 CREATE INDEX IF NOT EXISTS idx_sheet_links_project ON sheet_links(project_id);
 CREATE INDEX IF NOT EXISTS idx_markups_linked_document ON markups(linked_document_id);

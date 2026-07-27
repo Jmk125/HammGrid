@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<title>Flags — HammGrid</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f2b46">
+<body>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+        <h1>Flags</h1>
+        <p class="muted">Every flagged item across this project's drawings.</p>
+
+        <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+          <div class="row">
+            <input type="text" id="flags-search" placeholder="Search flags..." style="width:320px;">
+            <label>Tag:
+              <select id="flags-tag-filter"><option value="">All</option></select>
+            </label>
+          </div>
+        </div>
+
+        <div class="card" id="flags-view">
+          <table id="flags-table">
+            <thead>
+              <tr>
+                <th id="flags-sort-drawing" data-sort="drawing" style="cursor:pointer;">Drawing &#9662;</th>
+                <th>Description</th>
+                <th>Comment</th>
+                <th id="flags-sort-tag" data-sort="tag" style="cursor:pointer;">Tag</th>
+                <th>Author</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p class="muted" id="flags-empty-msg" style="display:none;">No flags yet.</p>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/js/api.js"></script>
+  <script type="module" src="/js/flags.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
+</body>

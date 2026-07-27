@@ -12,8 +12,12 @@
         <div class="sheet-canvas-area">
           <div class="zoom-wrap" id="zoom-wrap" style="height: calc(100vh - 53px); border-radius: 0;">
             <div class="version-badge" id="version-badge">
-              <button type="button" id="version-badge-btn">Current &#9662;</button>
-              <div class="version-dropdown" id="version-dropdown" style="display:none;"></div>
+              <button type="button" id="sheet-nav-back-btn" title="Previous drawing (filtered/searched set)">&#9664;</button>
+              <div class="version-badge-inner">
+                <button type="button" id="version-badge-btn">Current &#9662;</button>
+                <div class="version-dropdown" id="version-dropdown" style="display:none;"></div>
+              </div>
+              <button type="button" id="sheet-nav-forward-btn" title="Next drawing (filtered/searched set)">&#9654;</button>
             </div>
             <div class="stale-watermark" id="stale-watermark" style="display:none;">NOT CURRENT VERSION</div>
             <div class="zoom-pan-inner" id="zoom-pan-inner">
@@ -29,8 +33,10 @@
           </div>
           <p class="muted" id="pdf-status" style="padding: 4px 12px;"></p>
         </div>
+        <canvas id="magnifier-lens" class="magnifier-lens" style="display:none;"></canvas>
 
         <div class="sheet-pane" id="sheet-pane">
+          <div class="pane-resize-handle" id="pane-resize-handle" title="Drag to resize"></div>
           <button class="pane-toggle" id="pane-toggle-btn" type="button">&#9656;</button>
           <div class="pane-body" id="pane-body">
             <div class="pane-section" id="section-markup">
@@ -54,7 +60,10 @@
               <div class="pane-section-body">
                 <div class="field">
                   <label>Scale</label>
-                  <select id="scale-select"></select>
+                  <div class="row" style="gap:6px;">
+                    <select id="scale-select" style="flex:1;"></select>
+                    <button type="button" id="scale-zones-manage-btn" class="icon-btn" title="Manage scale zones" style="display:none;">&#9881;</button>
+                  </div>
                 </div>
                 <div class="icon-tool-grid" id="measure-tool-grid"></div>
                 <div class="measure-result" id="measure-result" style="display:none;"></div>
@@ -69,13 +78,54 @@
               </button>
               <div class="pane-section-body">
                 <div class="icon-tool-grid" id="takeoff-tool-grid"></div>
+                <div class="row" style="gap:6px;">
+                  <button type="button" id="takeoff-from-template-btn" style="flex:1;">From Template...</button>
+                  <button type="button" id="takeoff-from-existing-btn" style="flex:1;">From Existing...</button>
+                </div>
+                <button type="button" id="takeoff-from-assembly-btn" style="width:100%;">From Assembly...</button>
+                <div class="takeoff-items-list" id="takeoff-assemblies-list"></div>
+                <input type="text" id="takeoff-search" class="takeoff-search-input" placeholder="Search take-offs...">
+                <button type="button" id="takeoff-hide-all-btn" class="takeoff-hide-all-btn" style="width:100%;">Hide all</button>
                 <div class="takeoff-items-list" id="takeoff-items-list"></div>
               </div>
+            </div>
+
+            <div id="takeoff-item-actions-bar" class="takeoff-item-actions-bar" style="display:none;">
+              <span class="takeoff-color-dot" id="takeoff-item-actions-dot"></span>
+              <span class="takeoff-item-actions-name" id="takeoff-item-actions-name"></span>
+              <button type="button" id="takeoff-item-actions-stop">Stop</button>
+              <button type="button" class="icon-btn" id="takeoff-item-actions-edit" title="Edit properties &amp; formula">&#9998;</button>
+              <button type="button" class="icon-btn" id="takeoff-item-actions-remove" title="Remove from this sheet">&#8722;</button>
+              <button type="button" class="icon-btn" id="takeoff-item-actions-delete" title="Delete from project">&#128465;</button>
             </div>
           </div>
         </div>
       </div>
     </div>
+  </div>
+  <div id="takeoff-toolbar" class="selection-bar" style="display:none;">
+    <div class="segmented" id="takeoff-placement-mode">
+      <button type="button" data-mode="points" class="active">Point-to-point</button>
+      <button type="button" data-mode="box">Box</button>
+    </div>
+    <label class="chip-toggle" id="takeoff-axis-lock-chip">
+      <input type="checkbox" id="takeoff-axis-lock-checkbox"><span class="dot"></span>Lock axes
+    </label>
+    <label class="chip-toggle" id="takeoff-snap-points-chip">
+      <input type="checkbox" id="takeoff-snap-points-checkbox"><span class="dot"></span>Snap to points
+    </label>
+  </div>
+  <div id="takeoff-edit-toolbar" class="selection-bar" style="display:none;">
+    <button type="button" id="takeoff-edit-start-btn" title="Start adding to this item">&#9654; Start</button>
+    <div class="segmented" id="takeoff-select-mode">
+      <button type="button" data-mode="box">Box select</button>
+      <button type="button" data-mode="brush">Brush select</button>
+    </div>
+    <label class="chip-toggle" id="takeoff-brush-size-wrap" style="display:none;">
+      <span>Size</span>
+      <input type="range" id="takeoff-brush-size" min="15" max="100" value="40">
+    </label>
+    <button type="button" id="takeoff-edit-clear-selection">Clear selection</button>
   </div>
   <script src="/js/api.js"></script>
   <script type="module" src="/js/sheet.js"></script>

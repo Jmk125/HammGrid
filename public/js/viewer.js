@@ -18,6 +18,10 @@ function searchStorageKey() {
   return `hammgrid-sheet-search:${projectId}`;
 }
 
+function filteredOrderKey() {
+  return `hammgrid-filtered-order:${projectId}`;
+}
+
 
 function syncLabel(info) {
   if (!navigator.onLine) return { status: 'offline', text: info.cachedSheetCount ? 'Offline · cached' : 'Offline · not synced' };
@@ -129,6 +133,10 @@ function renderGrid(items) {
     return a.sheet_number.localeCompare(b.sheet_number);
   });
   lastFiltered = filtered;
+  // Read by sheet.js to power the forward/back "cycle through the filtered
+  // set" buttons next to the version dropdown - kept current here since every
+  // discipline/revision/search change already funnels through renderGrid().
+  localStorage.setItem(filteredOrderKey(), JSON.stringify(filtered.map((s) => s.sheet_id)));
 
   const grid = document.getElementById('grid');
   grid.innerHTML = '';

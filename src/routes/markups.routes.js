@@ -3,7 +3,7 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router({ mergeParams: true });
-const TYPES = ['line', 'arrow', 'cloud', 'text', 'rect'];
+const TYPES = ['line', 'arrow', 'cloud', 'text', 'rect', 'flag'];
 
 router.get('/', requireAuth, (req, res) => {
   const markups = db

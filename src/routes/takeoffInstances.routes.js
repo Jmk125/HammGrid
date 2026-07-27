@@ -7,7 +7,8 @@ const router = express.Router({ mergeParams: true });
 router.get('/', requireTakeoff, (req, res) => {
   const instances = db
     .prepare(
-      `SELECT inst.*, ti.name AS item_name, ti.color AS item_color, ti.type AS item_type, ti.shape AS item_shape
+      `SELECT inst.*, ti.name AS item_name, ti.color AS item_color, ti.type AS item_type, ti.shape AS item_shape,
+              ti.properties AS item_properties, ti.formula AS item_formula, ti.output_label AS item_output_label
        FROM take_off_instances inst
        JOIN take_off_items ti ON ti.id = inst.item_id
        WHERE inst.sheet_id = ?
@@ -20,10 +21,13 @@ router.get('/', requireTakeoff, (req, res) => {
 });
 
 router.post('/', requireTakeoff, (req, res) => {
-  const { item_id, geometry, quantity } = req.body;
+  const { item_id, geometry, quantity, perimeter } = req.body;
   if (!geometry) return res.status(400).json({ error: 'geometry is required' });
   if (typeof quantity !== 'number' || !Number.isFinite(quantity) || quantity <= 0) {
     return res.status(400).json({ error: 'quantity must be a positive number' });
+  }
+  if (perimeter !== undefined && perimeter !== null && (typeof perimeter !== 'number' || !Number.isFinite(perimeter))) {
+    return res.status(400).json({ error: 'perimeter must be a number if provided' });
   }
 
   const item = db
@@ -33,10 +37,10 @@ router.post('/', requireTakeoff, (req, res) => {
 
   const result = db
     .prepare(
-      `INSERT INTO take_off_instances (item_id, sheet_id, geometry, quantity, created_by)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO take_off_instances (item_id, sheet_id, geometry, quantity, perimeter, created_by)
+       VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(item.id, req.params.sheetId, JSON.stringify(geometry), quantity, req.session.user.id);
+    .run(item.id, req.params.sheetId, JSON.stringify(geometry), quantity, perimeter ?? null, req.session.user.id);
 
   const instance = db.prepare('SELECT * FROM take_off_instances WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json({ instance: { ...instance, geometry: JSON.parse(instance.geometry) } });

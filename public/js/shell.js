@@ -447,6 +447,7 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
   const items = [
     { key: 'viewer', label: 'Sheets', href: `/viewer.html?projectId=${projectId}`, show: true },
     { key: 'documents', label: 'Documents', href: `/documents.html?projectId=${projectId}`, show: true },
+    { key: 'flags', label: 'Flags', href: `/flags.html?projectId=${projectId}`, show: true },
     { key: 'invite', label: 'Invite', href: `/shares.html?projectId=${projectId}`, show: canManage },
     { key: 'activity', label: 'Activity Log', href: `/activity.html?projectId=${projectId}`, show: me.role === 'admin' },
     { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },

@@ -13,6 +13,7 @@ const TOOL_ICONS = {
   cloud:
     '<svg viewBox="0 0 20 20"><path d="M5 14c-1.7 0-3-1.3-3-3 0-1.5 1.1-2.7 2.5-3-0.1-0.3-0.1-0.6-0.1-0.9 0-1.9 1.6-3.5 3.5-3.5 1.2 0 2.3 0.6 2.9 1.6 0.4-0.2 0.9-0.3 1.4-0.3 1.7 0 3.1 1.3 3.2 3 1.5 0.3 2.6 1.6 2.6 3.1 0 1.7-1.3 3-3 3H5z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/></svg>',
   text: '<svg viewBox="0 0 20 20"><text x="4" y="15" font-size="14" font-weight="700" fill="currentColor" font-family="sans-serif">T</text></svg>',
+  flag: '<svg viewBox="0 0 20 20"><path d="M5 17V3h11l-3 4 3 4H5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
 };
 
 const OPEN_DOC_ICON =
@@ -67,7 +68,7 @@ function cloudPath(x, y, w, h, bumpSize) {
   return d + 'Z';
 }
 
-export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, onToolChange }) {
+export function initMarkups({ sheetId, projectId, me, svgEl, canvasEl, documents, folders, onToolChange }) {
   let activeTool = 'select';
   let markups = [];
   let drawing = null;
@@ -94,6 +95,42 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
   if (me.role === 'admin' || me.role === 'editor') {
     document.getElementById('publish-default-wrap').style.display = '';
   }
+
+  // Tag suggestions come from every flag already placed anywhere in the
+  // project (not just this sheet), so the same tag typed on one drawing
+  // shows up as a suggestion on another - fetched lazily via the existing
+  // project-wide flags list endpoint rather than a dedicated one.
+  let flagTagsCache = null;
+  let flagTagsPromise = null;
+  function ensureFlagTagsLoaded() {
+    if (flagTagsPromise) return flagTagsPromise;
+    flagTagsPromise = (async () => {
+      if (!projectId) return [];
+      try {
+        const { flags } = await api('GET', `/api/projects/${projectId}/flags`);
+        flagTagsCache = [...new Set(flags.map((f) => f.geometry.tag).filter(Boolean))].sort();
+      } catch (err) {
+        flagTagsCache = [];
+      }
+      return flagTagsCache;
+    })();
+    return flagTagsPromise;
+  }
+  function flagTagDatalistEl() {
+    let dl = document.getElementById('flag-tag-options');
+    if (!dl) {
+      dl = document.createElement('datalist');
+      dl.id = 'flag-tag-options';
+      document.body.appendChild(dl);
+    }
+    return dl;
+  }
+  function renderFlagTagOptions() {
+    flagTagDatalistEl().innerHTML = (flagTagsCache || [])
+      .map((t) => `<option value="${String(t).replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"></option>`)
+      .join('');
+  }
+  ensureFlagTagsLoaded().then(renderFlagTagOptions);
 
   function syncViewBox() {
     svgEl.setAttribute('viewBox', `0 0 ${canvasEl.width} ${canvasEl.height}`);
@@ -209,6 +246,17 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
       node.setAttribute('font-size', (m.style && m.style.fontSize) || 20);
       node.textContent = m.geometry.text || '';
       node.style.pointerEvents = 'all';
+    } else if (m.type === 'flag') {
+      node = el('rect');
+      node.setAttribute('x', m.geometry.x * w);
+      node.setAttribute('y', m.geometry.y * h);
+      node.setAttribute('width', m.geometry.w * w);
+      node.setAttribute('height', m.geometry.h * h);
+      node.setAttribute('stroke', color);
+      node.setAttribute('stroke-width', strokeWidth);
+      node.setAttribute('fill', color);
+      node.setAttribute('fill-opacity', '0.25');
+      node.style.pointerEvents = 'all';
     }
 
     node.dataset.markupId = m.id;
@@ -270,7 +318,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
         m.geometry.x2 = pt.x / w;
         m.geometry.y2 = pt.y / h;
       });
-    } else if (m.type === 'rect' || m.type === 'cloud') {
+    } else if (m.type === 'rect' || m.type === 'cloud' || m.type === 'flag') {
       const corners = [
         ['x', 'y'],
         ['x2', 'y'],
@@ -451,6 +499,54 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
         popupEl.appendChild(label);
       }
     }
+
+    if (m.type === 'flag') {
+      const descInput = document.createElement('input');
+      descInput.type = 'text';
+      descInput.className = 'markup-popup-flag-desc';
+      descInput.placeholder = 'Description';
+      descInput.value = m.geometry.description || '';
+      descInput.readOnly = !perm.canEdit;
+      popupEl.appendChild(descInput);
+
+      const commentInput = document.createElement('textarea');
+      commentInput.className = 'markup-popup-flag-comment';
+      commentInput.placeholder = 'Comment';
+      commentInput.rows = 3;
+      commentInput.value = m.geometry.comment || '';
+      commentInput.readOnly = !perm.canEdit;
+      popupEl.appendChild(commentInput);
+
+      const tagInput = document.createElement('input');
+      tagInput.type = 'text';
+      tagInput.className = 'markup-popup-flag-tag';
+      tagInput.placeholder = 'Tag';
+      tagInput.value = m.geometry.tag || '';
+      tagInput.setAttribute('list', 'flag-tag-options');
+      tagInput.readOnly = !perm.canEdit;
+      popupEl.appendChild(tagInput);
+      ensureFlagTagsLoaded().then(renderFlagTagOptions);
+
+      if (perm.canEdit) {
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.textContent = 'Save';
+        saveBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const tag = tagInput.value.trim() || null;
+          const { markup } = await api('PATCH', `/api/markups/${m.id}`, {
+            geometry: { ...m.geometry, description: descInput.value, comment: commentInput.value, tag },
+          });
+          Object.assign(m, markup);
+          if (tag && !(flagTagsCache || []).includes(tag)) {
+            flagTagsCache = [...(flagTagsCache || []), tag].sort();
+            renderFlagTagOptions();
+          }
+          renderAll();
+        });
+        popupEl.appendChild(saveBtn);
+      }
+    }
   }
 
   function openLinkPicker(m) {
@@ -490,6 +586,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
     });
     markups.push(markup);
     renderAll();
+    return markup;
   }
 
   function activateTool(tool) {
@@ -509,6 +606,7 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
     { tool: 'cloud-small', icon: TOOL_ICONS.cloud, badge: 'S', title: 'Cloud (small)' },
     { tool: 'cloud-large', icon: TOOL_ICONS.cloud, badge: 'L', title: 'Cloud (large)' },
     { tool: 'text', icon: TOOL_ICONS.text, title: 'Text' },
+    { tool: 'flag', icon: TOOL_ICONS.flag, title: 'Flag' },
   ];
   const toolGrid = document.getElementById('tool-grid');
   for (const def of TOOL_DEFS) {
@@ -628,6 +726,15 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
         return true;
       }
       geometry = { x: x0 / w, y: y0 / h, w: bw / w, h: bh / h };
+    }
+    if (type === 'flag') {
+      geometry.description = '';
+      geometry.comment = '';
+      geometry.tag = null;
+      const markup = await createMarkup('flag', geometry, { color: '#f97316', strokeWidth: 2 });
+      activateTool('select');
+      selectMarkup(markup.id);
+      return true;
     }
     const extraStyle = type.startsWith('cloud') ? { bumpSize: CLOUD_BUMP_SIZE[type] } : undefined;
     await createMarkup(type, geometry, extraStyle);
@@ -764,6 +871,12 @@ export function initMarkups({ sheetId, me, svgEl, canvasEl, documents, folders, 
     repositionPopup: positionPopup,
     forceSelectTool() {
       activateTool('select');
+    },
+    focusMarkup(id) {
+      const m = findMarkup(Number(id));
+      if (!m) return null;
+      selectMarkup(m.id);
+      return m.geometry;
     },
   };
 }

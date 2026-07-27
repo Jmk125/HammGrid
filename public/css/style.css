@@ -405,6 +405,21 @@ tr.ignored td { opacity: 0.5; }
   box-shadow: 0 12px 32px rgba(0,0,0,0.3);
 }
 .selection-bar .muted { color: #b8c4d4; }
+
+/* #takeoff-toolbar reuses .selection-bar's look, but unlike the grid's
+   download bar it floats directly over the drawing canvas (there's no free
+   strip below the canvas to dock it in - the canvas fills the full
+   remaining viewport height). Left solid, its background would swallow any
+   right-click-drag pan attempt that happens to start under it. Punching
+   pointer-events back through everywhere except the actual controls lets a
+   drag starting in the bar's padding/gaps fall through to the canvas
+   underneath, while every button/checkbox stays fully clickable. */
+#takeoff-toolbar { pointer-events: none; }
+#takeoff-toolbar > * { pointer-events: auto; }
+/* Same reasoning as #takeoff-toolbar above - #takeoff-edit-toolbar floats
+   over the canvas during point/segment editing. */
+#takeoff-edit-toolbar { pointer-events: none; }
+#takeoff-edit-toolbar > * { pointer-events: auto; }
 .selection-bar button { border-color: rgba(255,255,255,0.35); background: transparent; color: #fff; }
 .selection-bar button.primary { background: var(--accent); border-color: var(--accent); }
 .selection-bar button:hover:not(:disabled):not(.primary) { background: rgba(255,255,255,0.1); }
@@ -501,6 +516,74 @@ tr.ignored td { opacity: 0.5; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; max-width: 420px; }
 .field input, .field select { width: 100%; }
 .field label { font-size: 13px; font-weight: 600; color: var(--muted); }
+
+/* ---------- Take-off "Advanced" properties/formula UI (setupAdvancedFields
+   in takeoffAdvancedFields.js) - shared by item creation/edit and the
+   Templates tab's template modal. ---------- */
+.takeoff-advanced-toggle {
+  background: none; border: none; padding: 4px 0; margin-bottom: 8px;
+  color: var(--accent); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.takeoff-advanced-body { display: flex; flex-direction: column; gap: 4px; }
+.takeoff-property-row {
+  display: grid; grid-template-columns: 1fr 100px auto;
+  gap: 6px; align-items: center; margin-bottom: 6px;
+}
+.takeoff-property-row input { width: 100%; }
+.takeoff-advanced-add-btn { width: 100%; margin-bottom: 12px; }
+.takeoff-formula-hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.takeoff-formula-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.takeoff-formula-chip {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; font-family: monospace; color: var(--text); cursor: pointer;
+}
+.takeoff-formula-chip:hover { background: var(--accent-light); }
+.flags-tag-chip {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; color: var(--text); white-space: nowrap;
+}
+.takeoff-name-preview { font-size: 12px; margin-top: 2px; }
+
+.takeoff-folder-header-row td {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  background: var(--bg);
+  padding-top: 10px;
+}
+/* A colspan'd <td> loses its spanned-width calculation if display:flex is
+   set directly on it (the browser falls back to shrink-to-fit) - the flex
+   row has to live on an inner wrapper instead. */
+.takeoff-folder-header-row-inner { display: flex; justify-content: space-between; align-items: center; }
+.takeoff-folder-toggle { cursor: pointer; user-select: none; }
+.takeoff-folder-toggle:hover { color: var(--text); }
+.takeoff-folder-delete-btn { font-size: 13px; text-transform: none; letter-spacing: normal; }
+
+#takeoff-tooltip {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  background: var(--navy);
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.3);
+  white-space: nowrap;
+}
+
+/* ---------- "From Template" picker (sheet.js) ---------- */
+.takeoff-template-picker-list { max-height: 320px; overflow-y: auto; margin: 10px 0; }
+.takeoff-template-picker-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  padding: 8px 4px; text-align: left; cursor: pointer; font-size: 14px;
+}
+.takeoff-template-picker-row:hover { background: var(--bg); }
+.takeoff-template-picker-name { flex: 1; }
 
 /* Multi-column responsive form layout - each child is expected to be a
    .field (or similar label+control pair), unlike .row which is for loose
@@ -610,6 +693,40 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 #takeoff-instances-layer.edit-enabled { pointer-events: auto; }
 #takeoff-edit-layer circle { cursor: pointer; }
 
+/* Scale zones - purely a reference overlay, never selectable/draggable on
+   the canvas (see sheet.js's openScaleZonesModal comment). */
+#scale-zone-layer, #scale-zone-draft-layer { pointer-events: none; }
+
+/* Assembly box-draw live preview - same read-only-overlay treatment. */
+#assembly-draft-layer { pointer-events: none; }
+
+.takeoff-assembly-row { border-left: 2px solid var(--border); }
+.takeoff-assembly-row.active { border-left-color: #2563eb; }
+.assembly-link-row label { font-size: 0.85em; }
+
+#takeoff-context-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+  min-width: 160px;
+}
+#takeoff-context-menu button {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+#takeoff-context-menu button:hover { background: var(--accent-light); }
+
 .takeoff-color-dot {
   display: inline-block;
   width: 10px;
@@ -618,6 +735,7 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   flex: 0 0 auto;
 }
 
+.takeoff-search-input { width: 100%; box-sizing: border-box; }
 .takeoff-items-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
 .takeoff-item-row {
   display: flex;
@@ -629,10 +747,94 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 }
 .takeoff-item-row:hover { background: var(--accent-light); }
 .takeoff-item-row.active { background: var(--accent-light); font-weight: 600; }
-.takeoff-item-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.takeoff-item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+.takeoff-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
 .takeoff-item-total { font-size: 0.85em; white-space: nowrap; }
-.takeoff-row-stop-btn { padding: 2px 8px; font-size: 0.8em; flex: 0 0 auto; }
-.takeoff-row-action { flex: 0 0 auto; font-size: 0.9em; }
+.takeoff-row-hide-btn { flex: 0 0 auto; font-size: 0.9em; }
+.takeoff-row-activate-btn { flex: 0 0 auto; font-size: 0.85em; color: #16a34a; }
+.takeoff-item-row.takeoff-hidden-item { opacity: 0.45; }
+.takeoff-hide-all-btn { margin-top: 6px; }
+
+/* Edit/Remove/Delete/Stop only apply to whichever item is currently
+   selected, so they live in one fixed bar docked under the pane instead of
+   repeating on every row - keeps the row itself down to just name, total,
+   and the always-available hide toggle. Width is kept in sync with the
+   (resizable) pane's own width via JS, not CSS, since the pane can be
+   dragged to any width between MIN/MAX. */
+.takeoff-item-actions-bar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  box-shadow: 0 -4px 12px rgba(0,0,0,0.12);
+  box-sizing: border-box;
+}
+.takeoff-item-actions-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+
+/* PlanSwift-style hold-M magnifier (see setupMagnifierLens in sheet.js) - a
+   round lens that follows the cursor, positioned via JS (left/top), sized
+   here. pointer-events:none so it never blocks the placement click/hover
+   it's meant to help with. */
+.magnifier-lens {
+  position: fixed;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  border: 3px solid var(--navy);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  pointer-events: none;
+  z-index: 80;
+  background: #525659;
+}
+
+.zoom-wrap.freeze-armed { cursor: crosshair; }
+
+.freeze-pane {
+  position: fixed;
+  z-index: 90;
+  background: var(--navy);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  overflow: hidden;
+}
+.freeze-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  background: rgba(255,255,255,0.08);
+  cursor: move;
+  user-select: none;
+}
+.freeze-pane-drag-handle { color: rgba(255,255,255,0.6); font-size: 14px; line-height: 1; }
+.freeze-pane-header-actions { display: flex; align-items: center; gap: 6px; }
+.freeze-pane-pin { display: flex; align-items: center; cursor: pointer; }
+.freeze-pane-pin input { cursor: pointer; margin: 0; }
+.freeze-pane-close {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.freeze-pane-close:hover { background: rgba(255,255,255,0.15); }
+.freeze-pane-canvas { display: block; }
 
 .icon-tool-grid .tool-btn[disabled] { opacity: 0.35; cursor: not-allowed; }
 
@@ -670,17 +872,23 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 }
 .zoom-wrap.panning { cursor: grabbing; }
 .zoom-wrap.align-active { cursor: move; }
+.zoom-wrap.takeoff-active { cursor: crosshair; }
 
 /* Screen-space crosshair guides for take-off alignment - siblings of
    .zoom-pan-inner (not inside it), so they never inherit its pan/zoom
-   transform and always span the full visible canvas area. */
+   transform and always span the full visible canvas area. mix-blend-mode:
+   difference inverts whatever's underneath (white line -> black on a white
+   background, white on a black background, etc.) so it stays visible
+   regardless of the drawing's own colors, instead of a fixed color that can
+   disappear against a light sheet. */
 .takeoff-crosshair-v, .takeoff-crosshair-h {
   position: absolute;
   pointer-events: none;
   z-index: 5;
+  mix-blend-mode: difference;
 }
-.takeoff-crosshair-v { top: 0; bottom: 0; width: 0; border-left: 1px dashed rgba(255, 255, 255, 0.7); }
-.takeoff-crosshair-h { left: 0; right: 0; height: 0; border-top: 1px dashed rgba(255, 255, 255, 0.7); }
+.takeoff-crosshair-v { top: 0; bottom: 0; width: 0; border-left: 1px dashed #fff; }
+.takeoff-crosshair-h { left: 0; right: 0; height: 0; border-top: 1px dashed #fff; }
 .zoom-pan-inner {
   position: absolute;
   top: 0; left: 0;
@@ -692,6 +900,12 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   position: absolute;
   top: 10px; left: 10px;
   z-index: 10;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.version-badge-inner {
+  position: relative;
 }
 .version-badge button {
   background: rgba(15,43,70,0.85);
@@ -701,6 +915,10 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   padding: 6px 10px;
   font-size: 13px;
   cursor: pointer;
+}
+.version-badge button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 .version-dropdown {
   position: absolute;
@@ -772,6 +990,22 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   text-overflow: ellipsis;
   max-width: 260px;
 }
+.markup-popup-flag-desc,
+.markup-popup-flag-comment,
+.markup-popup-flag-tag {
+  width: 220px;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+}
+.markup-popup-flag-comment { resize: vertical; }
+.markup-popup-flag-desc::placeholder,
+.markup-popup-flag-comment::placeholder,
+.markup-popup-flag-tag::placeholder { color: rgba(255,255,255,0.5); }
 
 /* ---------- Right pane (markup tools + measure), styled like .sidebar ---------- */
 .sheet-pane {
@@ -799,6 +1033,18 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   z-index: 2;
 }
 .sheet-pane.collapsed .pane-toggle { right: 4px; }
+
+.pane-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 3;
+}
+.pane-resize-handle:hover, .pane-resize-handle.dragging { background: var(--accent-light); }
+.sheet-pane.collapsed .pane-resize-handle { display: none; }
 
 .pane-section { border-bottom: 1px solid var(--border); }
 .pane-section:last-child { border-bottom: none; }
