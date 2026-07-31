@@ -3594,6 +3594,7 @@ function showTakeoffContextMenu(x, y, instance) {
   if (instance.item_type !== 'count') actions.push({ action: 'continue', label: 'Continue Item' });
   if (instance.item_type === 'area') actions.push({ action: 'subtract', label: 'Subtract Area' });
   actions.push({ action: 'change', label: 'Change Item' });
+  actions.push({ action: 'goto', label: 'Go to Item in Take-offs' });
   menu.innerHTML = actions.map((a) => `<button type="button" data-action="${a.action}">${a.label}</button>`).join('');
   document.body.appendChild(menu);
 
@@ -3619,6 +3620,10 @@ function showTakeoffContextMenu(x, y, instance) {
   menu.querySelector('[data-action="change"]').addEventListener('click', () => {
     hideTakeoffContextMenu();
     openChangeTakeoffItemModal(instance);
+  });
+  menu.querySelector('[data-action="goto"]').addEventListener('click', () => {
+    hideTakeoffContextMenu();
+    window.location.href = `/takeoffs.html?projectId=${projectId}&itemId=${instance.item_id}`;
   });
 
   // Dismiss on the next click anywhere, or Escape. Deferred by a tick so the

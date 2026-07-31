@@ -582,6 +582,15 @@ tr.ignored td { opacity: 0.5; }
 .takeoff-folder-toggle:hover { color: var(--text); }
 .takeoff-folder-delete-btn { font-size: 13px; text-transform: none; letter-spacing: normal; }
 
+/* "Go to Item in Take-offs" (sheet.js's take-off right-click menu) lands
+   here and scrolls this row into view - the flash is the only cue it's the
+   one that was jumped to, since nothing else marks it as selected. */
+@keyframes takeoff-row-flash-anim {
+  from { background: var(--accent-light); }
+  to { background: transparent; }
+}
+.takeoff-row-flash { animation: takeoff-row-flash-anim 1.6s ease-out; }
+
 #takeoff-tooltip {
   position: fixed;
   z-index: 60;

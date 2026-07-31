@@ -2,7 +2,14 @@ import { renderShell, openModal, closeModal, confirmModal, promptModal, showToas
 import { setupAdvancedFields, wireNamePreview } from '/js/takeoffAdvancedFields.js';
 import { computeTakeoffOutput, parseTakeoffProperties, resolveTakeoffName } from '/js/takeoffFormula.js';
 
-const projectId = new URLSearchParams(window.location.search).get('projectId');
+const params = new URLSearchParams(window.location.search);
+const projectId = params.get('projectId');
+// Set by "Go to Item in Take-offs" on a sheet's take-off right-click menu -
+// consumed once by highlightRequestedItem() after the first render, not
+// re-checked on every subsequent render (a folder-collapse toggle or search
+// shouldn't re-trigger the scroll/flash).
+const highlightItemIdParam = params.get('itemId') ? Number(params.get('itemId')) : null;
+let highlightItemIdPending = highlightItemIdParam;
 
 let allItems = [];
 let bySheetRows = null; // fetched lazily on first switch to the By Sheet view, then cached
@@ -312,6 +319,7 @@ function renderByItemTable() {
           .map((f) => `<option value="${f.id}" ${item.folder_id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`)
           .join('');
       const tr = document.createElement('tr');
+      tr.dataset.itemId = item.id;
       tr.innerHTML = `
         <td><button type="button" class="icon-btn takeoff-expand-btn" title="Show drawings">&#9656;</button></td>
         <td><span class="takeoff-color-dot" style="background:${item.color};"></span></td>
@@ -379,6 +387,35 @@ function renderByItemTable() {
       deleteFolder({ id: Number(btn.dataset.id), name: btn.dataset.name });
     });
   });
+
+  highlightRequestedItem();
+}
+
+// Consumes highlightItemIdPending (set from ?itemId=, arriving via "Go to
+// Item in Take-offs" on a sheet's take-off right-click menu) exactly once.
+// If the item's folder is collapsed, expand it first and re-render - the
+// row doesn't exist in the DOM to scroll to otherwise - then finish on the
+// pass where it's actually visible.
+function highlightRequestedItem() {
+  if (highlightItemIdPending == null) return;
+  const item = allItems.find((i) => i.id === highlightItemIdPending);
+  if (!item) {
+    highlightItemIdPending = null; // wrong project, or the item's gone - nothing to jump to
+    return;
+  }
+  const folderKey = item.folder_id && (allFolders || []).some((f) => f.id === item.folder_id) ? String(item.folder_id) : 'none';
+  if (collapsedItemFolders.has(folderKey)) {
+    collapsedItemFolders.delete(folderKey);
+    saveCollapsedFolders(itemFolderCollapseKey, collapsedItemFolders);
+    renderByItemTable();
+    return;
+  }
+  highlightItemIdPending = null;
+  const row = document.querySelector(`#takeoff-items-table tbody tr[data-item-id="${item.id}"]`);
+  if (!row) return;
+  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  row.classList.add('takeoff-row-flash');
+  row.addEventListener('animationend', () => row.classList.remove('takeoff-row-flash'), { once: true });
 }
 
 async function loadBySheetRows() {
