@@ -20,6 +20,23 @@ const RENDER_SCALE = 2.5; // PDF points -> canvas pixels, for normal-sized sheet
 // rendering (see pyproc/ocr_region.py) after that exact failure mode hit a
 // large sheet there too.
 const MAX_RENDER_PX = 6000;
+// Composite sheets get a higher ceiling than an ordinary uploaded sheet: the
+// 6000px cap above exists because an ordinary sheet is one giant scanned
+// raster page, where "large page" and "large amount of raster data" are the
+// same thing. A composite isn't - compose.py already resolutions each
+// fragment independently (RENDER_SCALE, capped per-fragment - see its own
+// module docstring on why a shared canvas-wide budget was the wrong model),
+// so the PDF page itself stays a handful of moderate embedded images
+// regardless of how large the page is. Capping composites at the SAME 6000px
+// as an ordinary sheet was throwing away resolution PDF.js already had to
+// work with the instant the page grew past ~33in (2400pt) - which the
+// default blank-canvas floor (44in/3168pt, see compositePipeline.js) already
+// does - producing exactly the "sharp while editing, blurry once flattened"
+// mismatch this constant fixes: editing shows each fragment's own preview
+// asset at full RENDER_SCALE, and this lets the flattened page's client-side
+// render reach that same RENDER_SCALE instead of silently downscaling below
+// it. Still bounded, just to a size no realistic composite should exceed.
+const MAX_RENDER_PX_COMPOSITE = 9000;
 let currentRenderScale = RENDER_SCALE; // set per-render below; measurement math must use this, not the constant, once large sheets scale it down
 
 const params = new URLSearchParams(window.location.search);
@@ -32,6 +49,7 @@ let currentSheet = null;
 let sheetLinkLoadToken = 0;
 let canManage = false;
 let canTakeoff = false;
+let isAdmin = false;
 let allVersions = [];
 let displayedVersionId = null;
 
@@ -323,8 +341,18 @@ function setupZoomPan() {
       // pixels - otherwise a drag started in that margin (very easy to do,
       // especially near the bottom where floating toolbars dock) silently
       // does nothing.
+      // Composite Edit Layout renders every fragment as its own <image>
+      // (plus a page-background <rect>, rotate-handle <circle>/<line>, etc.
+      // - see renderCompositeFragmentsOverlay) sitting on top of the bare
+      // svg, so hovering an actual fragment hits one of those, not 'svg'
+      // itself - same tag mismatch as any other chrome. Left-click there is
+      // already spoken for (select/drag/rotate the fragment, handled by
+      // setupCompositeLayoutInteraction's own mousedown listener), but
+      // right-click has nothing else claiming it in this mode, so it should
+      // still pan like everywhere else instead of being silently dead the
+      // instant the cursor is over a drawing.
       const tag = (e.target.tagName || '').toLowerCase();
-      if (tag !== 'svg' && tag !== 'canvas' && e.target !== wrapEl) return true;
+      if (tag !== 'svg' && tag !== 'canvas' && e.target !== wrapEl) return editLayoutMode ? e.button !== 2 : true;
       if (takeoffTool) return e.button !== 2;
       return false;
     },
@@ -494,6 +522,7 @@ function openEditSheetModal() {
     </div>
     <p class="error" id="edit-sheet-error" style="display:none;"></p>
     <div class="modal-actions">
+      ${isAdmin ? '<button type="button" id="edit-sheet-delete" class="danger" style="margin-right:auto;">Delete sheet&hellip;</button>' : ''}
       <button type="button" id="modal-cancel">Cancel</button>
       <button class="primary" type="button" id="modal-save">Save</button>
     </div>
@@ -504,6 +533,9 @@ function openEditSheetModal() {
   document.getElementById('edit-sheet-number').value = currentSheet.sheet_number;
   document.getElementById('edit-sheet-discipline').value = currentSheet.discipline || '';
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  if (isAdmin) {
+    document.getElementById('edit-sheet-delete').addEventListener('click', deleteCurrentSheet);
+  }
   document.getElementById('modal-save').addEventListener('click', async () => {
     const saveBtn = document.getElementById('modal-save');
     saveBtn.disabled = true;
@@ -526,6 +558,30 @@ function openEditSheetModal() {
       saveBtn.disabled = false;
     }
   });
+}
+
+// Permanent - every version, markup, take-off, and (for a composite) every
+// fragment goes with it. confirmModal replaces this same modal's content
+// with the confirmation prompt rather than stacking a second one (see
+// deleteFragment's identical pattern) - closeModal already ran by the time
+// the awaited promise resolves true, so there's nothing left to close here.
+async function deleteCurrentSheet() {
+  const ok = await confirmModal({
+    title: `Delete "${currentSheet.sheet_number}"?`,
+    message: currentSheet.is_composite
+      ? 'This permanently deletes this composite drawing, its fragments, and any markups or take-offs on it. The sheets it was built from are not affected. This cannot be undone.'
+      : 'This permanently deletes this sheet, every version of it, and any markups, take-offs, or flags on it. This cannot be undone.',
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api('DELETE', `/api/projects/${projectId}/sheets/${sheetId}`);
+    showToast('Sheet deleted.', 'success');
+    window.location.href = `/viewer.html?projectId=${projectId}`;
+  } catch (err) {
+    showToast(`Failed to delete: ${err.message}`, 'error');
+  }
 }
 
 function setupEditSheetButton() {
@@ -774,11 +830,47 @@ const ROTATE_HANDLE_OFFSET_PX = 30;
 // live feel as the version-overlay comparison tool. Called on every
 // mousemove during a drag/rotate, so this stays cheap - a handful of SVG
 // attribute writes, no network activity.
+// Mirrors compositePipeline.js's computeCanvasSize exactly (fixed origin,
+// same margin/floor) so the white "page" drawn behind the fragments below
+// always matches what the next flatten will actually produce - otherwise
+// the overflow-visible workspace (see the composite-edit-active comment
+// above) would show fragments sitting on the bare grey wrap background
+// past whatever the last real flatten's page size happened to be, instead
+// of looking like part of the page they're about to become.
+const COMPOSITE_CANVAS_MARGIN_PT = 36;
+function computeLiveCompositeCanvasSizePt() {
+  let maxX = 0;
+  let maxY = 0;
+  for (const f of compositeFragments) {
+    const rad = ((f.rotation || 0) * Math.PI) / 180;
+    const bw = Math.abs(f.place_width * Math.cos(rad)) + Math.abs(f.place_height * Math.sin(rad));
+    const bh = Math.abs(f.place_width * Math.sin(rad)) + Math.abs(f.place_height * Math.cos(rad));
+    const cx = f.place_x + f.place_width / 2;
+    const cy = f.place_y + f.place_height / 2;
+    maxX = Math.max(maxX, cx + bw / 2);
+    maxY = Math.max(maxY, cy + bh / 2);
+  }
+  return {
+    width: Math.max(COMPOSITE_BLANK_CANVAS_PT.width, maxX + COMPOSITE_CANVAS_MARGIN_PT),
+    height: Math.max(COMPOSITE_BLANK_CANVAS_PT.height, maxY + COMPOSITE_CANVAS_MARGIN_PT),
+  };
+}
+
 function renderCompositeFragmentsOverlay() {
   const g = ensureCompositeFragmentsLayer();
   g.innerHTML = '';
   if (!editLayoutMode) return;
   const scale = zoomPan ? zoomPan.state.scale : 1;
+
+  const pageSizePt = computeLiveCompositeCanvasSizePt();
+  const pageBg = measureSvgNs('rect');
+  pageBg.setAttribute('x', 0);
+  pageBg.setAttribute('y', 0);
+  pageBg.setAttribute('width', pageSizePt.width * currentRenderScale);
+  pageBg.setAttribute('height', pageSizePt.height * currentRenderScale);
+  pageBg.setAttribute('fill', '#ffffff');
+  g.appendChild(pageBg);
+
   // Higher z_order drawn last (on top), matching compose.py's own paint
   // order - what you see selected here is what's actually on top visually.
   const sorted = [...compositeFragments].sort((a, b) => a.z_order - b.z_order);
@@ -869,18 +961,26 @@ function renderFragmentList() {
   for (const fragment of sorted) {
     const row = document.createElement('div');
     row.className = 'takeoff-item-row fragment-row' + (fragment.id === selectedFragmentId ? ' active' : '');
+    // Two lines, not one - a single row cramming the thumbnail, sheet
+    // number, rotation input, and 4 icon buttons into the pane's width
+    // (280px by default, sometimes dragged narrower) left the flexible
+    // name span squeezed to near zero, silently ellipsis-truncating sheet
+    // numbers like "A101-C" down to just "A". Splitting the controls onto
+    // their own line gives the name the full row width instead.
     row.innerHTML = `
-      <img class="fragment-thumb" src="/api/projects/${projectId}/sheets/${sheetId}/composite-fragments/${fragment.id}/thumb" alt="">
-      <span class="takeoff-item-text">
-        <span class="takeoff-item-name">${escapeHtml(fragment.source_sheet_number)}</span>
-      </span>
-      <input type="number" class="fragment-rotation-input" data-action="rotation" step="0.1" title="Rotation, degrees clockwise"
-        value="${(fragment.rotation || 0).toFixed(1)}" ${fragment.locked ? 'disabled' : ''}>
-      <button type="button" class="icon-btn" data-action="lock" title="${fragment.locked ? 'Unlock' : 'Lock'}">${fragment.locked ? '&#128274;' : '&#128275;'}</button>
-      <button type="button" class="icon-btn" data-action="visible" title="${fragment.visible ? 'Hide' : 'Show'}">${fragment.visible ? '&#128065;' : '&#128584;'}</button>
-      <button type="button" class="icon-btn" data-action="front" title="Bring to front">&#8593;</button>
-      <button type="button" class="icon-btn" data-action="back" title="Send to back">&#8595;</button>
-      <button type="button" class="icon-btn" data-action="delete" title="Remove fragment">&#128465;</button>
+      <div class="fragment-row-top">
+        <img class="fragment-thumb" src="/api/projects/${projectId}/sheets/${sheetId}/composite-fragments/${fragment.id}/thumb" alt="">
+        <span class="takeoff-item-name" title="${escapeHtml(fragment.source_sheet_number)}">${escapeHtml(fragment.source_sheet_number)}</span>
+      </div>
+      <div class="fragment-row-controls">
+        <input type="number" class="fragment-rotation-input" data-action="rotation" step="0.1" title="Rotation, degrees clockwise"
+          value="${(fragment.rotation || 0).toFixed(1)}" ${fragment.locked ? 'disabled' : ''}>
+        <button type="button" class="icon-btn" data-action="lock" title="${fragment.locked ? 'Unlock' : 'Lock'}">${fragment.locked ? '&#128274;' : '&#128275;'}</button>
+        <button type="button" class="icon-btn" data-action="visible" title="${fragment.visible ? 'Hide' : 'Show'}">${fragment.visible ? '&#128065;' : '&#128584;'}</button>
+        <button type="button" class="icon-btn" data-action="front" title="Bring to front">&#8593;</button>
+        <button type="button" class="icon-btn" data-action="back" title="Send to back">&#8595;</button>
+        <button type="button" class="icon-btn" data-action="delete" title="Remove fragment">&#128465;</button>
+      </div>
     `;
     row.addEventListener('click', (e) => {
       if (e.target.closest('button') || e.target.closest('input')) return;
@@ -1062,8 +1162,7 @@ function setupCompositeLayoutInteraction() {
         fragmentRotateDrag = {
           fragmentId: fragment.id,
           centerPt,
-          startAngle: angleFromCenter(centerPt, renderPt),
-          origRotation: fragment.rotation || 0,
+          lastAngle: angleFromCenter(centerPt, renderPt),
         };
         e.preventDefault();
         e.stopPropagation();
@@ -1097,7 +1196,7 @@ function setupCompositeLayoutInteraction() {
       renderCompositeFragmentsOverlay();
 
       if (target.locked) return; // selectable, just not draggable
-      fragmentDrag = { fragmentId: target.id, startPt: renderPt, origPlaceX: target.place_x, origPlaceY: target.place_y };
+      fragmentDrag = { fragmentId: target.id, lastPt: renderPt };
       e.preventDefault();
     },
     true
@@ -1108,21 +1207,38 @@ function setupCompositeLayoutInteraction() {
     if (fragmentRotateDrag) {
       const renderPt = getMeasureSvgPoint(e);
       const angle = angleFromCenter(fragmentRotateDrag.centerPt, renderPt);
+      // Incremental (from the PREVIOUS mousemove's angle, not the drag's
+      // start angle) - same reasoning as the position drag above: it's what
+      // lets the Shift fine-factor change moment to moment with no jump,
+      // and as a side effect also makes a full-circle drag accumulate
+      // correctly instead of the old raw start-to-now angle difference
+      // silently wrapping at +/-180.
+      let delta = angle - fragmentRotateDrag.lastAngle;
+      delta = ((delta + 180) % 360 + 360) % 360 - 180; // normalize into (-180, 180]
+      fragmentRotateDrag.lastAngle = angle;
       const fragment = compositeFragments.find((f) => f.id === fragmentRotateDrag.fragmentId);
       if (!fragment) return;
-      fragment.rotation = normalizeRotationDegrees(fragmentRotateDrag.origRotation + (angle - fragmentRotateDrag.startAngle));
+      const fineFactor = e.shiftKey ? 0.1 : 1; // Shift = fine adjustment, 1/10th speed
+      fragment.rotation = normalizeRotationDegrees((fragment.rotation || 0) + delta * fineFactor);
       renderCompositeFragmentsOverlay();
       renderFragmentList(); // keeps the numeric rotation input live in sync while dragging
       return;
     }
     if (!fragmentDrag) return;
     const renderPt = getMeasureSvgPoint(e);
-    const dxPt = (renderPt.x - fragmentDrag.startPt.x) / currentRenderScale;
-    const dyPt = (renderPt.y - fragmentDrag.startPt.y) / currentRenderScale;
+    // Incremental (from the PREVIOUS mousemove, not the drag's start point)
+    // so the fine-drag factor below can change moment to moment - toggling
+    // Shift mid-drag just changes how much the next bit of mouse movement
+    // is worth, with no retroactive jump from rescaling the whole drag's
+    // total delta the instant the key state changes.
+    const dxPt = (renderPt.x - fragmentDrag.lastPt.x) / currentRenderScale;
+    const dyPt = (renderPt.y - fragmentDrag.lastPt.y) / currentRenderScale;
+    fragmentDrag.lastPt = renderPt;
     const fragment = compositeFragments.find((f) => f.id === fragmentDrag.fragmentId);
     if (!fragment) return;
-    fragment.place_x = Math.max(0, fragmentDrag.origPlaceX + dxPt);
-    fragment.place_y = Math.max(0, fragmentDrag.origPlaceY + dyPt);
+    const fineFactor = e.shiftKey ? 0.1 : 1; // Shift = fine adjustment, 1/10th speed
+    fragment.place_x = Math.max(0, fragment.place_x + dxPt * fineFactor);
+    fragment.place_y = Math.max(0, fragment.place_y + dyPt * fineFactor);
     renderCompositeFragmentsOverlay();
   });
 
@@ -1174,7 +1290,8 @@ async function renderPdf(versionId) {
 
     const unitViewport = page.getViewport({ scale: 1 });
     const longestPt = Math.max(unitViewport.width, unitViewport.height);
-    currentRenderScale = Math.min(RENDER_SCALE, MAX_RENDER_PX / longestPt);
+    const maxRenderPx = currentSheet && currentSheet.is_composite ? MAX_RENDER_PX_COMPOSITE : MAX_RENDER_PX;
+    currentRenderScale = Math.min(RENDER_SCALE, maxRenderPx / longestPt);
     const viewport = page.getViewport({ scale: currentRenderScale });
     canvas.width = viewport.width;
     canvas.height = viewport.height;
@@ -6857,6 +6974,7 @@ async function loadSheetOffline() {
   if (!me) return;
   canManage = me.role === 'admin' || me.role === 'editor';
   canTakeoff = me.role === 'admin' || !!me.can_takeoff;
+  isAdmin = me.role === 'admin';
 
   let sheet;
   let versions;
@@ -6954,6 +7072,14 @@ async function loadSheetOffline() {
         deactivateTakeoff();
       }
     },
+    // Lets a rect/line/arrow markup's Edit panel offer precise real-world
+    // length/width entry - reuses the exact same zone-aware scale lookup
+    // and currentRenderScale conversion measure/take-off geometry already
+    // does (effectiveScaleFeetPerInch/pixelsToFeet), rather than a second
+    // parallel implementation. Omitted entirely for document markups (see
+    // document-view.js's initMarkups call) - documents have no scale.
+    getScaleFeetPerInch: (renderPxPoint) => effectiveScaleFeetPerInch([renderPxPoint]),
+    getRenderScale: () => currentRenderScale,
   });
 
   await renderPdf(displayedVersionId);

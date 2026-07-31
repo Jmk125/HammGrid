@@ -789,10 +789,16 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .takeoff-hide-all-btn { margin-top: 6px; }
 
 /* Composite drawing "Edit Layout" mode's fragment palette (sheet.js) - rows
-   reuse .takeoff-item-row's layout/hover/active styling, just with a
-   thumbnail instead of a color dot and 5 icon-buttons instead of 1. */
+   reuse .takeoff-item-row's hover/active styling, but override its
+   single-line flex layout with two stacked lines (thumbnail+name, then the
+   5 icon-buttons+rotation input) - one line trying to fit all of that at
+   once left the name squeezed to near-zero width at the pane's default
+   280px, silently ellipsis-truncating sheet numbers to a single letter. */
+.fragment-row { flex-direction: column; align-items: stretch; gap: 4px; }
+.fragment-row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fragment-row-controls { display: flex; align-items: center; gap: 4px; }
+.fragment-row .takeoff-item-name { flex: 1 1 auto; min-width: 0; font-size: 12px; }
 .fragment-thumb { width: 40px; height: 30px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); flex: 0 0 auto; background: #f4f4f4; }
-.fragment-row .takeoff-item-name { font-size: 12px; }
 .fragment-rotation-input { flex: 0 0 auto; width: 52px; font-size: 11px; padding: 2px 4px; }
 #edit-layout-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
@@ -1132,6 +1138,19 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .markup-popup-flag-desc::placeholder,
 .markup-popup-flag-comment::placeholder,
 .markup-popup-flag-tag::placeholder { color: rgba(255,255,255,0.5); }
+
+.markup-popup-dims { display: flex; gap: 6px; padding: 2px 8px 4px; }
+.markup-popup-dim-field { display: flex; flex-direction: column; gap: 2px; font-size: 10px; color: rgba(255,255,255,0.75); }
+.markup-popup-dim-field input {
+  width: 74px;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+}
 
 /* ---------- Right pane (markup tools + measure), styled like .sidebar ---------- */
 .sheet-pane {

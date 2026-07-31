@@ -40,6 +40,32 @@ function pointOnRectPerimeter(x, y, w, h, d) {
   return { x, y: y + h - d };
 }
 
+// "5'-6"" - same rounded-to-the-nearest-inch display sheet.js's own
+// formatFeetInches uses for measure/take-off, kept as a separate small
+// copy here rather than a cross-module import since it's the only thing
+// from that world this module needs.
+function formatFeetInches(feetDecimal) {
+  const totalInches = Math.round(feetDecimal * 12);
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches % 12;
+  return `${feet}'-${inches}"`;
+}
+
+// Accepts whatever a field worker is likely to actually type: "8'-6"",
+// "8' 6"", "8ft 6in", plain decimal feet ("8.5"), or bare inches ("102"").
+// Returns decimal feet, or null if the text doesn't parse as a length at
+// all (the caller leaves the field alone rather than silently zeroing it).
+function parseFeetInches(str) {
+  const s = String(str || '').trim();
+  if (!s) return null;
+  if (/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+  const feetInches = s.match(/^(-?\d+(?:\.\d+)?)\s*(?:'|ft)[\s-]*(?:(\d+(?:\.\d+)?)\s*(?:"|in)?)?$/i);
+  if (feetInches) return parseFloat(feetInches[1]) + (feetInches[2] ? parseFloat(feetInches[2]) / 12 : 0);
+  const inchesOnly = s.match(/^(-?\d+(?:\.\d+)?)\s*(?:"|in)$/i);
+  if (inchesOnly) return parseFloat(inchesOnly[1]) / 12;
+  return null;
+}
+
 // Bump size is fixed regardless of box size (small/large tool choice), so
 // segments look consistent like a real revision cloud - only the bump COUNT
 // varies with the drawn box's perimeter, never the bump size itself.
@@ -68,7 +94,20 @@ function cloudPath(x, y, w, h, bumpSize) {
   return d + 'Z';
 }
 
-export function initMarkups({ sheetId, apiBase, projectId, me, svgEl, canvasEl, documents, folders, onToolChange, page }) {
+export function initMarkups({
+  sheetId,
+  apiBase,
+  projectId,
+  me,
+  svgEl,
+  canvasEl,
+  documents,
+  folders,
+  onToolChange,
+  page,
+  getScaleFeetPerInch,
+  getRenderScale,
+}) {
   const base = apiBase || `/api/sheets/${sheetId}`;
   // Documents aren't pre-burst one-page-per-file like sheets are, so a
   // document-scoped instance is told which page it's showing (via `page`)
@@ -498,6 +537,10 @@ export function initMarkups({ sheetId, apiBase, projectId, me, svgEl, canvasEl, 
       buttonRow.appendChild(delBtn);
     }
 
+    if (editingId === m.id && perm.canEdit && (m.type === 'rect' || m.type === 'line' || m.type === 'arrow')) {
+      renderDimensionFields(m);
+    }
+
     // Shows which document is linked (e.g. "RFI-042 - Beam size...") so the
     // user doesn't have to open it just to see what it is.
     if (m.linked_document_id && documents) {
@@ -559,6 +602,98 @@ export function initMarkups({ sheetId, apiBase, projectId, me, svgEl, canvasEl, 
         popupEl.appendChild(saveBtn);
       }
     }
+  }
+
+  // Precise real-world length/width entry for a rect/line/arrow markup
+  // while it's being edited - a companion to the drag-handles already
+  // shown for when "type the exact number" beats eyeballing a drag (e.g.
+  // clouding an 8'-0" x 10'-0" area precisely). Only offered when the host
+  // page supplied a scale lookup (sheet.js does; document-view.js doesn't -
+  // documents have no scale/real-world size at all) and a scale is
+  // actually set at this markup's own position (zone-aware, same lookup
+  // measure/take-off geometry already uses).
+  function renderDimensionFields(m) {
+    if (!getScaleFeetPerInch || !getRenderScale) return;
+    const b = bounds(m);
+    const feetPerInch = getScaleFeetPerInch({ x: b.x + b.w / 2, y: b.y + b.h / 2 });
+    if (!feetPerInch) return;
+
+    function pxToFeet(px) {
+      const inches = px / getRenderScale() / 72;
+      return inches * feetPerInch;
+    }
+    function feetToPx(feet) {
+      const inches = feet / feetPerInch;
+      return inches * 72 * getRenderScale();
+    }
+
+    const { w, h } = vbSize();
+    const wrap = document.createElement('div');
+    wrap.className = 'markup-popup-dims';
+
+    function addField(labelText, getFeet, setFeet) {
+      const field = document.createElement('label');
+      field.className = 'markup-popup-dim-field';
+      const span = document.createElement('span');
+      span.textContent = labelText;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.inputMode = 'decimal';
+      input.value = formatFeetInches(getFeet());
+      input.addEventListener('change', async () => {
+        const feet = parseFeetInches(input.value);
+        if (feet === null || feet <= 0) {
+          input.value = formatFeetInches(getFeet()); // unparseable/non-positive - revert rather than silently zero it
+          return;
+        }
+        setFeet(feet);
+        const { markup } = await api('PATCH', `/api/markups/${m.id}`, { geometry: m.geometry });
+        Object.assign(m, markup);
+        renderAll();
+      });
+      field.appendChild(span);
+      field.appendChild(input);
+      wrap.appendChild(field);
+    }
+
+    if (m.type === 'rect') {
+      addField(
+        'Width',
+        () => pxToFeet(m.geometry.w * w),
+        (feet) => {
+          m.geometry.w = feetToPx(feet) / w;
+        }
+      );
+      addField(
+        'Height',
+        () => pxToFeet(m.geometry.h * h),
+        (feet) => {
+          m.geometry.h = feetToPx(feet) / h;
+        }
+      );
+    } else {
+      // line/arrow: a single length field. Direction (and x1/y1) stay put -
+      // only the vector's magnitude changes, scaled from whatever it
+      // currently is to the newly-entered length.
+      addField(
+        'Length',
+        () => {
+          const dxPx = (m.geometry.x2 - m.geometry.x1) * w;
+          const dyPx = (m.geometry.y2 - m.geometry.y1) * h;
+          return pxToFeet(Math.hypot(dxPx, dyPx));
+        },
+        (feet) => {
+          const dxPx = (m.geometry.x2 - m.geometry.x1) * w;
+          const dyPx = (m.geometry.y2 - m.geometry.y1) * h;
+          const currentLengthPx = Math.hypot(dxPx, dyPx) || 1;
+          const scale = feetToPx(feet) / currentLengthPx;
+          m.geometry.x2 = m.geometry.x1 + (dxPx * scale) / w;
+          m.geometry.y2 = m.geometry.y1 + (dyPx * scale) / h;
+        }
+      );
+    }
+
+    popupEl.appendChild(wrap);
   }
 
   function openLinkPicker(m) {

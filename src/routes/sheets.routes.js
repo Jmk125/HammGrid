@@ -1,4 +1,5 @@
 const express = require('express');
+const fs = require('fs');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
@@ -121,6 +122,74 @@ router.patch('/:sheetId', requireRole('admin', 'editor'), (req, res) => {
   );
   const updated = db.prepare('SELECT * FROM sheets WHERE id = ?').get(sheet.id);
   res.json({ sheet: updated });
+});
+
+// Admin-only (unlike the metadata PATCH above, which editors can also do) -
+// this is permanent, unlike everything else editors touch day to day, which
+// is either reversible (a draft revision) or additive (a new markup/
+// take-off). Works for both an ordinary sheet and a composite (is_composite)
+// - to the rest of the schema a composite is just a sheet, so there's
+// nothing composite-specific here beyond the fragment cleanup below.
+router.delete('/:sheetId', requireRole('admin'), (req, res) => {
+  const sheet = db
+    .prepare('SELECT * FROM sheets WHERE id = ? AND project_id = ?')
+    .get(req.params.sheetId, req.params.projectId);
+  if (!sheet) return res.status(404).json({ error: 'Not found' });
+
+  // Blocked, not silently cascaded: composite_fragments.source_sheet_id ON
+  // DELETE CASCADE means deleting a sheet that's cropped INTO some other
+  // composite would quietly rip that fragment (and the visible content it
+  // contributes) out of that composite with no warning - the opposite of
+  // "the field always sees the current set" per CLAUDE.md's mission. Make
+  // the user go clean that up first instead.
+  const usedAsFragmentSource = db
+    .prepare(
+      `SELECT DISTINCT s.sheet_number FROM composite_fragments cf
+       JOIN sheets s ON s.id = cf.composite_sheet_id
+       WHERE cf.source_sheet_id = ? AND cf.composite_sheet_id != ?`
+    )
+    .all(sheet.id, sheet.id);
+  if (usedAsFragmentSource.length > 0) {
+    return res.status(409).json({
+      error: `This sheet is cropped into composite drawing ${usedAsFragmentSource.map((s) => s.sheet_number).join(', ')} - remove that fragment there first.`,
+    });
+  }
+
+  const versionPaths = db
+    .prepare('SELECT pdf_path, thumb_path, preview_path, overlay_path FROM sheet_versions WHERE sheet_id = ?')
+    .all(sheet.id);
+  // Only ever this sheet's OWN fragments (composite_sheet_id = itself) by
+  // the time we get here - the check above already ruled out this sheet
+  // being someone ELSE's fragment source.
+  const fragmentPaths = db.prepare('SELECT thumb_path, preview_path FROM composite_fragments WHERE composite_sheet_id = ?').all(sheet.id);
+
+  db.transaction(() => {
+    // sheets.current_version_id -> sheet_versions(id) has no ON DELETE
+    // action of its own - see db/index.js's migration comment on the
+    // identically-shaped documents.current_version_id, which hit a real FK
+    // ordering deadlock on this exact pattern before being fixed to SET
+    // NULL. sheets was never fixed the same way, so clear it explicitly
+    // here rather than trust cascade ordering to sort it out.
+    db.prepare('UPDATE sheets SET current_version_id = NULL WHERE id = ?').run(sheet.id);
+    // staged_sheets.match_sheet_id likewise has no ON DELETE action - only
+    // reachable if an upload review elsewhere matched a staged row against
+    // this sheet before it got deleted here; normally empty by publish time.
+    db.prepare('UPDATE staged_sheets SET match_sheet_id = NULL WHERE match_sheet_id = ?').run(sheet.id);
+    db.prepare('DELETE FROM sheets WHERE id = ?').run(sheet.id);
+  })();
+
+  for (const v of versionPaths) {
+    for (const p of [v.pdf_path, v.thumb_path, v.preview_path, v.overlay_path]) {
+      if (p) fs.rm(p, { force: true }, () => {});
+    }
+  }
+  for (const f of fragmentPaths) {
+    for (const p of [f.thumb_path, f.preview_path]) {
+      if (p) fs.rm(p, { force: true }, () => {});
+    }
+  }
+
+  res.json({ ok: true });
 });
 
 module.exports = router;
