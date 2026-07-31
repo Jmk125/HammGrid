@@ -1,15 +1,26 @@
-import { renderShell, confirmModal } from '/js/shell.js';
+import { renderShell, confirmModal, showToast } from '/js/shell.js';
 
 const projectId = new URLSearchParams(window.location.search).get('projectId');
 
 let allFlags = [];
 let searchTerm = '';
 let tagFilter = '';
-let sortState = { column: 'drawing', dir: 'asc' };
+let sortState = { column: 'location', dir: 'asc' };
 let editingFlagId = null; // id of the flag row currently in edit mode, or null
 
 function escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+}
+
+function goToUrl(flag) {
+  return flag.location_type === 'document'
+    ? `/document-view.html?documentId=${flag.target_document_id}&flagId=${flag.id}`
+    : `/sheet.html?projectId=${projectId}&sheetId=${flag.target_sheet_id}&flagId=${flag.id}`;
+}
+
+function locationLabel(flag) {
+  const icon = flag.location_type === 'document' ? '&#128196; ' : '&#128208; ';
+  return icon + escapeHtml(flag.location);
 }
 
 function allTags() {
@@ -53,7 +64,7 @@ function visibleFlags() {
         (f.geometry.description || '').toLowerCase().includes(searchTerm) ||
         (f.geometry.comment || '').toLowerCase().includes(searchTerm) ||
         (f.geometry.tag || '').toLowerCase().includes(searchTerm) ||
-        f.sheet_number.toLowerCase().includes(searchTerm)
+        f.location.toLowerCase().includes(searchTerm)
     );
   }
   if (tagFilter) filtered = filtered.filter((f) => f.geometry.tag === tagFilter);
@@ -62,7 +73,7 @@ function visibleFlags() {
     if (sortState.column === 'tag') {
       cmp = (a.geometry.tag || '').localeCompare(b.geometry.tag || '');
     } else {
-      cmp = a.sheet_number.localeCompare(b.sheet_number, undefined, { numeric: true });
+      cmp = a.location.localeCompare(b.location, undefined, { numeric: true });
     }
     return sortState.dir === 'asc' ? cmp : -cmp;
   });
@@ -71,7 +82,7 @@ function visibleFlags() {
 
 function renderSortHeaders() {
   document.getElementById('flags-sort-drawing').innerHTML =
-    sortState.column === 'drawing' ? `Drawing ${sortState.dir === 'asc' ? '&#9662;' : '&#9652;'}` : 'Drawing';
+    sortState.column === 'location' ? `Location ${sortState.dir === 'asc' ? '&#9662;' : '&#9652;'}` : 'Location';
   document.getElementById('flags-sort-tag').innerHTML = sortState.column === 'tag' ? `Tag ${sortState.dir === 'asc' ? '&#9662;' : '&#9652;'}` : 'Tag';
 }
 
@@ -86,11 +97,11 @@ function renderTable() {
     const tr = document.createElement('tr');
     const created = flag.created_at ? new Date(flag.created_at).toLocaleDateString() : '';
     const editing = editingFlagId === flag.id;
-    const goToUrl = `/sheet.html?projectId=${projectId}&sheetId=${flag.sheet_id}&flagId=${flag.id}`;
+    const url = goToUrl(flag);
 
     if (editing) {
       tr.innerHTML = `
-        <td><a href="${goToUrl}">${escapeHtml(flag.sheet_number)}</a></td>
+        <td><a href="${url}">${locationLabel(flag)}</a></td>
         <td><input type="text" class="flags-desc-input" style="width:100%;" value="${escapeHtml(flag.geometry.description || '')}"></td>
         <td><textarea class="flags-comment-input" rows="2" style="width:100%;">${escapeHtml(flag.geometry.comment || '')}</textarea></td>
         <td><input type="text" class="flags-tag-input" list="flags-tag-options" style="width:100%;" value="${escapeHtml(flag.geometry.tag || '')}"></td>
@@ -116,6 +127,7 @@ function renderTable() {
         populateTagFilter();
         ensureTagDatalist();
         renderTable();
+        showToast('Flag saved.', 'success');
       });
       tr.querySelector('.flags-cancel-btn').addEventListener('click', () => {
         editingFlagId = null;
@@ -123,7 +135,7 @@ function renderTable() {
       });
     } else {
       tr.innerHTML = `
-        <td><a href="${goToUrl}">${escapeHtml(flag.sheet_number)}</a></td>
+        <td><a href="${url}">${locationLabel(flag)}</a></td>
         <td>${escapeHtml(flag.geometry.description || '')}</td>
         <td>${escapeHtml(flag.geometry.comment || '')}</td>
         <td>${flag.geometry.tag ? `<span class="flags-tag-chip">${escapeHtml(flag.geometry.tag)}</span>` : ''}</td>
@@ -170,7 +182,7 @@ function setupControls() {
     tagFilter = e.target.value;
     renderTable();
   });
-  document.getElementById('flags-sort-drawing').addEventListener('click', () => setSort('drawing'));
+  document.getElementById('flags-sort-drawing').addEventListener('click', () => setSort('location'));
   document.getElementById('flags-sort-tag').addEventListener('click', () => setSort('tag'));
   renderSortHeaders();
 }

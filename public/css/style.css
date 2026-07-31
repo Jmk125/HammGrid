@@ -513,6 +513,27 @@ tr.ignored td { opacity: 0.5; }
 .modal h2 { margin-top: 0; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
+/* fragmentPicker.js's crop/mask step needs real room to see the drawing -
+   :has() lets this one modal opt into a wider layout without a className
+   param on the shared openModal() helper. */
+.modal:has(h2.fragment-picker) { width: 900px; }
+/* No max-height/overflow here - the svg overlay is sized to 100% of this
+   wrap (see below), so if this wrap were shorter than the canvas's actual
+   rendered height (e.g. via its own overflow:auto scroll), the svg would
+   only cover the clipped visible portion and every click coordinate would
+   come out wrong for anything below the fold. The outer .modal already
+   scrolls (overflow-y:auto) if a tall/narrow source sheet makes this wrap
+   taller than the viewport, so nothing is lost by not double-scrolling. */
+.fragment-picker-canvas-wrap {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f4f4f4;
+}
+.fragment-picker-canvas-wrap canvas { display: block; width: 100%; height: auto; }
+.fragment-picker-canvas-wrap svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; }
+
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; max-width: 420px; }
 .field input, .field select { width: 100%; }
 .field label { font-size: 13px; font-weight: 600; color: var(--muted); }
@@ -651,6 +672,12 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .markup-stage { position: relative; display: inline-block; }
 .markup-stage canvas { display: block; }
 .markup-stage svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+/* Composite "Edit Layout" mode: fragments dragged past the current
+   (last-flattened) page bounds must stay visible instead of clipping at the
+   SVG's own viewBox rect - see the editLayoutMode comment in sheet.js. The
+   zoomable ancestor (.zoom-wrap) still clips to the actual screen viewport,
+   so this only removes the artificial page-bounds clip, not real scrolling. */
+#markup-svg.composite-edit-active { overflow: visible; }
 #sheet-link-layer { pointer-events: none; }
 #sheet-link-layer .sheet-link-hotspot {
   fill: rgba(37, 99, 235, 0.16);
@@ -761,6 +788,14 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .takeoff-item-row.takeoff-hidden-item { opacity: 0.45; }
 .takeoff-hide-all-btn { margin-top: 6px; }
 
+/* Composite drawing "Edit Layout" mode's fragment palette (sheet.js) - rows
+   reuse .takeoff-item-row's layout/hover/active styling, just with a
+   thumbnail instead of a color dot and 5 icon-buttons instead of 1. */
+.fragment-thumb { width: 40px; height: 30px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); flex: 0 0 auto; background: #f4f4f4; }
+.fragment-row .takeoff-item-name { font-size: 12px; }
+.fragment-rotation-input { flex: 0 0 auto; width: 52px; font-size: 11px; padding: 2px 4px; }
+#edit-layout-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
 /* Edit/Remove/Delete/Stop only apply to whichever item is currently
    selected, so they live in one fixed bar docked under the pane instead of
    repeating on every row - keeps the row itself down to just name, total,
@@ -783,6 +818,11 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   box-sizing: border-box;
 }
 .takeoff-item-actions-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+/* Live running quantity while a line/area/perimeter is being traced (see
+   redrawTakeoff's updateLiveTakeoffQuantity) - empty and takes no visible
+   space the rest of the time. flex: 0 0 auto so it never gets squeezed by
+   the name's ellipsis instead of the other way around. */
+.takeoff-item-actions-live-qty { flex: 0 0 auto; white-space: nowrap; font-weight: 700; font-size: 13px; color: var(--accent); }
 
 /* PlanSwift-style hold-M magnifier (see setupMagnifierLens in sheet.js) - a
    round lens that follows the cursor, positioned via JS (left/top), sized
@@ -809,19 +849,34 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   border-radius: 6px;
   box-shadow: 0 8px 24px rgba(0,0,0,0.45);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .freeze-pane-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   padding: 4px 8px;
   background: rgba(255,255,255,0.08);
   cursor: move;
   user-select: none;
+  flex: none;
 }
-.freeze-pane-drag-handle { color: rgba(255,255,255,0.6); font-size: 14px; line-height: 1; }
-.freeze-pane-header-actions { display: flex; align-items: center; gap: 6px; }
+.freeze-pane-drag-handle { color: rgba(255,255,255,0.6); font-size: 14px; line-height: 1; flex: none; }
+.freeze-pane-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  padding: 2px 4px;
+  outline: none;
+  cursor: text;
+}
+.freeze-pane-label::placeholder { color: rgba(255,255,255,0.45); }
+.freeze-pane-label:focus { background: rgba(255,255,255,0.12); border-radius: 4px; }
+.freeze-pane-header-actions { display: flex; align-items: center; gap: 6px; flex: none; }
 .freeze-pane-pin { display: flex; align-items: center; cursor: pointer; }
 .freeze-pane-pin input { cursor: pointer; margin: 0; }
 .freeze-pane-close {
@@ -834,7 +889,43 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   border-radius: 4px;
 }
 .freeze-pane-close:hover { background: rgba(255,255,255,0.15); }
-.freeze-pane-canvas { display: block; }
+.freeze-pane-collapse {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: transform 0.15s ease;
+}
+.freeze-pane-collapse:hover { background: rgba(255,255,255,0.15); }
+.freeze-pane.freeze-pane-collapsed .freeze-pane-collapse { transform: rotate(180deg); }
+.freeze-pane.freeze-pane-collapsed .freeze-pane-viewport { display: none; }
+.freeze-pane-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+.freeze-pane-canvas { display: block; width: 100%; height: 100%; transform-origin: 0 0; }
+
+.freeze-pane-resize-handle { position: absolute; z-index: 2; }
+.freeze-pane-resize-n { top: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.freeze-pane-resize-s { bottom: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.freeze-pane-resize-e { right: 0; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.freeze-pane-resize-w { left: 0; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.freeze-pane-resize-ne { top: 0; right: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.freeze-pane-resize-nw { top: 0; left: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.freeze-pane-resize-se { bottom: 0; right: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.freeze-pane-resize-sw { bottom: 0; left: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-n,
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-s,
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-ne,
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-nw,
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-se,
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-sw { display: none; }
 
 .icon-tool-grid .tool-btn[disabled] { opacity: 0.35; cursor: not-allowed; }
 
@@ -854,6 +945,41 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .version-list .current { font-weight: 700; }
 
 /* ---------- Sheet view: canvas area + right pane ---------- */
+.sheet-tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  overflow-x: auto;
+  background: var(--navy);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.sheet-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.75);
+  border: none;
+  border-radius: 6px 6px 0 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.sheet-tab.active { background: var(--bg); color: var(--text); }
+.sheet-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.sheet-tab-close:hover { background: rgba(0,0,0,0.2); }
+
 .sheet-view-row { display: flex; align-items: flex-start; gap: 0; }
 
 .sheet-canvas-area { flex: 1; min-width: 0; }

@@ -5,6 +5,7 @@ import { renderShell, openModal, closeModal, showToast, promptModal, confirmModa
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 import { setupAdvancedFields, wireNamePreview } from '/js/takeoffAdvancedFields.js';
 import { computeTakeoffOutput, parseTakeoffProperties, resolveTakeoffName } from '/js/takeoffFormula.js';
+import { openFragmentPicker } from '/js/fragmentPicker.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -33,6 +34,46 @@ let canManage = false;
 let canTakeoff = false;
 let allVersions = [];
 let displayedVersionId = null;
+
+// ---------- Composite drawing "Edit Layout" mode ----------
+// Only reachable for currentSheet.is_composite - a workspace for stitching
+// crops of other sheets together (see fragmentPicker.js and the
+// composite-drawings plan). While active, the markup/measure/take-off panes
+// are hidden and their tools disarmed (deactivateTakeoff/clearMeasure/
+// forceSelectTool, same disarm sequence armFreezePane already uses) rather
+// than each tool separately checking an editLayoutMode flag - there is no
+// other UI surface to re-arm them while their panes aren't shown, so that's
+// sufficient without threading a guard through every existing handler.
+let editLayoutMode = false;
+// Every fragment mutation during a session runs with ?regenerate=0 (see
+// compositeNeedsRefreshOnExit below) for instant feedback, so the SVG's
+// viewBox - normally tied 1:1 to the last-flattened composite PDF's own page
+// size (see syncSheetLinkLayer) - never grows mid-session; dragging a
+// fragment past whatever that page size happened to be at last regenerate
+// used to push it past the viewBox's own rect, which SVGs clip to by
+// default, making it silently vanish instead of "growing to fit" like it
+// seemed to before this deferred-regenerate design. enterEditLayoutMode
+// adds the 'composite-edit-active' class (see style.css) to stop the SVG
+// clipping at all for the duration of the session - genuinely unlimited
+// canvas, not just a bigger fixed one - while the actual output page size
+// is still auto-fit-to-content by computeCanvasSize server-side at
+// finalize. Left as the plain viewBox-tied size the rest of the time so
+// every constant-screen-size stroke-width (`.../scale`) calculation
+// elsewhere keeps assuming 1 viewBox unit == 1 pre-zoom CSS px, which only
+// holds when the SVG's own physical box matches its viewBox exactly.
+let compositeFragments = [];
+let selectedFragmentId = null;
+let fragmentDrag = null; // {fragmentId, startPt (render-px), origPlaceX, origPlaceY (pdf-pt)}
+let fragmentRotateDrag = null; // {fragmentId, centerPt (render-px), startAngle, origRotation} - dragging the selected fragment's rotate handle
+let fragmentClickCycle = null; // {x, y, ids, index} - repeated clicks at the same spot cycle through overlapping fragments
+// True once any fragment mutation ran with ?regenerate=0 (place, rotation,
+// lock, visibility, z-order, bring-in, delete - see patchFragment/
+// commitFragmentTransform/deleteFragment/openBringInFragmentFlow) - the
+// underlying flattened PDF is behind what Edit Layout mode is showing live
+// via each fragment's own preview <image>; exitEditLayoutMode() calls
+// finalizeCompositeLayout() once so the take-off-ready PDF catches up
+// before you leave, regardless of how many edits happened in between.
+let compositeNeedsRefreshOnExit = false;
 let overlayActive = false;
 let overlayLayers = { a: null, b: null, showA: true, showB: true };
 // Cached <img> elements so drag-align/rotate only re-composites pixels
@@ -62,6 +103,87 @@ let freezePanes = [];
 
 function searchStorageKey() {
   return `hammgrid-sheet-search:${projectId}`;
+}
+
+// ---------- In-page tab strip ----------
+// sessionStorage (not localStorage, unlike every other key in this file) -
+// deliberately scoped to THIS real browser tab, so each browser tab/window
+// gets its own independent set of open sheets. The list only ever grows via
+// the sheet-link context menu's "open as tab" action, which is just a plain
+// navigation - ensureCurrentSheetInOpenTabs() (called on every load) is what
+// actually appends/relabels, so ordinary navigation elsewhere (sheet-nav
+// arrows, take-off/flag "go to drawing" links) never silently adds tabs.
+function openTabsKey() {
+  return `hammgrid-open-tabs:${projectId}`;
+}
+
+function loadOpenTabs() {
+  try {
+    return JSON.parse(sessionStorage.getItem(openTabsKey())) || [];
+  } catch (err) {
+    return [];
+  }
+}
+
+function saveOpenTabs(list) {
+  sessionStorage.setItem(openTabsKey(), JSON.stringify(list));
+}
+
+function ensureCurrentSheetInOpenTabs() {
+  const tabs = loadOpenTabs();
+  if (tabs.length === 0) {
+    saveOpenTabs([{ sheetId, label: currentSheet.sheet_number }]);
+    return;
+  }
+  const idx = tabs.findIndex((t) => String(t.sheetId) === String(sheetId));
+  if (idx !== -1) {
+    tabs[idx].label = currentSheet.sheet_number;
+    saveOpenTabs(tabs);
+  }
+  // else: current sheet isn't part of any open-tab set (ordinary
+  // navigation) - leave the list untouched.
+}
+
+function renderTabStrip() {
+  const strip = document.getElementById('sheet-tab-strip');
+  const tabs = loadOpenTabs();
+  strip.style.display = tabs.length > 1 ? 'flex' : 'none';
+  strip.innerHTML = '';
+  tabs.forEach((tab, i) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sheet-tab';
+    if (String(tab.sheetId) === String(sheetId)) btn.classList.add('active');
+    btn.innerHTML = `<span>${tab.label || '…'}</span>`;
+    if (i > 0) {
+      const closeBtn = document.createElement('span');
+      closeBtn.className = 'sheet-tab-close';
+      closeBtn.innerHTML = '&times;';
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeTab(i);
+      });
+      btn.appendChild(closeBtn);
+    }
+    btn.addEventListener('click', () => {
+      if (String(tab.sheetId) === String(sheetId)) return;
+      window.location.href = `/sheet.html?projectId=${projectId}&sheetId=${tab.sheetId}`;
+    });
+    strip.appendChild(btn);
+  });
+}
+
+function closeTab(index) {
+  const tabs = loadOpenTabs();
+  const wasActive = String(tabs[index].sheetId) === String(sheetId);
+  tabs.splice(index, 1);
+  saveOpenTabs(tabs);
+  if (wasActive) {
+    const prev = tabs[Math.max(0, index - 1)];
+    window.location.href = `/sheet.html?projectId=${projectId}&sheetId=${prev.sheetId}`;
+  } else {
+    renderTabStrip();
+  }
 }
 
 // ---------- Right pane: collapse + accordion sections ----------
@@ -422,6 +544,607 @@ function setupEditSheetButton() {
   else row.prepend(btn);
 }
 
+function setupCompositeLayoutButton() {
+  if (!canManage || !currentSheet.is_composite) return;
+  const editSheetBtn = document.getElementById('edit-sheet-btn');
+  const downloadBtn = document.getElementById('download-sheet-btn');
+  const anchor = editSheetBtn || downloadBtn;
+  const row = anchor ? anchor.parentElement : document.querySelector('#topbar > .row');
+  if (!row || document.getElementById('edit-layout-btn')) return;
+  const btn = document.createElement('button');
+  btn.id = 'edit-layout-btn';
+  btn.type = 'button';
+  btn.title = 'Arrange the fragments making up this composite drawing';
+  btn.textContent = 'Edit Layout';
+  btn.addEventListener('click', toggleEditLayoutMode);
+  if (anchor) anchor.after(btn);
+  else row.prepend(btn);
+}
+
+async function toggleEditLayoutMode() {
+  if (editLayoutMode) {
+    await exitEditLayoutMode();
+  } else {
+    await enterEditLayoutMode();
+  }
+}
+
+async function enterEditLayoutMode() {
+  // Same disarm sequence armFreezePane already uses - stopping every other
+  // tool before this one takes over the canvas.
+  deactivateTakeoff();
+  exitTakeoffEditMode();
+  clearMeasure();
+  stopMeasureTool();
+  if (markupsController) markupsController.forceSelectTool();
+
+  editLayoutMode = true;
+  document.getElementById('edit-layout-btn').classList.add('active');
+  document.getElementById('edit-layout-btn').textContent = 'Done Editing Layout';
+  for (const id of ['section-markup', 'section-measure', 'section-takeoffs']) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  }
+  document.getElementById('section-composite').style.display = '';
+  document.getElementById('markup-svg').style.cursor = 'default';
+  document.getElementById('markup-svg').classList.add('composite-edit-active');
+
+  await loadCompositeFragments();
+  fitEditLayoutView();
+}
+
+// Frames the view on whatever's actually placed (fixed-origin, so this is
+// just the current fragments' bounding box) - "centered" here means
+// centered on the real content, not on some literal midpoint of an
+// unbounded plane. Falls back to the server's blank-canvas default size
+// (see compositePipeline.js) when there's nothing placed yet, so a
+// brand-new composite doesn't open zoomed to an arbitrary point.
+const COMPOSITE_BLANK_CANVAS_PT = { width: 3168, height: 2448 };
+function fitEditLayoutView() {
+  if (!zoomPan) return;
+  const wrapEl = document.getElementById('zoom-wrap');
+  const rect = wrapEl.getBoundingClientRect();
+  if (!rect.width) return;
+
+  let bbox;
+  if (compositeFragments.length > 0) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const f of compositeFragments) {
+      const rad = ((f.rotation || 0) * Math.PI) / 180;
+      const bw = Math.abs(f.place_width * Math.cos(rad)) + Math.abs(f.place_height * Math.sin(rad));
+      const bh = Math.abs(f.place_width * Math.sin(rad)) + Math.abs(f.place_height * Math.cos(rad));
+      const cx = f.place_x + f.place_width / 2;
+      const cy = f.place_y + f.place_height / 2;
+      minX = Math.min(minX, cx - bw / 2);
+      minY = Math.min(minY, cy - bh / 2);
+      maxX = Math.max(maxX, cx + bw / 2);
+      maxY = Math.max(maxY, cy + bh / 2);
+    }
+    bbox = { x: minX * currentRenderScale, y: minY * currentRenderScale, width: (maxX - minX) * currentRenderScale, height: (maxY - minY) * currentRenderScale };
+  } else {
+    bbox = { x: 0, y: 0, width: COMPOSITE_BLANK_CANVAS_PT.width * currentRenderScale, height: COMPOSITE_BLANK_CANVAS_PT.height * currentRenderScale };
+  }
+
+  const PAD = 1.15; // a little breathing room around the content, not panToRect's aggressive zoom-in padding
+  const targetW = Math.max(bbox.width * PAD, 300);
+  const targetH = Math.max(bbox.height * PAD, 300);
+  const scale = Math.min(rect.width / targetW, rect.height / targetH);
+  const cx = bbox.x + bbox.width / 2;
+  const cy = bbox.y + bbox.height / 2;
+  suppressInteractionFlag = true;
+  zoomPan.state.scale = scale;
+  zoomPan.state.x = rect.width / 2 - cx * scale;
+  zoomPan.state.y = rect.height / 2 - cy * scale;
+  zoomPan.apply();
+  suppressInteractionFlag = false;
+  userHasZoomedOrPanned = false;
+}
+
+async function exitEditLayoutMode() {
+  editLayoutMode = false;
+  selectedFragmentId = null;
+  fragmentDrag = null;
+  fragmentRotateDrag = null;
+  fragmentClickCycle = null;
+  const btn = document.getElementById('edit-layout-btn');
+  if (btn) {
+    btn.classList.remove('active');
+    btn.textContent = 'Edit Layout';
+  }
+  for (const id of ['section-markup', 'section-measure', 'section-takeoffs']) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = '';
+  }
+  const compositeSection = document.getElementById('section-composite');
+  if (compositeSection) compositeSection.style.display = 'none';
+  document.getElementById('markup-svg').classList.remove('composite-edit-active');
+  renderCompositeFragmentsOverlay();
+
+  // Every mutation during this session ran with ?regenerate=0 - skipping the
+  // expensive re-flatten + PDF.js re-render for instant feedback (see
+  // commitFragmentTransform/patchFragment/deleteFragment/
+  // openBringInFragmentFlow) - so the actual viewer/take-off-facing PDF is
+  // still showing whatever it was BEFORE this session started. Catch it up
+  // now, exactly once, regardless of how many edits happened.
+  if (compositeNeedsRefreshOnExit) {
+    compositeNeedsRefreshOnExit = false;
+    const statusEl = document.getElementById('pdf-status');
+    const prevStatus = statusEl ? statusEl.textContent : '';
+    if (statusEl) statusEl.textContent = 'Updating composite...';
+    try {
+      await finalizeCompositeLayout();
+    } catch (err) {
+      showToast(`Failed to refresh composite: ${err.message}`, 'error');
+      if (statusEl) statusEl.textContent = prevStatus;
+    }
+  } else {
+    // Nothing changed this session, so finalizeCompositeLayout (which would
+    // otherwise re-render the real PDF and naturally re-fit the view) never
+    // ran - fitEditLayoutView left zoomPan framing just the fragments'
+    // bounding box rather than the whole page, so restore the normal
+    // whole-page fit by hand.
+    fitToView();
+  }
+}
+
+// The one eager regenerate a whole Edit Layout session actually needs -
+// every individual mutation during the session skipped this (see
+// shouldRegenerate in compositeFragments.routes.js) for instant feedback, so
+// nothing server-side has re-flattened the composite yet. Triggers that
+// flatten, then loads and displays whatever version it produced - same
+// "fetch sheet, show its current_version_id" shape as refreshCompositeSheet,
+// just preceded by the regenerate call that shape assumed had already
+// happened per-edit before this deferred-regenerate design.
+async function finalizeCompositeLayout() {
+  await api('POST', `/api/projects/${projectId}/sheets/${sheetId}/composite-fragments/regenerate`);
+  await refreshCompositeSheet();
+}
+
+async function loadCompositeFragments() {
+  try {
+    const { fragments } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}/composite-fragments`);
+    compositeFragments = fragments;
+  } catch (err) {
+    showToast(`Failed to load fragments: ${err.message}`, 'error');
+    compositeFragments = [];
+  }
+  renderFragmentList();
+  renderCompositeFragmentsOverlay();
+}
+
+// Re-fetches the composite sheet + its (single, ever-replaced) version after
+// any fragment mutation, so allVersions/currentSheet stay in sync with the
+// fresh sheet_versions row the server just created, then shows it via the
+// same showVersion() path manual version-switching already uses - no new
+// rendering code needed on the "display the result" side.
+async function refreshCompositeSheet() {
+  const { sheet, versions } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}`);
+  currentSheet = sheet;
+  allVersions = versions;
+  await showVersion(sheet.current_version_id);
+  // renderPdf (inside showVersion) may have just changed currentRenderScale
+  // (a different-sized flattened page renders at a different point->pixel
+  // ratio) - re-run the overlay so its rects use the current ratio, not
+  // whatever was current when loadCompositeFragments last drew it.
+  renderCompositeFragmentsOverlay();
+}
+
+function ensureCompositeFragmentsLayer() {
+  const svg = document.getElementById('markup-svg');
+  let g = svg.querySelector('#composite-fragments-layer');
+  if (!g) {
+    g = measureSvgNs('g');
+    g.id = 'composite-fragments-layer';
+    svg.appendChild(g);
+  }
+  return g;
+}
+
+// Fragment place_x/y/width/height are stored in the composite's own PDF-
+// point space (same convention as the flattened page itself) - the render
+// pixel / viewBox space getMeasureSvgPoint() and every overlay layer already
+// work in is that times currentRenderScale, exactly the same relationship
+// pixelsToFeet() already divides out for take-off geometry.
+function fragmentRectPx(fragment) {
+  return {
+    x: fragment.place_x * currentRenderScale,
+    y: fragment.place_y * currentRenderScale,
+    width: fragment.place_width * currentRenderScale,
+    height: fragment.place_height * currentRenderScale,
+  };
+}
+
+function fragmentPreviewUrl(fragment) {
+  return `/api/projects/${projectId}/sheets/${sheetId}/composite-fragments/${fragment.id}/preview`;
+}
+
+function normalizeRotationDegrees(deg) {
+  return ((deg % 360) + 360) % 360;
+}
+
+// Screen px (compensated by zoom below) the rotate handle sits above the
+// selected fragment's own top edge.
+const ROTATE_HANDLE_OFFSET_PX = 30;
+
+// Renders every visible fragment as an actual positioned/rotated <image>
+// (its own full-res preview asset - see fragmentPreviewUrl), not just an
+// outline - this is what makes dragging/rotating feel instant (see
+// setupCompositeLayoutInteraction): the browser repositions/retransforms an
+// already-loaded image on every mousemove, zero server round-trip, same
+// live feel as the version-overlay comparison tool. Called on every
+// mousemove during a drag/rotate, so this stays cheap - a handful of SVG
+// attribute writes, no network activity.
+function renderCompositeFragmentsOverlay() {
+  const g = ensureCompositeFragmentsLayer();
+  g.innerHTML = '';
+  if (!editLayoutMode) return;
+  const scale = zoomPan ? zoomPan.state.scale : 1;
+  // Higher z_order drawn last (on top), matching compose.py's own paint
+  // order - what you see selected here is what's actually on top visually.
+  const sorted = [...compositeFragments].sort((a, b) => a.z_order - b.z_order);
+  for (const fragment of sorted) {
+    if (!fragment.visible) continue;
+    const r = fragmentRectPx(fragment);
+    const cx = r.x + r.width / 2;
+    const cy = r.y + r.height / 2;
+    const isSelected = fragment.id === selectedFragmentId;
+    const rotation = fragment.rotation || 0;
+
+    // One group per fragment sharing a single rotate transform - SVG's own
+    // rotate(deg, cx, cy) is clockwise-positive around (cx,cy) in this
+    // y-down coordinate space, exactly the convention compose.py's
+    // rotate_fragment() and the drag-to-rotate math below both use, so
+    // nothing needs re-deriving here.
+    const group = measureSvgNs('g');
+    group.setAttribute('transform', `rotate(${rotation} ${cx} ${cy})`);
+
+    const image = measureSvgNs('image');
+    image.setAttribute('x', r.x);
+    image.setAttribute('y', r.y);
+    image.setAttribute('width', r.width);
+    image.setAttribute('height', r.height);
+    // Stretch to exactly fill the place rect - the preview asset's own
+    // pixel aspect ratio matches crop_width/height, which can differ
+    // slightly from place_width/height after independent scale-reconcile
+    // rounding; compose.py itself resizes the same way, so this matches.
+    image.setAttribute('preserveAspectRatio', 'none');
+    image.setAttribute('href', fragmentPreviewUrl(fragment));
+    image.setAttributeNS('http://www.w3.org/1999/xlink', 'href', fragmentPreviewUrl(fragment));
+    if (fragment.locked) image.style.opacity = '0.85';
+    group.appendChild(image);
+
+    const outline = measureSvgNs('rect');
+    outline.setAttribute('x', r.x);
+    outline.setAttribute('y', r.y);
+    outline.setAttribute('width', r.width);
+    outline.setAttribute('height', r.height);
+    outline.setAttribute('fill', 'none');
+    outline.setAttribute('stroke', isSelected ? '#2563eb' : 'rgba(37,99,235,0.4)');
+    outline.setAttribute('stroke-width', (isSelected ? 2.5 : 1) / scale);
+    if (fragment.locked) outline.setAttribute('stroke-dasharray', `${4 / scale} ${4 / scale}`);
+    group.appendChild(outline);
+
+    if (isSelected && !fragment.locked) {
+      // Capped relative to the fragment's own on-screen height - a fixed
+      // screen-px offset compensated by 1/scale alone would place the
+      // handle absurdly far above (even off-canvas) at a heavily zoomed-out
+      // view, e.g. right after fitToView() fits an entire multi-fragment
+      // composite into the viewport at once.
+      const handleOffset = Math.min(ROTATE_HANDLE_OFFSET_PX / scale, r.height * 0.4 + 10 / scale);
+      const handleLine = measureSvgNs('line');
+      handleLine.setAttribute('x1', cx);
+      handleLine.setAttribute('y1', r.y);
+      handleLine.setAttribute('x2', cx);
+      handleLine.setAttribute('y2', r.y - handleOffset);
+      handleLine.setAttribute('stroke', '#2563eb');
+      handleLine.setAttribute('stroke-width', 1.5 / scale);
+      group.appendChild(handleLine);
+
+      const handle = measureSvgNs('circle');
+      handle.setAttribute('cx', cx);
+      handle.setAttribute('cy', r.y - handleOffset);
+      handle.setAttribute('r', 7 / scale);
+      handle.setAttribute('fill', '#2563eb');
+      handle.setAttribute('stroke', '#fff');
+      handle.setAttribute('stroke-width', 1.5 / scale);
+      handle.style.cursor = 'grab';
+      handle.dataset.role = 'rotate-handle';
+      handle.dataset.fragmentId = String(fragment.id);
+      group.appendChild(handle);
+    }
+
+    g.appendChild(group);
+  }
+}
+
+function renderFragmentList() {
+  const list = document.getElementById('fragment-list');
+  if (!list) return;
+  if (compositeFragments.length === 0) {
+    list.innerHTML = '<p class="muted">No fragments yet - bring one in above.</p>';
+    return;
+  }
+  const sorted = [...compositeFragments].sort((a, b) => b.z_order - a.z_order); // top-of-stack first in the list
+  list.innerHTML = '';
+  for (const fragment of sorted) {
+    const row = document.createElement('div');
+    row.className = 'takeoff-item-row fragment-row' + (fragment.id === selectedFragmentId ? ' active' : '');
+    row.innerHTML = `
+      <img class="fragment-thumb" src="/api/projects/${projectId}/sheets/${sheetId}/composite-fragments/${fragment.id}/thumb" alt="">
+      <span class="takeoff-item-text">
+        <span class="takeoff-item-name">${escapeHtml(fragment.source_sheet_number)}</span>
+      </span>
+      <input type="number" class="fragment-rotation-input" data-action="rotation" step="0.1" title="Rotation, degrees clockwise"
+        value="${(fragment.rotation || 0).toFixed(1)}" ${fragment.locked ? 'disabled' : ''}>
+      <button type="button" class="icon-btn" data-action="lock" title="${fragment.locked ? 'Unlock' : 'Lock'}">${fragment.locked ? '&#128274;' : '&#128275;'}</button>
+      <button type="button" class="icon-btn" data-action="visible" title="${fragment.visible ? 'Hide' : 'Show'}">${fragment.visible ? '&#128065;' : '&#128584;'}</button>
+      <button type="button" class="icon-btn" data-action="front" title="Bring to front">&#8593;</button>
+      <button type="button" class="icon-btn" data-action="back" title="Send to back">&#8595;</button>
+      <button type="button" class="icon-btn" data-action="delete" title="Remove fragment">&#128465;</button>
+    `;
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('button') || e.target.closest('input')) return;
+      selectFragment(fragment.id);
+    });
+    const rotationInput = row.querySelector('[data-action="rotation"]');
+    rotationInput.addEventListener('click', (e) => e.stopPropagation());
+    rotationInput.addEventListener('change', () => {
+      const deg = Number(rotationInput.value);
+      if (!Number.isFinite(deg)) return;
+      const normalized = normalizeRotationDegrees(deg);
+      fragment.rotation = normalized;
+      rotationInput.value = normalized.toFixed(1);
+      renderCompositeFragmentsOverlay();
+      commitFragmentTransform(fragment.id, { rotation: normalized });
+    });
+    row.querySelector('[data-action="lock"]').addEventListener('click', () => patchFragment(fragment.id, { locked: !fragment.locked }));
+    row.querySelector('[data-action="visible"]').addEventListener('click', () => patchFragment(fragment.id, { visible: !fragment.visible }));
+    row.querySelector('[data-action="front"]').addEventListener('click', () => {
+      const maxZ = Math.max(...compositeFragments.map((f) => f.z_order));
+      patchFragment(fragment.id, { z_order: maxZ + 1 });
+    });
+    row.querySelector('[data-action="back"]').addEventListener('click', () => {
+      const minZ = Math.min(...compositeFragments.map((f) => f.z_order));
+      patchFragment(fragment.id, { z_order: minZ - 1 });
+    });
+    row.querySelector('[data-action="delete"]').addEventListener('click', () => deleteFragment(fragment.id));
+    list.appendChild(row);
+  }
+}
+
+function selectFragment(fragmentId) {
+  selectedFragmentId = fragmentId;
+  renderFragmentList();
+  renderCompositeFragmentsOverlay();
+}
+
+// Every fragment mutation function below passes ?regenerate=0 (see
+// shouldRegenerate in compositeFragments.routes.js) and sets
+// compositeNeedsRefreshOnExit instead of eagerly re-flattening - Edit Layout
+// mode's live SVG-image view already shows the correct result the instant
+// the local compositeFragments array + a render call updates, so there's
+// nothing for the user to gain by waiting on a real PDF re-render for every
+// single lock toggle, reorder, bring-in, or delete. finalizeCompositeLayout
+// (called once, on exit) is what actually catches the real PDF up.
+async function patchFragment(fragmentId, body) {
+  try {
+    const { fragment } = await api(
+      'PATCH',
+      `/api/projects/${projectId}/sheets/${sheetId}/composite-fragments/${fragmentId}?regenerate=0`,
+      body
+    );
+    const idx = compositeFragments.findIndex((f) => f.id === fragmentId);
+    if (idx !== -1) compositeFragments[idx] = fragment;
+    compositeNeedsRefreshOnExit = true;
+    renderFragmentList();
+    renderCompositeFragmentsOverlay();
+  } catch (err) {
+    showToast(`Failed to update fragment: ${err.message}`, 'error');
+  }
+}
+
+// The drag/rotate-end-specific sibling of patchFragment - functionally
+// identical (see the shared comment above), kept separate mainly because its
+// callers already have the fragment's new place/rotation computed locally
+// and don't need a full loadCompositeFragments() round-trip to know it.
+async function commitFragmentTransform(fragmentId, body) {
+  try {
+    const { fragment } = await api(
+      'PATCH',
+      `/api/projects/${projectId}/sheets/${sheetId}/composite-fragments/${fragmentId}?regenerate=0`,
+      body
+    );
+    const idx = compositeFragments.findIndex((f) => f.id === fragmentId);
+    if (idx !== -1) compositeFragments[idx] = fragment;
+    compositeNeedsRefreshOnExit = true;
+    renderFragmentList();
+    renderCompositeFragmentsOverlay();
+  } catch (err) {
+    showToast(`Failed to update fragment: ${err.message}`, 'error');
+    await loadCompositeFragments(); // snap back to the server's last-known layout
+  }
+}
+
+async function deleteFragment(fragmentId) {
+  const ok = await confirmModal({
+    title: 'Remove this fragment?',
+    message: 'It will be removed from the composite drawing. This does not affect the source sheet it was cropped from.',
+    confirmLabel: 'Remove',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api('DELETE', `/api/projects/${projectId}/sheets/${sheetId}/composite-fragments/${fragmentId}?regenerate=0`);
+    if (selectedFragmentId === fragmentId) selectedFragmentId = null;
+    compositeFragments = compositeFragments.filter((f) => f.id !== fragmentId);
+    compositeNeedsRefreshOnExit = true;
+    renderFragmentList();
+    renderCompositeFragmentsOverlay();
+  } catch (err) {
+    showToast(`Failed to remove fragment: ${err.message}`, 'error');
+  }
+}
+
+async function openBringInFragmentFlow() {
+  const result = await openFragmentPicker(projectId, currentSheet.scale_feet_per_inch);
+  if (!result) return;
+  // Drop the new fragment just outside whatever's already placed, along the
+  // same fixed-origin/grows-only convention the canvas itself uses - the
+  // user drags it into its real position afterward.
+  let offsetY = 0;
+  for (const f of compositeFragments) {
+    offsetY = Math.max(offsetY, f.place_y + f.place_height);
+  }
+  result.place.x = 0;
+  result.place.y = offsetY > 0 ? offsetY + 20 : 0;
+  try {
+    await api('POST', `/api/projects/${projectId}/sheets/${sheetId}/composite-fragments?regenerate=0`, result);
+    await loadCompositeFragments(); // a brand-new fragment needs its full row (thumb/preview paths etc.) from the server, unlike the other mutations above
+    compositeNeedsRefreshOnExit = true;
+    showToast('Fragment brought in.', 'success');
+  } catch (err) {
+    showToast(`Failed to bring in fragment: ${err.message}`, 'error');
+  }
+}
+
+// Click-to-select-topmost (by z_order) with click-again-to-cycle-down
+// through whatever else overlaps the same point, drag-to-reposition a
+// selected/unlocked fragment, and drag-the-rotate-handle to spin it around
+// its own center at an arbitrary angle. Registered once at init; internally
+// gated on editLayoutMode so it's inert the rest of the time (see the
+// module-level comment above editLayoutMode).
+function setupCompositeLayoutInteraction() {
+  const svg = document.getElementById('markup-svg');
+
+  // Inverse-rotates pdfPt back into each fragment's own unrotated local
+  // space before the plain bbox test - a rotated fragment's actual visual
+  // footprint isn't its axis-aligned place rect, so hit-testing against
+  // that directly would miss/false-hit near rotated corners.
+  function fragmentsAt(pdfPt) {
+    return compositeFragments
+      .filter((f) => {
+        if (!f.visible) return false;
+        const cx = f.place_x + f.place_width / 2;
+        const cy = f.place_y + f.place_height / 2;
+        const rad = ((f.rotation || 0) * Math.PI) / 180;
+        const dx = pdfPt.x - cx;
+        const dy = pdfPt.y - cy;
+        const localX = dx * Math.cos(rad) + dy * Math.sin(rad) + cx;
+        const localY = -dx * Math.sin(rad) + dy * Math.cos(rad) + cy;
+        return localX >= f.place_x && localX <= f.place_x + f.place_width && localY >= f.place_y && localY <= f.place_y + f.place_height;
+      })
+      .sort((a, b) => b.z_order - a.z_order);
+  }
+
+  // Angle (degrees, clockwise-positive from straight up) of `pt` around
+  // `centerPt`, both in render-px space - matches SVG's own rotate(deg)
+  // convention exactly (see renderCompositeFragmentsOverlay's comment), so
+  // this can be written straight into a fragment's rotation with no sign
+  // flip anywhere in the round trip from drag to render to compose.py.
+  function angleFromCenter(centerPt, pt) {
+    const dx = pt.x - centerPt.x;
+    const dy = pt.y - centerPt.y;
+    return Math.atan2(dx, -dy) * (180 / Math.PI);
+  }
+
+  svg.addEventListener(
+    'mousedown',
+    (e) => {
+      if (!editLayoutMode || e.button !== 0) return;
+
+      const handleEl = e.target.closest && e.target.closest('[data-role="rotate-handle"]');
+      if (handleEl) {
+        const fragment = compositeFragments.find((f) => f.id === Number(handleEl.dataset.fragmentId));
+        if (!fragment || fragment.locked) return;
+        const r = fragmentRectPx(fragment);
+        const centerPt = { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        const renderPt = getMeasureSvgPoint(e);
+        fragmentRotateDrag = {
+          fragmentId: fragment.id,
+          centerPt,
+          startAngle: angleFromCenter(centerPt, renderPt),
+          origRotation: fragment.rotation || 0,
+        };
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+
+      const renderPt = getMeasureSvgPoint(e);
+      const pdfPt = { x: renderPt.x / currentRenderScale, y: renderPt.y / currentRenderScale };
+      const hits = fragmentsAt(pdfPt);
+
+      if (hits.length === 0) {
+        selectedFragmentId = null;
+        fragmentClickCycle = null;
+        renderFragmentList();
+        renderCompositeFragmentsOverlay();
+        return;
+      }
+
+      let target;
+      const sameSpot =
+        fragmentClickCycle && Math.hypot(fragmentClickCycle.x - pdfPt.x, fragmentClickCycle.y - pdfPt.y) < 4 / currentRenderScale;
+      if (sameSpot && hits.some((f) => f.id === fragmentClickCycle.ids[fragmentClickCycle.index])) {
+        fragmentClickCycle.index = (fragmentClickCycle.index + 1) % fragmentClickCycle.ids.length;
+        target = hits.find((f) => f.id === fragmentClickCycle.ids[fragmentClickCycle.index]);
+      } else {
+        fragmentClickCycle = { x: pdfPt.x, y: pdfPt.y, ids: hits.map((f) => f.id), index: 0 };
+        target = hits[0];
+      }
+      selectedFragmentId = target.id;
+      renderFragmentList();
+      renderCompositeFragmentsOverlay();
+
+      if (target.locked) return; // selectable, just not draggable
+      fragmentDrag = { fragmentId: target.id, startPt: renderPt, origPlaceX: target.place_x, origPlaceY: target.place_y };
+      e.preventDefault();
+    },
+    true
+  );
+
+  svg.addEventListener('mousemove', (e) => {
+    if (!editLayoutMode) return;
+    if (fragmentRotateDrag) {
+      const renderPt = getMeasureSvgPoint(e);
+      const angle = angleFromCenter(fragmentRotateDrag.centerPt, renderPt);
+      const fragment = compositeFragments.find((f) => f.id === fragmentRotateDrag.fragmentId);
+      if (!fragment) return;
+      fragment.rotation = normalizeRotationDegrees(fragmentRotateDrag.origRotation + (angle - fragmentRotateDrag.startAngle));
+      renderCompositeFragmentsOverlay();
+      renderFragmentList(); // keeps the numeric rotation input live in sync while dragging
+      return;
+    }
+    if (!fragmentDrag) return;
+    const renderPt = getMeasureSvgPoint(e);
+    const dxPt = (renderPt.x - fragmentDrag.startPt.x) / currentRenderScale;
+    const dyPt = (renderPt.y - fragmentDrag.startPt.y) / currentRenderScale;
+    const fragment = compositeFragments.find((f) => f.id === fragmentDrag.fragmentId);
+    if (!fragment) return;
+    fragment.place_x = Math.max(0, fragmentDrag.origPlaceX + dxPt);
+    fragment.place_y = Math.max(0, fragmentDrag.origPlaceY + dyPt);
+    renderCompositeFragmentsOverlay();
+  });
+
+  document.addEventListener('mouseup', async () => {
+    if (fragmentRotateDrag) {
+      const { fragmentId } = fragmentRotateDrag;
+      fragmentRotateDrag = null;
+      const fragment = compositeFragments.find((f) => f.id === fragmentId);
+      if (fragment) await commitFragmentTransform(fragmentId, { rotation: fragment.rotation });
+      return;
+    }
+    if (!fragmentDrag) return;
+    const { fragmentId } = fragmentDrag;
+    fragmentDrag = null;
+    const fragment = compositeFragments.find((f) => f.id === fragmentId);
+    if (!fragment) return;
+    await commitFragmentTransform(fragmentId, {
+      place: { x: fragment.place_x, y: fragment.place_y, width: fragment.place_width, height: fragment.place_height },
+    });
+  });
+}
+
 // ---------- PDF rendering ----------
 // Reads the PDF from OPFS if this version has been synced - no network in
 // the path of viewing a sheet, per CLAUDE.md - falling back to the
@@ -553,7 +1276,7 @@ function renderSheetLinks(links, token) {
     hotspot.addEventListener('contextmenu', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      window.open(`/sheet.html?projectId=${projectId}&sheetId=${link.target_sheet_id}`, '_blank');
+      showSheetLinkContextMenu(e.clientX, e.clientY, link.target_sheet_id);
     });
     layer.appendChild(hotspot);
   }
@@ -1048,6 +1771,16 @@ let selectedTakeoffItemId = null;
 // activateTakeoffItem, continueTakeoffInstance, subtractFromTakeoffInstance,
 // deactivateTakeoff, armNewlyCreatedTakeoffItem.
 let multiSelectExtraItemIds = new Set();
+// Like multiSelectExtraItemIds, but for assemblies - only meaningful while
+// subtractingIntoInstanceId is set (see toggleMultiSelectExtraAssembly):
+// shift+click an assembly row while subtracting also places that assembly's
+// linked slots using the same box the subtraction hole traces, so "carve
+// this window out of the wall" and "count this window assembly" happen from
+// one trace. An assembly's slots are only meaningful as real left/top/right/
+// bottom edges, so this is gated on Box placement mode - same as assembly
+// placement itself, which is always box-only. Reset alongside
+// multiSelectExtraItemIds everywhere a placement session (re)starts fresh.
+let multiSelectExtraAssemblyIds = new Set();
 let lastPlacedInstanceId = null; // most recent instance posted for the active item on this sheet - used by Backspace on count items
 let continuingInstanceId = null; // set by "Continue Item" - finishing the draft PATCHes this instance instead of POSTing a new one
 // How many points takeoffPoints was seeded with when "Continue Item" started -
@@ -1563,10 +2296,13 @@ let freezePaneIdCounter = 0;
 
 // Persisted panes are stored per-project (not per-sheet) so checking "keep
 // across drawings" on one sheet makes it reappear - same screen position,
-// same captured image - on every other sheet in this project, until
-// explicitly closed. Stored as a plain array of {id, dataUrl, width,
-// height, left, top} in localStorage; nothing server-side, matching the
-// rest of this feature's session-scratch nature (just longer-lived scratch).
+// same captured image, same label/collapsed state - on every other sheet in
+// this project, until explicitly closed. Stored as a plain array of {id,
+// dataUrl, width, height, left, top, boxWidth, boxHeight, collapsed, label}
+// in localStorage; nothing server-side, matching the rest of this feature's
+// session-scratch nature (just longer-lived scratch). boxWidth/boxHeight are
+// only present once the user has manually resized the pane (undefined means
+// "stay shrink-to-fit around the image").
 function freezePanesStorageKey() {
   return `hammgrid-frozen-panes:${projectId}`;
 }
@@ -1589,12 +2325,11 @@ function savePersistedFreezePane(entry) {
   savePersistedFreezePanesList(list);
 }
 
-function updatePersistedFreezePanePosition(id, left, top) {
+function updatePersistedFreezePane(id, patch) {
   const list = loadPersistedFreezePanes();
   const entry = list.find((p) => p.id === id);
   if (!entry) return;
-  entry.left = left;
-  entry.top = top;
+  Object.assign(entry, patch);
   savePersistedFreezePanesList(list);
 }
 
@@ -1602,20 +2337,29 @@ function removePersistedFreezePane(id) {
   savePersistedFreezePanesList(loadPersistedFreezePanes().filter((p) => p.id !== id));
 }
 
-// Builds the floating panel shell (drag handle, "keep across drawings"
-// checkbox, close button) around an already-built content element - a live
-// capture <canvas> for a freshly-drawn box, or an <img> when rehydrating a
-// persisted pane on a different sheet. The two creation paths below share
-// everything except how the image content is produced.
-function buildFreezePaneEl({ id, contentEl, left, top, persisted }) {
+const FREEZE_PANE_MIN_WIDTH = 80;
+const FREEZE_PANE_MIN_HEIGHT = 50;
+const FREEZE_PANE_RESIZE_DIRS = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+
+// Builds the floating panel shell (drag handle, label, "keep across
+// drawings" checkbox, close button, resize handles) around an already-built
+// content element - a live capture <canvas> for a freshly-drawn box, or an
+// <img> when rehydrating a persisted pane on a different sheet. The two
+// creation paths below share everything except how the image content is
+// produced.
+function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collapsed, boxWidth, boxHeight }) {
   const el = document.createElement('div');
   el.className = 'freeze-pane';
   el.style.left = `${left}px`;
   el.style.top = `${top}px`;
+  if (boxWidth) el.style.width = `${boxWidth}px`;
+  if (boxHeight) el.style.height = `${boxHeight}px`;
   el.innerHTML = `
     <div class="freeze-pane-header">
       <span class="freeze-pane-drag-handle" title="Drag to move">&#9776;</span>
+      <input type="text" class="freeze-pane-label" placeholder="Label...">
       <div class="freeze-pane-header-actions">
+        <button type="button" class="icon-btn freeze-pane-collapse" title="Collapse">&#9650;</button>
         <label class="freeze-pane-pin" title="Keep this pane across drawings until closed">
           <input type="checkbox" class="freeze-pane-persist-checkbox">
         </label>
@@ -1624,12 +2368,99 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted }) {
     </div>
   `;
   contentEl.classList.add('freeze-pane-canvas');
-  el.appendChild(contentEl);
+  const viewport = document.createElement('div');
+  viewport.className = 'freeze-pane-viewport';
+  viewport.appendChild(contentEl);
+  el.appendChild(viewport);
+  for (const dir of FREEZE_PANE_RESIZE_DIRS) {
+    const handle = document.createElement('div');
+    handle.className = `freeze-pane-resize-handle freeze-pane-resize-${dir}`;
+    el.appendChild(handle);
+  }
+
+  // Zoom/pan within the pane, independent of the pane's own on-screen box
+  // size (see resize handles above) - session-only, like everything else
+  // about a pane's view state, so it always starts fresh at 1x/centered on
+  // a freshly-built pane rather than needing to persist yet another field.
+  // Never below 1x: this is a fixed-resolution snapshot, not a live view -
+  // there's nothing more of it to reveal by zooming "out" past a full fit,
+  // just blank padding, so 1x doubles as both the default and the floor.
+  let zoomLevel = 1;
+  let panX = 0;
+  let panY = 0;
+  const FREEZE_PANE_MIN_ZOOM = 1;
+  const FREEZE_PANE_MAX_ZOOM = 8;
+
+  function applyPaneZoom() {
+    const vpRect = viewport.getBoundingClientRect();
+    const minPanX = vpRect.width * (1 - zoomLevel);
+    const minPanY = vpRect.height * (1 - zoomLevel);
+    panX = Math.min(0, Math.max(minPanX, panX));
+    panY = Math.min(0, Math.max(minPanY, panY));
+    contentEl.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+  }
+
+  viewport.addEventListener(
+    'wheel',
+    (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // don't also scroll-zoom the main sheet underneath
+      const vpRect = viewport.getBoundingClientRect();
+      const vx = e.clientX - vpRect.left;
+      const vy = e.clientY - vpRect.top;
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const newZoom = Math.min(FREEZE_PANE_MAX_ZOOM, Math.max(FREEZE_PANE_MIN_ZOOM, zoomLevel * factor));
+      if (newZoom === zoomLevel) return;
+      // Zoom-to-cursor: keep whatever content point is under the mouse
+      // fixed on screen rather than always zooming toward the corner.
+      const localX = (vx - panX) / zoomLevel;
+      const localY = (vy - panY) / zoomLevel;
+      zoomLevel = newZoom;
+      panX = vx - localX * zoomLevel;
+      panY = vy - localY * zoomLevel;
+      applyPaneZoom();
+    },
+    { passive: false }
+  );
+
+  let paneZoomDrag = null;
+  viewport.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    // Always claim the click, even at the default 1x fit where there's
+    // nothing to pan into yet - the pane is meant to be screen-anchored and
+    // fully self-contained (see the freeze-pane module comment), and
+    // without this a click on its image would otherwise bubble up and
+    // start dragging the MAIN sheet underneath instead.
+    e.stopPropagation();
+    if (zoomLevel <= 1) return;
+    paneZoomDrag = { startX: e.clientX, startY: e.clientY, origPanX: panX, origPanY: panY };
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!paneZoomDrag) return;
+    panX = paneZoomDrag.origPanX + (e.clientX - paneZoomDrag.startX);
+    panY = paneZoomDrag.origPanY + (e.clientY - paneZoomDrag.startY);
+    applyPaneZoom();
+  });
+  window.addEventListener('mouseup', () => {
+    paneZoomDrag = null;
+  });
+  viewport.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    zoomLevel = 1;
+    panX = 0;
+    panY = 0;
+    applyPaneZoom();
+  });
 
   document.getElementById('zoom-wrap').appendChild(el);
   freezePanes.push({ id, el });
 
   const persistCheckbox = el.querySelector('.freeze-pane-persist-checkbox');
+  const labelInput = el.querySelector('.freeze-pane-label');
+  const collapseBtn = el.querySelector('.freeze-pane-collapse');
+
+  labelInput.value = label || '';
   persistCheckbox.checked = !!persisted;
   persistCheckbox.addEventListener('change', () => {
     if (persistCheckbox.checked) {
@@ -1640,10 +2471,39 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted }) {
         height: contentEl.height || contentEl.naturalHeight,
         left: el.offsetLeft,
         top: el.offsetTop,
+        boxWidth: el.style.width ? el.offsetWidth : undefined,
+        boxHeight: el.style.height ? el.offsetHeight : undefined,
+        collapsed: el.classList.contains('freeze-pane-collapsed'),
+        label: labelInput.value,
       });
     } else {
       removePersistedFreezePane(id);
     }
+  });
+
+  labelInput.addEventListener('input', () => {
+    if (persistCheckbox.checked) updatePersistedFreezePane(id, { label: labelInput.value });
+  });
+
+  // Collapsing hides the content but must not leave an explicit inline
+  // height (set by a prior edge/corner resize) forcing the container to
+  // stay tall with nothing visible in it - stash it on the element and
+  // restore on expand.
+  function setCollapsed(next) {
+    if (next) {
+      if (el.style.height) el.dataset.expandedHeight = el.style.height;
+      el.style.height = '';
+    } else if (el.dataset.expandedHeight) {
+      el.style.height = el.dataset.expandedHeight;
+    }
+    el.classList.toggle('freeze-pane-collapsed', next);
+    collapseBtn.title = next ? 'Expand' : 'Collapse';
+  }
+  setCollapsed(!!collapsed);
+  collapseBtn.addEventListener('click', () => {
+    const next = !el.classList.contains('freeze-pane-collapsed');
+    setCollapsed(next);
+    if (persistCheckbox.checked) updatePersistedFreezePane(id, { collapsed: next });
   });
 
   el.querySelector('.freeze-pane-close').addEventListener('click', () => {
@@ -1654,7 +2514,8 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted }) {
 
   const header = el.querySelector('.freeze-pane-header');
   header.addEventListener('mousedown', (e) => {
-    if (e.target.closest('.freeze-pane-close') || e.target.closest('.freeze-pane-pin')) return;
+    if (e.target.closest('.freeze-pane-close') || e.target.closest('.freeze-pane-pin') || e.target.closest('.freeze-pane-collapse') || e.target.closest('.freeze-pane-label'))
+      return;
     e.preventDefault();
     e.stopPropagation();
     const startX = e.clientX;
@@ -1668,10 +2529,84 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted }) {
     function onUp() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
-      if (persistCheckbox.checked) updatePersistedFreezePanePosition(id, el.offsetLeft, el.offsetTop);
+      if (persistCheckbox.checked) updatePersistedFreezePane(id, { left: el.offsetLeft, top: el.offsetTop });
     }
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  });
+
+  el.querySelectorAll('.freeze-pane-resize-handle').forEach((handle) => {
+    const dir = FREEZE_PANE_RESIZE_DIRS.find((d) => handle.classList.contains(`freeze-pane-resize-${d}`));
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startWidth = el.offsetWidth;
+      const startHeight = el.offsetHeight;
+      const startLeft = el.offsetLeft;
+      const startTop = el.offsetTop;
+      // Locked to the captured image's own proportions - a resize always
+      // scales it, never distorts it. Skipped while collapsed: there's no
+      // visible image then, just a header bar, and the e/w-only handles
+      // still shown in that state (see the CSS) are for widening the bar to
+      // read a long label, not for resizing an image that isn't on screen.
+      const headerHeight = el.querySelector('.freeze-pane-header').offsetHeight;
+      const collapsed = el.classList.contains('freeze-pane-collapsed');
+      const ratio = !collapsed && startHeight > headerHeight ? startWidth / (startHeight - headerHeight) : null;
+
+      function onMove(ev) {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+
+        if (ratio) {
+          const widthDelta = dir.includes('e') ? dx : dir.includes('w') ? -dx : 0;
+          const heightDelta = dir.includes('s') ? dy : dir.includes('n') ? -dy : 0;
+          const hasH = dir.includes('e') || dir.includes('w');
+          const hasV = dir.includes('n') || dir.includes('s');
+          // Corner handles blend both axes (smooth diagonal drag, no
+          // jarring switch between which one "wins"); edge handles just
+          // use their one axis, converting it to a width-equivalent so the
+          // rest of the math only has to handle one dimension.
+          const effectiveWidthDelta = hasH && hasV ? (widthDelta + heightDelta * ratio) / 2 : hasH ? widthDelta : heightDelta * ratio;
+
+          let newWidth = Math.max(FREEZE_PANE_MIN_WIDTH, startWidth + effectiveWidthDelta);
+          let newHeight = newWidth / ratio + headerHeight;
+          if (newHeight < FREEZE_PANE_MIN_HEIGHT) {
+            newHeight = FREEZE_PANE_MIN_HEIGHT;
+            newWidth = Math.max(FREEZE_PANE_MIN_WIDTH, (newHeight - headerHeight) * ratio);
+            newHeight = newWidth / ratio + headerHeight;
+          }
+
+          el.style.width = `${newWidth}px`;
+          el.style.height = `${newHeight}px`;
+          if (dir.includes('w')) el.style.left = `${startLeft + (startWidth - newWidth)}px`;
+          if (dir.includes('n')) el.style.top = `${startTop + (startHeight - newHeight)}px`;
+          applyPaneZoom(); // re-clamp pan - the viewport's own size just changed under it
+          return;
+        }
+
+        // Collapsed: free width-only resize, unaffected by aspect ratio.
+        if (dir.includes('e')) {
+          el.style.width = `${Math.max(FREEZE_PANE_MIN_WIDTH, startWidth + dx)}px`;
+        }
+        if (dir.includes('w')) {
+          const newWidth = Math.max(FREEZE_PANE_MIN_WIDTH, startWidth - dx);
+          el.style.width = `${newWidth}px`;
+          el.style.left = `${startLeft + (startWidth - newWidth)}px`;
+        }
+      }
+      function onUp() {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        if (!persistCheckbox.checked) return;
+        const patch = { left: el.offsetLeft, top: el.offsetTop, boxWidth: el.offsetWidth };
+        if (!el.classList.contains('freeze-pane-collapsed')) patch.boxHeight = el.offsetHeight;
+        updatePersistedFreezePane(id, patch);
+      }
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    });
   });
 }
 
@@ -1710,7 +2645,17 @@ function restorePersistedFreezePanes() {
     img.src = entry.dataUrl;
     img.width = entry.width;
     img.height = entry.height;
-    buildFreezePaneEl({ id: entry.id, contentEl: img, left: entry.left, top: entry.top, persisted: true });
+    buildFreezePaneEl({
+      id: entry.id,
+      contentEl: img,
+      left: entry.left,
+      top: entry.top,
+      persisted: true,
+      label: entry.label,
+      collapsed: entry.collapsed,
+      boxWidth: entry.boxWidth,
+      boxHeight: entry.boxHeight,
+    });
   }
 }
 
@@ -2110,6 +3055,118 @@ function clearTakeoffDraft() {
   awaitingArcThrough = false;
   arcThroughPoint = null;
   ensureTakeoffDraftLayer().innerHTML = '';
+  const liveQtyEl = document.getElementById('takeoff-item-actions-live-qty');
+  if (liveQtyEl) liveQtyEl.textContent = '';
+  resetLiveTakeoffItemTotals();
+}
+
+// Restores every pane row's total to its last-rendered committed value (see
+// updateLiveTakeoffItemTotals) - called whenever the draft clears, so a
+// stale live-preview number can't linger if a submit fails partway (the
+// success path corrects it anyway via the reload's own renderTakeoffPane,
+// but this covers the gap, and the error path since that one never
+// re-renders at all).
+function resetLiveTakeoffItemTotals() {
+  document.querySelectorAll('#takeoff-items-list .takeoff-item-row').forEach((row) => {
+    const item = takeoffItems.find((i) => i.id === Number(row.dataset.itemId));
+    const totalEl = row.querySelector('.takeoff-item-total');
+    if (item && totalEl) totalEl.textContent = formatTakeoffQuantity(item, Number(row.dataset.sheetTotal) || 0);
+  });
+}
+
+// Live running total in the item's own pane row while a linear/perimeter/
+// area is being traced - the row-level analog of updateLiveTakeoffQuantity's
+// bottom-bar figure. Overlays the in-progress trace's effect on top of
+// whatever committed total the row was last rendered with (see its
+// data-sheet-total, stashed in renderTakeoffPane) via a plain textContent
+// write - no re-grouping sheetTakeoffInstances and no re-rendering the list
+// on every mousemove, so this stays cheap regardless of trace frequency.
+function updateLiveTakeoffItemTotals(pts) {
+  if (!pts || pts.length === 0 || takeoffTool === 'count' || takeoffTool === 'assembly-box') return;
+  const isArea = takeoffTool === 'area';
+  if (isArea && pts.length < 3) return;
+
+  function applyLiveTotal(itemId, rawTotal) {
+    const row = document.querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${itemId}"]`);
+    const totalEl = row && row.querySelector('.takeoff-item-total');
+    const item = takeoffItems.find((i) => i.id === itemId);
+    if (totalEl && item) totalEl.textContent = formatTakeoffQuantity(item, rawTotal);
+  }
+
+  // Subtracting a hole reduces the target instance's own net area - the
+  // row's stashed total already reflects every hole finished earlier in
+  // this same "stays armed for more holes" session (each one reloads
+  // instances and re-renders before the next hole starts), so only this
+  // one in-progress hole's area needs subtracting here.
+  if (subtractingIntoInstanceId) {
+    const target = sheetTakeoffInstances.find((i) => i.id === subtractingIntoInstanceId);
+    const row = target && document.querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${target.item_id}"]`);
+    if (!row) return;
+    const base = Number(row.dataset.sheetTotal) || 0;
+    applyLiveTotal(target.item_id, Math.max(0, base - polygonAreaFeet(pts)));
+    return;
+  }
+
+  // Continuing an existing instance swaps its old (already-in-base)
+  // committed quantity for the extended one, rather than adding a new
+  // instance's worth on top.
+  if (continuingInstanceId) {
+    const target = sheetTakeoffInstances.find((i) => i.id === continuingInstanceId);
+    const row = target && document.querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${target.item_id}"]`);
+    if (!row) return;
+    const base = Number(row.dataset.sheetTotal) || 0;
+    const newQuantity = isArea ? netAreaFeet(pts, target.geometry.holes) : polylineLengthFeet(pts);
+    applyLiveTotal(target.item_id, base - target.quantity + newQuantity);
+    return;
+  }
+
+  // Fresh placement (possibly multi-select) - a brand-new instance's worth
+  // gets added on top of every combined item's own base total.
+  const newQuantity = isArea ? polygonAreaFeet(pts) : polylineLengthFeet(pts);
+  const itemIds = activeTakeoffItemId ? [activeTakeoffItemId, ...multiSelectExtraItemIds] : [...multiSelectExtraItemIds];
+  for (const itemId of itemIds) {
+    const row = document.querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${itemId}"]`);
+    if (!row) continue;
+    applyLiveTotal(itemId, (Number(row.dataset.sheetTotal) || 0) + newQuantity);
+  }
+}
+
+// Live running quantity in the pane's bottom action bar (see
+// takeoff-item-actions-live-qty) while a linear/perimeter/area is being
+// traced - mirrors exactly what finishTakeoffInstance would compute if the
+// trace stopped right now (same math, same subtract/continue branches), so
+// the number never surprises you when you actually click to finish. `pts`
+// is redrawTakeoff's already-computed "shape as it would commit right now"
+// array - this never recomputes it.
+function updateLiveTakeoffQuantity(pts) {
+  const el = document.getElementById('takeoff-item-actions-live-qty');
+  if (!el) return;
+  const item = getActiveTakeoffItem();
+  if (!pts || pts.length === 0 || !item || takeoffTool === 'count' || takeoffTool === 'assembly-box') {
+    el.textContent = '';
+    return;
+  }
+  const isArea = takeoffTool === 'area';
+  if (isArea && pts.length < 3) {
+    el.textContent = ''; // no enclosed area yet with fewer than 3 points
+    return;
+  }
+  if (subtractingIntoInstanceId) {
+    // The hole itself, not run through the item's output formula - a
+    // formula like "takeoff * Wall_Height" describes the wall, not the
+    // opening being cut out of it.
+    el.textContent = `New opening: ${formatRawTakeoffQuantity('area', polygonAreaFeet(pts))}`;
+    return;
+  }
+  if (continuingInstanceId) {
+    const target = sheetTakeoffInstances.find((i) => i.id === continuingInstanceId);
+    const holes = target && target.geometry.holes;
+    const quantity = isArea ? netAreaFeet(pts, holes) : polylineLengthFeet(pts);
+    el.textContent = formatTakeoffQuantity(item, quantity);
+    return;
+  }
+  const quantity = isArea ? polygonAreaFeet(pts) : polylineLengthFeet(pts);
+  el.textContent = formatTakeoffQuantity(item, quantity);
 }
 
 function getActiveTakeoffItem() {
@@ -2199,17 +3256,43 @@ function redrawTakeoff(livePt) {
   } else {
     linePts = livePt ? [...takeoffPoints, livePt] : takeoffPoints;
   }
+
+  updateLiveTakeoffQuantity(linePts);
+  updateLiveTakeoffItemTotals(linePts);
   if (linePts.length === 0) return;
 
   const scale = zoomPan ? zoomPan.state.scale : 1;
   const activeItem = getActiveTakeoffItem();
   const color = activeItem ? activeItem.color : '#f59e0b'; // no item yet (first placement) - neutral until named
 
-  const poly = measureSvgNs(isBoxPreview ? 'polygon' : 'polyline');
-  poly.setAttribute('points', linePts.map((p) => `${p.x},${p.y}`).join(' '));
+  // PlanSwift-style live fill: an area draft (point-by-point or the box
+  // shortcut) is shown filled exactly as if it were closed right now at the
+  // live cursor point, not just an outlined path - matching the always-
+  // visible running quantity above. Holes already cut into the instance
+  // being extended (see "Continue Item") stay punched through the live fill
+  // too, via the same even-odd path used for committed geometry.
+  const isAreaFill = takeoffTool === 'area' && linePts.length >= 2;
+  let poly;
+  if (isAreaFill) {
+    const target = continuingInstanceId && sheetTakeoffInstances.find((i) => i.id === continuingInstanceId);
+    const holes = target && target.geometry.holes;
+    if (holes && holes.length) {
+      poly = measureSvgNs('path');
+      poly.setAttribute('d', areaPathD(linePts, holes));
+      poly.setAttribute('fill-rule', 'evenodd');
+    } else {
+      poly = measureSvgNs('polygon');
+      poly.setAttribute('points', linePts.map((p) => `${p.x},${p.y}`).join(' '));
+    }
+    poly.setAttribute('fill', color);
+    poly.setAttribute('fill-opacity', '0.15');
+  } else {
+    poly = measureSvgNs('polyline');
+    poly.setAttribute('points', linePts.map((p) => `${p.x},${p.y}`).join(' '));
+    poly.setAttribute('fill', 'none');
+  }
   poly.setAttribute('stroke', color);
   poly.setAttribute('stroke-width', 2 / scale);
-  poly.setAttribute('fill', 'none');
   poly.setAttribute('stroke-dasharray', `${5 / scale} ${3 / scale}`);
   g.appendChild(poly);
 
@@ -2423,6 +3506,58 @@ function showTakeoffContextMenu(x, y, instance) {
 
   // Dismiss on the next click anywhere, or Escape. Deferred by a tick so the
   // right-click that opened this menu doesn't immediately close it again.
+  setTimeout(() => {
+    document.addEventListener('click', hideTakeoffContextMenu, { once: true });
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.key === 'Escape') hideTakeoffContextMenu();
+      },
+      { once: true }
+    );
+  }, 0);
+}
+
+// Reuses #takeoff-context-menu's id/CSS and hideTakeoffContextMenu, same
+// convention every other context menu in this file already follows.
+function showSheetLinkContextMenu(x, y, targetSheetId) {
+  hideTakeoffContextMenu();
+  const menu = document.createElement('div');
+  menu.id = 'takeoff-context-menu';
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+  const url = `/sheet.html?projectId=${projectId}&sheetId=${targetSheetId}`;
+  menu.innerHTML = `
+    <button type="button" data-action="tab">Open in new tab</button>
+    <button type="button" data-action="window">Open in new window</button>
+    <button type="button" data-action="intab">Open as tab within drawing view</button>
+  `;
+  document.body.appendChild(menu);
+
+  menu.querySelector('[data-action="tab"]').addEventListener('click', () => {
+    hideTakeoffContextMenu();
+    window.open(url, '_blank');
+  });
+  menu.querySelector('[data-action="window"]').addEventListener('click', () => {
+    hideTakeoffContextMenu();
+    window.open(url, `sheet-${targetSheetId}`, 'noopener,width=1200,height=900');
+  });
+  menu.querySelector('[data-action="intab"]').addEventListener('click', () => {
+    hideTakeoffContextMenu();
+    // Ordinary navigation (sheet-nav arrows, take-off/flag "go to drawing"
+    // links, etc.) must never grow the open-tabs list - only this explicit
+    // action does, by appending here before the navigation actually
+    // happens. The destination page's own ensureCurrentSheetInOpenTabs()
+    // then just relabels this same entry once it knows its sheet_number.
+    const tabs = loadOpenTabs();
+    if (tabs.length === 0) tabs.push({ sheetId, label: currentSheet.sheet_number });
+    if (!tabs.some((t) => String(t.sheetId) === String(targetSheetId))) {
+      tabs.push({ sheetId: targetSheetId });
+    }
+    saveOpenTabs(tabs);
+    window.location.href = url;
+  });
+
   setTimeout(() => {
     document.addEventListener('click', hideTakeoffContextMenu, { once: true });
     document.addEventListener(
@@ -3351,6 +4486,7 @@ function activateTakeoffItem(item) {
   activeTakeoffItemId = item.id;
   selectedTakeoffItemId = item.id;
   multiSelectExtraItemIds = new Set();
+  multiSelectExtraAssemblyIds = new Set();
   lastPlacedInstanceId = null;
   persistActiveTakeoff();
   updateTakeoffToolbar();
@@ -3576,6 +4712,40 @@ function toggleMultiSelectExtraItem(item) {
   renderTakeoffPane();
 }
 
+// Shift+click on an assembly row while subtracting an area - arms that
+// assembly to also get a full box placement (all its linked slots) using the
+// same box the subtraction hole traces, so a masonry-wall opening can
+// simultaneously carve the hole and count a window assembly from one trace
+// (see finishTakeoffInstance's subtractingIntoInstanceId branch). Gated on
+// Box placement mode, since an assembly's slots only make sense as real
+// left/top/right/bottom edges - a freehand polygon has no such edges.
+function toggleMultiSelectExtraAssembly(assembly) {
+  if (!subtractingIntoInstanceId) {
+    showToast('Shift+click an assembly while subtracting an area to pair it with the same trace.', 'error');
+    return;
+  }
+  if (takeoffPlacementMode !== 'box') {
+    showToast('Switch to Box placement mode to pair an assembly with a subtraction.', 'error');
+    return;
+  }
+  if (takeoffPoints.length > 0) {
+    showToast('Finish or cancel the current trace before changing selected assemblies.', 'error');
+    return;
+  }
+  const hasAnyLink = ['area', 'top', 'bottom', 'left', 'right'].some((k) => assembly[`${k}_item_id`]);
+  if (!hasAnyLink) {
+    showToast('Link at least one item before pairing this assembly.', 'error');
+    return;
+  }
+  if (multiSelectExtraAssemblyIds.has(assembly.id)) multiSelectExtraAssemblyIds.delete(assembly.id);
+  else multiSelectExtraAssemblyIds.add(assembly.id);
+  renderTakeoffAssembliesList();
+  // The paired-count suffix on the bottom action bar (see
+  // showTakeoffItemActionsBar) lives in the items pane's own render pass,
+  // not this assembly list's - refresh it too so the count shows up live.
+  renderTakeoffPane();
+}
+
 // "Continue Item" from the right-click menu - re-opens an already-placed
 // instance as the live draft, seeded with its existing points, so the next
 // clicks extend that same shape from its last point. Finishing (see
@@ -3598,6 +4768,7 @@ function continueTakeoffInstance(instance) {
   arcThroughPoint = null;
   continuingInstanceId = instance.id;
   subtractingIntoInstanceId = null;
+  multiSelectExtraAssemblyIds = new Set();
   lastPlacedInstanceId = null;
   persistActiveTakeoff();
   updateTakeoffToolbar();
@@ -3620,6 +4791,7 @@ function subtractFromTakeoffInstance(instance) {
   takeoffTool = 'area';
   activeTakeoffItemId = instance.item_id;
   multiSelectExtraItemIds = new Set();
+  multiSelectExtraAssemblyIds = new Set();
   subtractingIntoInstanceId = instance.id;
   lastPlacedInstanceId = null;
   persistActiveTakeoff();
@@ -3644,6 +4816,7 @@ function deactivateTakeoff() {
   takeoffTool = null;
   activeTakeoffItemId = null;
   multiSelectExtraItemIds = new Set();
+  multiSelectExtraAssemblyIds = new Set();
   lastPlacedInstanceId = null;
   continuingInstanceId = null;
   continuingSeedPointCount = 0;
@@ -3747,6 +4920,22 @@ function finishTakeoffInstance() {
     // as new area for B" happen from a single trace.
     if (multiSelectExtraItemIds.size > 0) {
       submitTakeoffInstances([...multiSelectExtraItemIds], points, polygonAreaFeet(points), polygonPerimeterFeet(points));
+    }
+    // Shift-selected extra assemblies (see toggleMultiSelectExtraAssembly) -
+    // the same box gets submitted as a full assembly placement (all its
+    // linked slots), so "carve this window out of the wall" and "count this
+    // window assembly" happen from the same trace. Only reachable in Box
+    // placement mode (enforced when the assembly was selected), so `points`
+    // is always the 4 corners of a rectangle - bounding box == the traced
+    // shape, not an approximation of a freehand polygon.
+    if (multiSelectExtraAssemblyIds.size > 0) {
+      const xs = points.map((p) => p.x);
+      const ys = points.map((p) => p.y);
+      const box = { left: Math.min(...xs), right: Math.max(...xs), top: Math.min(...ys), bottom: Math.max(...ys) };
+      for (const assemblyId of multiSelectExtraAssemblyIds) {
+        const assembly = takeoffAssemblies.find((a) => a.id === assemblyId);
+        if (assembly) submitAssemblyInstances(assembly, box);
+      }
     }
     return;
   }
@@ -4225,6 +5414,7 @@ function armNewlyCreatedTakeoffItem(item, type) {
   takeoffTool = type;
   activeTakeoffItemId = item.id;
   multiSelectExtraItemIds = new Set();
+  multiSelectExtraAssemblyIds = new Set();
   lastPlacedInstanceId = null;
   persistActiveTakeoff();
   updateTakeoffToolbar();
@@ -4847,6 +6037,13 @@ function renderTakeoffPane() {
       'takeoff-item-row' +
       (isArmed || isSelected || isEditing || isMultiSelected || isAssemblyLinked ? ' active' : '') +
       (isHidden ? ' takeoff-hidden-item' : '');
+    // Committed total as of this render, stashed on the row so the live
+    // placement loop (see updateLiveTakeoffItemTotals) can overlay an
+    // in-progress delta on top of it with a plain textContent write - no
+    // re-grouping sheetTakeoffInstances, no re-rendering the list, on every
+    // mousemove.
+    row.dataset.itemId = String(item.id);
+    row.dataset.sheetTotal = String(sheetTotal);
     row.innerHTML = `
       <span class="takeoff-color-dot" style="background:${item.color};"></span>
       <span class="takeoff-item-text">
@@ -4911,14 +6108,25 @@ function syncItemActionsBarWidth() {
 // Delete apply to either state exactly the same way.
 function showTakeoffItemActionsBar(item, isArmed) {
   const bar = document.getElementById('takeoff-item-actions-bar');
+  // Reset the live-quantity readout's baseline on every (re)render of this
+  // bar - a stale number from whatever was last being traced shouldn't
+  // linger after switching items until the next mousemove happens to fire.
+  document.getElementById('takeoff-item-actions-live-qty').textContent = '';
   const isMulti = isArmed && multiSelectExtraItemIds.size > 0;
   document.getElementById('takeoff-item-actions-dot').style.background = item.color;
   // Edit/Remove/Delete are single-item actions - with several items combined
   // into one trace, which one they'd apply to is ambiguous, so only Stop
-  // stays available until the selection narrows back down to one.
+  // stays available until the selection narrows back down to one. A paired
+  // assembly (see multiSelectExtraAssemblyIds) doesn't add that ambiguity -
+  // it always places on its own linked items, never the anchor - so it only
+  // needs a name-suffix, not the same button-hiding treatment.
+  const assemblySuffix =
+    isArmed && multiSelectExtraAssemblyIds.size > 0
+      ? ` + ${multiSelectExtraAssemblyIds.size} assembl${multiSelectExtraAssemblyIds.size === 1 ? 'y' : 'ies'} paired`
+      : '';
   document.getElementById('takeoff-item-actions-name').textContent = isMulti
-    ? `${multiSelectExtraItemIds.size + 1} ${item.type} items selected`
-    : item.name;
+    ? `${multiSelectExtraItemIds.size + 1} ${item.type} items selected${assemblySuffix}`
+    : `${item.name}${assemblySuffix}`;
   document.getElementById('takeoff-item-actions-edit').style.display = isMulti ? 'none' : '';
   document.getElementById('takeoff-item-actions-edit').title = 'Edit properties & formula'; // reset in case showAssemblyActionsBar last changed it
   document.getElementById('takeoff-item-actions-remove').style.display = isMulti ? 'none' : '';
@@ -4935,6 +6143,7 @@ function showTakeoffItemActionsBar(item, isArmed) {
 // Remove doesn't apply (assemblies aren't sheet-scoped) so it's hidden.
 function showAssemblyActionsBar(assembly, isArmed) {
   const bar = document.getElementById('takeoff-item-actions-bar');
+  document.getElementById('takeoff-item-actions-live-qty').textContent = '';
   document.getElementById('takeoff-item-actions-dot').style.background = 'var(--border)';
   const linkedCount = ['area', 'top', 'bottom', 'left', 'right'].filter((k) => assembly[`${k}_item_id`]).length;
   document.getElementById('takeoff-item-actions-name').textContent = `${assembly.name} (${linkedCount}/5 linked)`;
@@ -5082,9 +6291,10 @@ function renderTakeoffAssembliesList() {
   for (const assembly of takeoffAssemblies) {
     const isArmed = assembly.id === activeAssemblyId;
     const isSelected = assembly.id === selectedAssemblyId;
+    const isMultiSelected = multiSelectExtraAssemblyIds.has(assembly.id);
     const linkedCount = ['area', 'top', 'bottom', 'left', 'right'].filter((k) => assembly[`${k}_item_id`]).length;
     const row = document.createElement('div');
-    row.className = 'takeoff-item-row takeoff-assembly-row' + (isArmed || isSelected ? ' active' : '');
+    row.className = 'takeoff-item-row takeoff-assembly-row' + (isArmed || isSelected || isMultiSelected ? ' active' : '');
     row.innerHTML = `
       <span class="takeoff-item-text">
         <span class="takeoff-item-name">${escapeHtml(assembly.name)}</span>
@@ -5095,7 +6305,13 @@ function renderTakeoffAssembliesList() {
           ? '<button type="button" class="icon-btn takeoff-row-activate-btn" data-action="activate" title="Activate">&#9654;</button>'
           : ''
       }`;
-    row.addEventListener('click', () => selectAssemblyRow(assembly));
+    row.addEventListener('click', (e) => {
+      if (e.shiftKey) {
+        toggleMultiSelectExtraAssembly(assembly);
+        return;
+      }
+      selectAssemblyRow(assembly);
+    });
     row.addEventListener('dblclick', () => activateAssembly(assembly));
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -5300,6 +6516,14 @@ function setupTakeoffToolbar() {
       takeoffPlacementMode = btn.dataset.mode;
       modeGroup.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
       clearTakeoffDraft();
+      // Paired assemblies (see toggleMultiSelectExtraAssembly) only make
+      // sense against a rectangle - drop them the moment placement mode
+      // leaves Box rather than silently reusing a freehand polygon's
+      // bounding box as if it were the traced shape.
+      if (takeoffPlacementMode !== 'box' && multiSelectExtraAssemblyIds.size > 0) {
+        multiSelectExtraAssemblyIds = new Set();
+        renderTakeoffAssembliesList();
+      }
     });
   });
 
@@ -5659,6 +6883,9 @@ async function loadSheetOffline() {
   currentSheet = sheet;
   allVersions = versions;
   displayedVersionId = sheet.current_version_id;
+  document.title = `${sheet.sheet_number} — HammGrid`;
+  ensureCurrentSheetInOpenTabs();
+  renderTabStrip();
 
   if (!offlineMode) {
     const currentVersion = versions.find((v) => v.id === sheet.current_version_id) || versions[0];
@@ -5679,6 +6906,12 @@ async function loadSheetOffline() {
 
   setupDownloadButton();
   setupEditSheetButton();
+  setupCompositeLayoutButton();
+  if (currentSheet.is_composite) {
+    setupCompositeLayoutInteraction();
+    const bringInBtn = document.getElementById('composite-bring-in-btn');
+    if (bringInBtn) bringInBtn.addEventListener('click', openBringInFragmentFlow);
+  }
   setupSheetNavButtons();
   updateVersionBadge();
   renderSearchTermChip();
@@ -5707,6 +6940,7 @@ async function loadSheetOffline() {
 
   markupsController = initMarkups({
     sheetId,
+    apiBase: `/api/sheets/${sheetId}`,
     projectId,
     me,
     svgEl: document.getElementById('markup-svg'),

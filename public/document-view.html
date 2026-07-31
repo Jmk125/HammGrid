@@ -16,14 +16,46 @@
       <button id="logout" type="button">Sign out</button>
     </div>
   </div>
-  <main class="wide">
-    <div class="zoom-wrap" id="zoom-wrap" style="height: 88vh;">
-      <div class="zoom-pan-inner" id="zoom-pan-inner">
-        <canvas id="pdf-canvas"></canvas>
+  <div class="sheet-view-row">
+    <div class="sheet-canvas-area">
+      <div class="zoom-wrap" id="zoom-wrap" style="height: 88vh;">
+        <div class="version-badge" id="page-nav-badge" style="display:none;">
+          <button type="button" id="doc-page-prev-btn" title="Previous page">&#9664;</button>
+          <div class="version-badge-inner">
+            <span id="doc-page-label">Page 1 / 1</span>
+          </div>
+          <button type="button" id="doc-page-next-btn" title="Next page">&#9654;</button>
+        </div>
+        <div class="zoom-pan-inner" id="zoom-pan-inner">
+          <div class="markup-stage">
+            <canvas id="pdf-canvas"></canvas>
+            <svg id="markup-svg"></svg>
+          </div>
+        </div>
+        <div class="markup-popup" id="markup-popup" style="display:none;"></div>
+      </div>
+      <p class="muted" id="pdf-status"></p>
+    </div>
+
+    <div class="sheet-pane" id="sheet-pane" style="display:none;">
+      <div class="pane-resize-handle" id="pane-resize-handle" title="Drag to resize"></div>
+      <button class="pane-toggle" id="pane-toggle-btn" type="button">&#9656;</button>
+      <div class="pane-body" id="pane-body">
+        <div class="pane-section" id="section-markup">
+          <button class="pane-section-header" type="button" data-section="doc-markup">
+            <span>Markup Tools</span>
+            <span class="chevron">&#9662;</span>
+          </button>
+          <div class="pane-section-body">
+            <div class="icon-tool-grid" id="tool-grid"></div>
+            <div class="field"><label>Color</label><input type="color" id="markup-color" value="#e11d48"></div>
+            <div class="field"><label>Line width</label><input type="number" id="markup-width" value="2" min="1" max="10"></div>
+            <label id="publish-default-wrap" style="display:none;"><input type="checkbox" id="markup-publish-default"> Draw as published</label>
+          </div>
+        </div>
       </div>
     </div>
-    <p class="muted" id="pdf-status"></p>
-  </main>
+  </div>
   <script src="/js/api.js"></script>
   <script type="module" src="/js/document-view.js"></script>
   <script type="module" src="/js/pwa.js"></script>

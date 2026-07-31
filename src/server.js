@@ -16,6 +16,7 @@ const documentFilesRoutes = require('./routes/documentFiles.routes');
 const documentVersionsRoutes = require('./routes/documentVersions.routes');
 const documentFoldersRoutes = require('./routes/documentFolders.routes');
 const markupsRoutes = require('./routes/markups.routes');
+const documentMarkupsRoutes = require('./routes/documentMarkups.routes');
 const sheetLinksRoutes = require('./routes/sheetLinks.routes');
 const projectSheetLinksRoutes = require('./routes/projectSheetLinks.routes');
 const projectSheetTextRoutes = require('./routes/projectSheetText.routes');
@@ -35,6 +36,8 @@ const sharesRoutes = require('./routes/shares.routes');
 const shareAccessRoutes = require('./routes/shareAccess.routes');
 const exportsRoutes = require('./routes/exports.routes');
 const activityRoutes = require('./routes/activity.routes');
+const compositesRoutes = require('./routes/composites.routes');
+const compositeFragmentsRoutes = require('./routes/compositeFragments.routes');
 
 const app = express();
 
@@ -77,6 +80,7 @@ app.use('/api/documents', documentFilesRoutes);
 app.use('/api/document-versions', documentVersionsRoutes);
 app.use('/api/document-folders', documentFoldersRoutes);
 app.use('/api/sheets/:sheetId/markups', markupsRoutes);
+app.use('/api/documents/:documentId/markups', documentMarkupsRoutes);
 app.use('/api/markups', markupByIdRoutes);
 app.use('/api/projects/:projectId/flags', flagsRoutes);
 app.use('/api/projects/:projectId/sync', syncRoutes);
@@ -84,6 +88,8 @@ app.use('/api/projects/:projectId/shares', sharesRoutes);
 app.use('/api/share', shareAccessRoutes);
 app.use('/api/projects/:projectId/export', exportsRoutes);
 app.use('/api/projects/:projectId/activity', activityRoutes);
+app.use('/api/projects/:projectId/composites', compositesRoutes);
+app.use('/api/projects/:projectId/sheets/:sheetId/composite-fragments', compositeFragmentsRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

@@ -8,6 +8,7 @@
   <div class="app-shell">
     <div class="sidebar" id="sidebar"></div>
     <div class="shell-content" style="padding: 0;">
+      <div class="sheet-tab-strip" id="sheet-tab-strip" style="display:none;"></div>
       <div class="sheet-view-row">
         <div class="sheet-canvas-area">
           <div class="zoom-wrap" id="zoom-wrap" style="height: calc(100vh - 53px); border-radius: 0;">
@@ -90,9 +91,21 @@
               </div>
             </div>
 
+            <div class="pane-section" id="section-composite" style="display:none;">
+              <button class="pane-section-header" type="button" data-section="composite">
+                <span>Composite Layout</span>
+                <span class="chevron">&#9662;</span>
+              </button>
+              <div class="pane-section-body">
+                <button type="button" id="composite-bring-in-btn" style="width:100%;">+ Bring in fragment...</button>
+                <div class="fragment-list" id="fragment-list"></div>
+              </div>
+            </div>
+
             <div id="takeoff-item-actions-bar" class="takeoff-item-actions-bar" style="display:none;">
               <span class="takeoff-color-dot" id="takeoff-item-actions-dot"></span>
               <span class="takeoff-item-actions-name" id="takeoff-item-actions-name"></span>
+              <span class="takeoff-item-actions-live-qty" id="takeoff-item-actions-live-qty"></span>
               <button type="button" id="takeoff-item-actions-stop">Stop</button>
               <button type="button" class="icon-btn" id="takeoff-item-actions-edit" title="Edit properties &amp; formula">&#9998;</button>
               <button type="button" class="icon-btn" id="takeoff-item-actions-remove" title="Remove from this sheet">&#8722;</button>

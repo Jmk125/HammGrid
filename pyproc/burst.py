@@ -74,7 +74,18 @@ def main():
 
         single_page = fitz.open()
         single_page.insert_pdf(doc, from_page=i, to_page=i)
-        single_page.save(pdf_path)
+        # insert_pdf() carries over the source doc's whole object graph
+        # (every page's annotations/fonts/XObjects, OCG layers, etc.), not
+        # just the one page's - a plain save() leaves all of that as
+        # unreferenced bytes in the file. garbage=4 drops unreferenced
+        # objects, clean=True sanitizes/rewrites content streams (needed for
+        # garbage collection to actually reach objects a content stream still
+        # nominally points at), and deflate recompresses what's left. On one
+        # real multi-hundred-sheet structural set this took single burst
+        # files from ~230MB down to ~0.3MB with pixel-identical output -
+        # without it, every sheet's file silently carries the entire source
+        # document's data.
+        single_page.save(pdf_path, garbage=4, deflate=True, clean=True)
         single_page.close()
 
         save_webp(img, preview_path, args.preview_size, quality=85)

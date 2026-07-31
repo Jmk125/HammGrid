@@ -8,7 +8,7 @@ router.get('/', requireAuth, (req, res) => {
   const { discipline, revision_id } = req.query;
 
   let sql = `
-    SELECT s.id, s.sheet_number, s.discipline, s.current_version_id,
+    SELECT s.id, s.sheet_number, s.discipline, s.current_version_id, s.is_composite,
            sv.title AS current_title, sv.revision_id AS current_revision_id,
            r.title AS current_revision_title, r.published_at AS current_published_at
     FROM sheets s

@@ -207,6 +207,97 @@ function setupSelectionToggleButton() {
   else row.prepend(btn);
 }
 
+// Same scale presets sheet.js's STANDARD_SCALES offers when calibrating an
+// ordinary sheet - duplicated rather than shared/exported since it's a small,
+// stable, static list and this is the only other place it's needed.
+const COMPOSITE_SCALE_OPTIONS = [
+  { label: '1/16" = 1\'-0"', feetPerInch: 16 },
+  { label: '1/8" = 1\'-0"', feetPerInch: 8 },
+  { label: '3/16" = 1\'-0"', feetPerInch: 16 / 3 },
+  { label: '1/4" = 1\'-0"', feetPerInch: 4 },
+  { label: '3/8" = 1\'-0"', feetPerInch: 8 / 3 },
+  { label: '1/2" = 1\'-0"', feetPerInch: 2 },
+  { label: '3/4" = 1\'-0"', feetPerInch: 4 / 3 },
+  { label: '1" = 1\'-0"', feetPerInch: 1 },
+  { label: '1" = 10\'-0"', feetPerInch: 10 },
+  { label: '1" = 20\'-0"', feetPerInch: 20 },
+  { label: '1" = 30\'-0"', feetPerInch: 30 },
+  { label: '1" = 40\'-0"', feetPerInch: 40 },
+];
+
+// "+ Composite" - a puzzle-piece-adjacent workspace for stitching crops of
+// several existing sheets into one drawing dense enough to run take-offs on
+// (see CLAUDE.md-adjacent composite-drawings plan). Injected next to
+// #new-revision-btn the same non-invasive way setupSelectionToggleButton
+// already adds "Download drawings" - shell.js itself is never touched.
+function setupNewCompositeButton(me) {
+  const canManage = me.role === 'admin' || me.role === 'editor';
+  if (!canManage) return;
+  const whoami = document.getElementById('whoami');
+  const row = whoami ? whoami.parentElement : document.querySelector('#topbar > .row:last-child');
+  if (!row || document.getElementById('new-composite-btn')) return;
+  const btn = document.createElement('button');
+  btn.id = 'new-composite-btn';
+  btn.type = 'button';
+  btn.title = 'New composite drawing';
+  btn.textContent = '▦ Composite';
+  btn.addEventListener('click', openNewCompositeModal);
+  const newRevBtn = document.getElementById('new-revision-btn');
+  if (newRevBtn) newRevBtn.after(btn);
+  else row.prepend(btn);
+}
+
+function openNewCompositeModal() {
+  openModal(`
+    <h2>New composite drawing</h2>
+    <p class="muted">Stitch crops of existing sheets into one drawing you can run take-offs on - useful when the architect's overview plan is too low-detail but the useful detail is spread across several separate sheets.</p>
+    <div class="field"><label>Name</label><input id="nc-name" placeholder="e.g. Composite Floor Plan"></div>
+    <div class="field"><label>Tag</label><input id="nc-discipline" placeholder="Custom" value="Custom"></div>
+    <div class="field">
+      <label>Reference scale</label>
+      <select id="nc-scale">
+        ${COMPOSITE_SCALE_OPTIONS.map((s, i) => `<option value="${i}"${s.feetPerInch === 8 ? ' selected' : ''}>${s.label}</option>`).join('')}
+      </select>
+      <small class="muted">Every fragment you bring in gets resized to match this scale - it doesn't need to match any one source sheet.</small>
+    </div>
+    <p class="error" id="nc-error" style="display:none;"></p>
+    <div class="modal-actions">
+      <button type="button" id="modal-cancel">Cancel</button>
+      <button class="primary" type="button" id="modal-create">Create</button>
+    </div>
+  `);
+  document.getElementById('nc-name').focus();
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  document.getElementById('modal-create').addEventListener('click', async () => {
+    const name = document.getElementById('nc-name').value.trim();
+    const errEl = document.getElementById('nc-error');
+    if (!name) {
+      errEl.textContent = 'Name is required.';
+      errEl.style.display = 'block';
+      return;
+    }
+    const discipline = document.getElementById('nc-discipline').value.trim() || 'Custom';
+    const scaleFeetPerInch = COMPOSITE_SCALE_OPTIONS[Number(document.getElementById('nc-scale').value)].feetPerInch;
+    const createBtn = document.getElementById('modal-create');
+    createBtn.disabled = true;
+    createBtn.textContent = 'Creating...';
+    try {
+      const { sheet } = await api('POST', `/api/projects/${projectId}/composites`, {
+        sheet_number: name,
+        discipline,
+        scale_feet_per_inch: scaleFeetPerInch,
+      });
+      closeModal();
+      window.location.href = `/sheet.html?projectId=${projectId}&sheetId=${sheet.id}`;
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+      createBtn.disabled = false;
+      createBtn.textContent = 'Create';
+    }
+  });
+}
+
 function setupSelectionBar() {
   const selectAllInput = document.getElementById('select-all-checkbox');
   // The native <label> wrapping this input already forwards any click inside
@@ -373,6 +464,7 @@ document.getElementById('search-filter').addEventListener('input', () => {
     me,
   });
   setupSelectionToggleButton();
+  setupNewCompositeButton(me);
   setupSelectionBar();
 
   const savedSearchTerm = localStorage.getItem(searchStorageKey());

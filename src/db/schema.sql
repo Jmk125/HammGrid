@@ -110,7 +110,12 @@ CREATE TABLE IF NOT EXISTS document_versions (
 
 CREATE TABLE IF NOT EXISTS markups (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  -- A markup belongs to exactly one of a sheet or a document (not both,
+  -- not neither) - see the CHECK below. Document-owned markups carry a
+  -- page number in geometry.page (documents aren't pre-burst per-page like
+  -- sheets are, so a page number is needed to know which page they're on).
+  sheet_id INTEGER REFERENCES sheets(id) ON DELETE CASCADE,
+  document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
   author_id INTEGER NOT NULL REFERENCES users(id),
   visibility TEXT NOT NULL CHECK (visibility IN ('private', 'published')) DEFAULT 'private',
   type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect', 'flag')),
@@ -121,7 +126,8 @@ CREATE TABLE IF NOT EXISTS markups (
   -- the delete outright.
   linked_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK ((sheet_id IS NOT NULL AND document_id IS NULL) OR (sheet_id IS NULL AND document_id IS NOT NULL))
 );
 
 -- A take-off item is a named, colored, project-level running total (e.g. "2x4
@@ -276,6 +282,51 @@ CREATE TABLE IF NOT EXISTS scale_zones (
   created_by INTEGER NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- A composite drawing is an ordinary sheets/sheet_versions row
+-- (sheets.is_composite = 1, see addColumnIfMissing in db/index.js) whose PDF/
+-- thumb/preview are baked by pyproc/compose.py from these fragments instead
+-- of ingested/OCR'd - every other subsystem (take-offs, markups, viewer,
+-- search, offline sync) needs zero changes since it's just a real sheet.
+-- crop_*/mask_polygons are in the SOURCE sheet_version's own PDF-point space
+-- (72pt/in), fragment-local (mask points relative to crop_x/crop_y) so they
+-- stay put if the fragment is later repositioned. place_* are in the
+-- COMPOSITE's own PDF-point space. Masks are per-placement only (no reusable
+-- templates) - each fragment carries its own, never shared.
+CREATE TABLE IF NOT EXISTS composite_fragments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  composite_sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  source_sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  source_version_id INTEGER NOT NULL REFERENCES sheet_versions(id) ON DELETE CASCADE,
+  crop_x REAL NOT NULL,
+  crop_y REAL NOT NULL,
+  crop_width REAL NOT NULL,
+  crop_height REAL NOT NULL,
+  mask_polygons TEXT NOT NULL DEFAULT '[]',
+  place_x REAL NOT NULL,
+  place_y REAL NOT NULL,
+  place_width REAL NOT NULL,
+  place_height REAL NOT NULL,
+  z_order INTEGER NOT NULL DEFAULT 0,
+  locked INTEGER NOT NULL DEFAULT 0,
+  visible INTEGER NOT NULL DEFAULT 1,
+  -- Degrees, clockwise-positive, applied around the center of the
+  -- (unrotated) place rect - lets a blow-up detail that's rotated relative
+  -- to the rest of the building on the overall plan get straightened out
+  -- (or vice versa) when stitched in.
+  rotation REAL NOT NULL DEFAULT 0,
+  thumb_path TEXT,
+  -- Full-resolution RGBA asset (crop+mask applied, no placement scaling or
+  -- rotation) - same render compose.py itself uses for this fragment -
+  -- fetched once client-side so Edit Layout mode can drag/rotate it live
+  -- with zero server round-trip per frame; only PATCHed to the server (and
+  -- re-flattened) once the drag/rotate actually ends.
+  preview_path TEXT,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_composite_fragments_composite ON composite_fragments(composite_sheet_id);
 
 CREATE TABLE IF NOT EXISTS sheet_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -7,10 +7,13 @@ const { getMarkupsForDownload } = require('../lib/markupSelection');
 const router = express.Router({ mergeParams: true });
 
 function getCurrentEntries(projectId, discipline) {
+  // Composite drawings are an internal take-off workspace, not part of the
+  // real drawing set - excluded from bulk exports (v1; see the composite
+  // drawings plan).
   let sql = `
     SELECT s.sheet_number, sv.title, sv.pdf_path
     FROM sheets s JOIN sheet_versions sv ON sv.id = s.current_version_id
-    WHERE s.project_id = ?
+    WHERE s.project_id = ? AND s.is_composite = 0
   `;
   const args = [projectId];
   if (discipline) {

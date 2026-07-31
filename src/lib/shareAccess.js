@@ -14,6 +14,10 @@ function resolveShare(token) {
   return { share };
 }
 
+// Composite drawings are an internal take-off workspace, not part of the
+// real drawing set - never visible to contractors via a share link (v1; see
+// the composite drawings plan), same reasoning as their export.routes.js
+// exclusion.
 function getShareSheets(share) {
   let rows;
   if (share.scope === 'live') {
@@ -21,7 +25,7 @@ function getShareSheets(share) {
       SELECT s.id, s.sheet_number, s.discipline, sv.id AS version_id, sv.title
       FROM sheets s
       JOIN sheet_versions sv ON sv.id = s.current_version_id
-      WHERE s.project_id = ?
+      WHERE s.project_id = ? AND s.is_composite = 0
     `;
     const args = [share.project_id];
     if (share.discipline_filter) {
@@ -38,7 +42,7 @@ function getShareSheets(share) {
       FROM sheets s
       JOIN sheet_versions sv ON sv.sheet_id = s.id
       JOIN revisions r ON r.id = sv.revision_id
-      WHERE s.project_id = ? AND r.published_at <= ?
+      WHERE s.project_id = ? AND s.is_composite = 0 AND r.published_at <= ?
         AND sv.id = (
           SELECT sv2.id FROM sheet_versions sv2
           JOIN revisions r2 ON r2.id = sv2.revision_id

@@ -8,7 +8,7 @@ function renderTopbar() {
   topbar.innerHTML = `
     <a class="brand" href="/dashboard.html">HammGrid</a>
     <div class="row topbar-actions">
-      ${me.role === 'admin' ? '<button class="icon-btn" id="new-project-btn" type="button" title="New project">+</button>' : ''}
+      ${me.role === 'admin' ? '<button id="new-project-btn" type="button">New Project</button>' : ''}
       <span id="whoami" class="muted"></span>
       <button id="logout" type="button">Sign out</button>
     </div>

@@ -138,7 +138,7 @@
             <p>Right-click a placed shape for more options:</p>
             <ul>
               <li><strong>Continue Item</strong> - reopens that exact instance so your next clicks extend it from its last point.</li>
-              <li><strong>Subtract Area</strong> (area items only) - traces a hole to subtract from that shape's net area (e.g. an opening inside a slab).</li>
+              <li><strong>Subtract Area</strong> (area items only) - traces a hole to subtract from that shape's net area (e.g. an opening inside a slab). While subtracting, shift+click another same-type item's row to also add the identical traced shape to it as new area, or shift+click an assembly's row (Box placement mode only) to also place that assembly's linked items using the same box - e.g. carve a window opening out of a masonry wall while counting the window assembly, in one trace.</li>
               <li><strong>Change Item</strong> - moves the whole placed shape to a different item (existing or brand-new), same type only.</li>
             </ul>
             <p>While editing with a vertex selection made, right-click instead offers <strong>"Copy selection to new/existing item"</strong> - handy for reusing a traced edge as a different material without retracing it.</p>
@@ -148,6 +148,7 @@
             <summary>Box-draw assemblies (windows, doors, etc.)</summary>
             <p>An assembly links up to 5 slots - Area, Head, Sill, Left Jamb, Right Jamb - to real take-off items, so drawing <em>one</em> box places all of them at once: the full rectangle becomes the area item's instance, and each side becomes its matching linear item's instance. Unlinked slots are simply skipped, and left/right jamb can point at the same item if they match.</p>
             <p>Build one via "From Assembly...", link its slots to items (existing or new), then draw boxes - the assembly stays armed for the next one. Click the pencil (Edit) button on the assembly's row any time to change its links without losing your place.</p>
+            <p>You can also pair an assembly with a subtraction: right-click a placed area shape, choose <strong>Subtract Area</strong>, switch to Box placement mode, then shift+click the assembly's row before drawing the box. The box both carves the hole out of the anchor shape <em>and</em> places the assembly's linked items - one trace for "subtract this opening and count this window."</p>
           </details>
 
           <details class="help-topic">

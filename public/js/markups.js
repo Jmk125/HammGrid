@@ -1,6 +1,6 @@
 import { getCachedMarkupsForSheet } from '/js/offline-store.js';
 import { openDocPicker } from '/js/docPicker.js';
-import { confirmModal, promptModal } from '/js/shell.js';
+import { confirmModal, promptModal, showToast } from '/js/shell.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CLOUD_BUMP_SIZE = { 'cloud-small': 14, 'cloud-large': 30 };
@@ -68,7 +68,13 @@ function cloudPath(x, y, w, h, bumpSize) {
   return d + 'Z';
 }
 
-export function initMarkups({ sheetId, projectId, me, svgEl, canvasEl, documents, folders, onToolChange }) {
+export function initMarkups({ sheetId, apiBase, projectId, me, svgEl, canvasEl, documents, folders, onToolChange, page }) {
+  const base = apiBase || `/api/sheets/${sheetId}`;
+  // Documents aren't pre-burst one-page-per-file like sheets are, so a
+  // document-scoped instance is told which page it's showing (via `page`)
+  // and filters/stamps geometry.page accordingly - a sheet instance never
+  // passes this and behaves exactly as before (no filtering at all).
+  let currentPage = page;
   let activeTool = 'select';
   let markups = [];
   let drawing = null;
@@ -359,9 +365,14 @@ export function initMarkups({ sheetId, projectId, me, svgEl, canvasEl, documents
     bodyDrag = { markup: m, start, origGeometry: JSON.parse(JSON.stringify(m.geometry)) };
   }
 
+  function visibleMarkups() {
+    if (currentPage == null) return markups;
+    return markups.filter((m) => (m.geometry.page || 1) === currentPage);
+  }
+
   function renderAll() {
     svgEl.querySelectorAll('[data-markup-id], [data-handles-for]').forEach((n) => n.remove());
-    for (const m of markups) svgEl.appendChild(renderMarkupEl(m));
+    for (const m of visibleMarkups()) svgEl.appendChild(renderMarkupEl(m));
     if (editingId) {
       const m = findMarkup(editingId);
       if (m) svgEl.appendChild(renderHandles(m));
@@ -542,7 +553,8 @@ export function initMarkups({ sheetId, projectId, me, svgEl, canvasEl, documents
             flagTagsCache = [...(flagTagsCache || []), tag].sort();
             renderFlagTagOptions();
           }
-          renderAll();
+          showToast('Flag saved.', 'success');
+          deselect();
         });
         popupEl.appendChild(saveBtn);
       }
@@ -576,9 +588,10 @@ export function initMarkups({ sheetId, projectId, me, svgEl, canvasEl, documents
   }
 
   async function createMarkup(type, geometry, extraStyle) {
+    if (currentPage != null) geometry.page = currentPage;
     const style = { color: colorInput.value, strokeWidth: Number(widthInput.value), ...extraStyle };
     const visibility = publishDefaultInput.checked ? 'published' : 'private';
-    const { markup } = await api('POST', `/api/sheets/${sheetId}/markups`, {
+    const { markup } = await api('POST', `${base}/markups`, {
       type: type === 'cloud-small' || type === 'cloud-large' ? 'cloud' : type,
       geometry,
       style,
@@ -847,10 +860,13 @@ export function initMarkups({ sheetId, projectId, me, svgEl, canvasEl, documents
     async load() {
       syncViewBox();
       try {
-        const { markups: loaded } = await api('GET', `/api/sheets/${sheetId}/markups`);
+        const { markups: loaded } = await api('GET', `${base}/markups`);
         markups = loaded;
       } catch (err) {
-        markups = await getCachedMarkupsForSheet(sheetId);
+        // Documents have no offline cache (CLAUDE.md's sync spec only
+        // covers sheets) - just show nothing rather than a sheet-shaped
+        // cache lookup that would never have anything for this id anyway.
+        markups = sheetId ? await getCachedMarkupsForSheet(sheetId) : [];
       }
       renderAll();
     },
@@ -860,6 +876,10 @@ export function initMarkups({ sheetId, projectId, me, svgEl, canvasEl, documents
     },
     setZoomScale(scale) {
       currentZoomScale = scale || 1;
+      renderAll();
+    },
+    setPage(n) {
+      currentPage = n;
       renderAll();
     },
     isToolActive() {
