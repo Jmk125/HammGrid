@@ -15,6 +15,65 @@
   --sidebar-w: 220px;
 }
 
+/* "Light" keeps the same light body but drops the navy chrome for an all-
+   bright look; "Dark" flips body/surface/text. Both leave the small set of
+   permanently-dark HUD chrome (topbar's own overlay badges, toasts, the
+   canvas-surround in sheet/document viewers) alone - those float over the
+   drawing itself rather than being part of the themed document UI, so they
+   stay dark regardless, same as e.g. Figma's toolbar in light mode. */
+:root[data-theme="light"] {
+  --navy: #f7f8fa;
+  --navy-dark: #eceff3;
+  --bg: #ffffff;
+  --surface: #ffffff;
+}
+:root[data-theme="light"] .topbar,
+:root[data-theme="light"] .selection-bar {
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+:root[data-theme="light"] .topbar .row,
+:root[data-theme="light"] .topbar .brand,
+:root[data-theme="light"] .selection-bar { color: var(--text); }
+:root[data-theme="light"] .topbar .muted,
+:root[data-theme="light"] .selection-bar .muted { color: var(--muted); }
+:root[data-theme="light"] .topbar button,
+:root[data-theme="light"] .selection-bar button,
+:root[data-theme="light"] .selection-bar .chip-toggle {
+  color: var(--text);
+  border-color: var(--border);
+}
+:root[data-theme="light"] .topbar button:hover { background: var(--bg); }
+:root[data-theme="light"] .topbar button.icon-btn { background: var(--bg); color: var(--text); }
+:root[data-theme="light"] .topbar button.icon-btn:hover { background: var(--border); }
+:root[data-theme="light"] .topbar button.primary,
+:root[data-theme="light"] .selection-bar .chip-toggle.checked { color: #fff; }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --navy: #0a1119;
+  --navy-dark: #050a10;
+  --border: #2c3644;
+  --bg: #12181f;
+  --surface: #1b232c;
+  --text: #e6e9ee;
+  --muted: #9099a8;
+  --accent: #3b82f6;
+  --accent-light: #16233a;
+  --danger: #f87171;
+  --warn-bg: #4a3b13;
+  --ok: #4ade80;
+}
+
+/* Per-account "dark drawing canvas" preference - separate from the theme
+   above, so it can be black-bg/white-lines even under the default/light
+   theme. Only #pdf-canvas (the PDF.js-rendered sheet raster) is inverted;
+   the SVG markup layer sits on top with its own user-chosen colors and
+   would look wrong flipped along with it. */
+:root[data-canvas-invert="1"] #pdf-canvas {
+  filter: invert(1) hue-rotate(180deg);
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -74,6 +133,42 @@ a { color: var(--accent); }
 .topbar .sheet-label { display: flex; align-items: baseline; gap: 8px; margin-right: 8px; }
 .topbar .sheet-label .num { font-weight: 700; font-size: 15px; }
 .topbar .sheet-label .title { color: #b8c4d4; font-size: 13px; }
+
+.user-menu { position: relative; display: inline-flex; }
+.user-menu #user-menu-btn { display: flex; align-items: center; gap: 4px; }
+.user-menu .chevron { font-size: 10px; }
+.user-menu-dropdown {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  z-index: 30;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.user-menu-role {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: capitalize;
+  border-bottom: 1px solid var(--border);
+}
+.user-menu-dropdown button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 9px 12px;
+  width: 100%;
+}
+.user-menu-dropdown button:hover { background: var(--bg); }
 
 .sheet-history-wrap { position: relative; display: inline-flex; }
 .sheet-history-menu {
@@ -201,7 +296,7 @@ button {
   padding: 8px 14px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
@@ -215,7 +310,7 @@ a.view-btn {
   padding: 8px 14px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface);
   color: var(--text);
   text-decoration: none;
   cursor: pointer;
@@ -345,14 +440,14 @@ tr.ignored td { opacity: 0.5; }
 .sheet-card .thumb-wrap {
   overflow: hidden;
   border-radius: 6px 6px 0 0;
-  background: #f0f0f0;
+  background: var(--bg);
 }
 .sheet-card img {
   width: 100%;
   display: block;
   aspect-ratio: 4/3;
   object-fit: contain;
-  background: #f0f0f0;
+  background: var(--bg);
 }
 .sheet-card:hover {
   z-index: 5;
@@ -481,7 +576,7 @@ tr.ignored td { opacity: 0.5; }
 .project-card:hover { box-shadow: 0 8px 20px rgba(15,43,70,0.15); transform: translateY(-2px); }
 .project-card .thumb-wrap {
   aspect-ratio: 16/10;
-  background: linear-gradient(135deg, #eef1f5, #dde3ea);
+  background: linear-gradient(135deg, var(--bg), var(--border));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -529,10 +624,13 @@ tr.ignored td { opacity: 0.5; }
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #f4f4f4;
+  background: var(--bg);
 }
 .fragment-picker-canvas-wrap canvas { display: block; width: 100%; height: auto; }
 .fragment-picker-canvas-wrap svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; }
+
+.settings-radio-group { display: flex; gap: 16px; flex-wrap: wrap; }
+.settings-radio, .settings-checkbox { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; max-width: 420px; }
 .field input, .field select { width: 100%; }
@@ -583,13 +681,10 @@ tr.ignored td { opacity: 0.5; }
 .takeoff-folder-delete-btn { font-size: 13px; text-transform: none; letter-spacing: normal; }
 
 /* "Go to Item in Take-offs" (sheet.js's take-off right-click menu) lands
-   here and scrolls this row into view - the flash is the only cue it's the
-   one that was jumped to, since nothing else marks it as selected. */
-@keyframes takeoff-row-flash-anim {
-  from { background: var(--accent-light); }
-  to { background: transparent; }
-}
-.takeoff-row-flash { animation: takeoff-row-flash-anim 1.6s ease-out; }
+   here and scrolls this row into view - stays on (not a fade-out flash) so
+   it's still easy to spot after scrolling/searching around a list that can
+   run into the hundreds. */
+.takeoff-row-highlighted { background: var(--accent-light); box-shadow: inset 3px 0 0 var(--accent); }
 
 #takeoff-tooltip {
   position: fixed;
@@ -807,7 +902,7 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .fragment-row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .fragment-row-controls { display: flex; align-items: center; gap: 4px; }
 .fragment-row .takeoff-item-name { flex: 1 1 auto; min-width: 0; font-size: 12px; }
-.fragment-thumb { width: 40px; height: 30px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); flex: 0 0 auto; background: #f4f4f4; }
+.fragment-thumb { width: 40px; height: 30px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); flex: 0 0 auto; background: var(--bg); }
 .fragment-rotation-input { flex: 0 0 auto; width: 52px; font-size: 11px; padding: 2px 4px; }
 #edit-layout-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 

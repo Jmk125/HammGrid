@@ -1,6 +1,7 @@
 import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 import { initMarkups } from '/js/markups.js';
+import { renderUserMenu, applyTheme } from '/js/shell.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -211,23 +212,18 @@ document.getElementById('download-doc-btn').addEventListener('click', () => {
     : versionId ? `/api/document-versions/${versionId}/download` : `/api/documents/${documentId}/download`;
 });
 
-document.getElementById('logout').addEventListener('click', async () => {
-  await api('POST', '/api/auth/logout');
-  window.location.href = '/login.html';
-});
-
 (async function init() {
   let projectId = null;
 
   if (shareToken) {
-    document.getElementById('logout').style.display = 'none';
-    document.getElementById('whoami').style.display = 'none';
+    document.getElementById('user-menu-slot').style.display = 'none';
     document.querySelector('.brand').textContent = 'HammGrid — Shared Document';
     document.getElementById('doc-label').textContent = 'Shared document';
   } else {
     const me = await requireSession();
     if (!me) return;
-    document.getElementById('whoami').textContent = `${me.name} (${me.role})`;
+    applyTheme(me.settings);
+    renderUserMenu(document.getElementById('user-menu-slot'), me);
 
     if (stagedSheetId) {
       // Not yet a published document/sheet - no metadata endpoint to fetch,

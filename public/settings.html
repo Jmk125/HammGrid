@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<title>Settings — HammGrid</title>
+<link rel="stylesheet" href="/css/style.css">
+<meta name="theme-color" content="#0f2b46">
+<script src="/js/theme-boot.js"></script>
+<body>
+  <div class="topbar" id="topbar">
+    <span class="brand">Settings</span>
+  </div>
+  <main>
+    <div class="card">
+      <h2>Theme</h2>
+      <p class="muted">Choose how HammGrid looks. Applies everywhere you're signed in.</p>
+      <div class="settings-radio-group" id="theme-options">
+        <label class="settings-radio"><input type="radio" name="theme" value="default"> Default</label>
+        <label class="settings-radio"><input type="radio" name="theme" value="light"> Light</label>
+        <label class="settings-radio"><input type="radio" name="theme" value="dark"> Dark</label>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Drawing canvas</h2>
+      <p class="muted">Invert sheets so the drawing background is black and lines are white, independent of the theme above.</p>
+      <label class="settings-checkbox"><input type="checkbox" id="dark-canvas-checkbox"> Dark drawing canvas</label>
+    </div>
+    <p class="muted" id="settings-status" style="min-height: 18px;"></p>
+  </main>
+  <script src="/js/api.js"></script>
+  <script type="module" src="/js/settings.js"></script>
+</body>

@@ -144,6 +144,77 @@ export function promptModal({ title = 'Enter a value', message = '', placeholder
 
 
 
+// ---------- Theme + user menu ----------
+// Applied on top of the cached-user bootstrap snippet each page's <head> runs
+// synchronously (before first paint, reading the same hammgrid:last-user
+// localStorage key api.js already maintains) - this call just reconciles
+// against whatever /api/auth/me actually returned, in case the setting
+// changed on another device since the cached copy was written.
+export function applyTheme(settings) {
+  const theme = (settings && settings.theme) || 'default';
+  document.documentElement.dataset.theme = theme;
+  if (settings && settings.darkCanvas) {
+    document.documentElement.dataset.canvasInvert = '1';
+  } else {
+    delete document.documentElement.dataset.canvasInvert;
+  }
+}
+
+export function openSettingsWindow() {
+  const w = 440;
+  const h = 520;
+  const left = Math.round(window.screenX + (window.outerWidth - w) / 2);
+  const top = Math.round(window.screenY + (window.outerHeight - h) / 2);
+  const win = window.open(
+    '/settings.html',
+    'hammgrid-settings',
+    `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
+  );
+  if (win) win.focus();
+}
+
+const CACHED_SESSION_KEY_FOR_THEME = 'hammgrid:last-user';
+
+export function renderUserMenu(container, me) {
+  container.innerHTML = `
+    <div class="user-menu" id="user-menu">
+      <button type="button" id="user-menu-btn">${escapeHtml(me.name)} <span class="chevron">&#9662;</span></button>
+      <div class="user-menu-dropdown" id="user-menu-dropdown" style="display:none;">
+        <div class="user-menu-role">${escapeHtml(me.role)}</div>
+        <button type="button" id="user-menu-settings">Settings</button>
+        <button type="button" id="user-menu-logout">Sign out</button>
+      </div>
+    </div>
+  `;
+  const dropdown = container.querySelector('#user-menu-dropdown');
+  container.querySelector('#user-menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+  });
+  document.addEventListener('click', () => {
+    dropdown.style.display = 'none';
+  });
+  container.querySelector('#user-menu-settings').addEventListener('click', () => {
+    dropdown.style.display = 'none';
+    openSettingsWindow();
+  });
+  container.querySelector('#user-menu-logout').addEventListener('click', async () => {
+    await api('POST', '/api/auth/logout');
+    window.location.href = '/login.html';
+  });
+
+  // Live-apply settings saved from a settings.html popup without a reload.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== CACHED_SESSION_KEY_FOR_THEME) return;
+    try {
+      const user = JSON.parse(e.newValue || 'null');
+      if (user && String(user.id) === String(me.id)) applyTheme(user.settings);
+    } catch (err) {
+      // ignore malformed cache value
+    }
+  });
+}
+
 export function renderNetworkIndicator(container) {
   if (!container || container.querySelector('#network-indicator')) return;
   const indicator = document.createElement('span');
@@ -417,6 +488,7 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
   const canManage = me.role === 'admin' || me.role === 'editor';
   if (sheetHistoryEntry) recordSheetVisit(projectId, sheetHistoryEntry);
   checkPendingJobs();
+  applyTheme(me.settings);
 
   topbarEl.innerHTML = `
     <div class="row" style="gap:6px;">
@@ -426,15 +498,10 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
     <div class="row topbar-actions">
       ${onOverlayClick ? '<button id="overlay-btn" type="button">Overlay</button>' : ''}
       ${projectId && canManage ? '<button class="primary" id="new-revision-btn" type="button">+ New Revision</button>' : ''}
-      <span id="whoami" class="muted"></span>
-      <button id="logout" type="button">Sign out</button>
+      <div id="user-menu-slot"></div>
     </div>
   `;
-  topbarEl.querySelector('#whoami').textContent = `${me.name} (${me.role})`;
-  topbarEl.querySelector('#logout').addEventListener('click', async () => {
-    await api('POST', '/api/auth/logout');
-    window.location.href = '/login.html';
-  });
+  renderUserMenu(topbarEl.querySelector('#user-menu-slot'), me);
   renderNetworkIndicator(topbarEl.querySelector('.topbar-actions'));
   if (active === 'viewer' && projectId) renderSheetHistoryControls(topbarEl, projectId);
   const newRevBtn = topbarEl.querySelector('#new-revision-btn');

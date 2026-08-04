@@ -1,24 +1,20 @@
 import { getProjectSyncInfo } from '/js/offline-store.js';
-import { openModal, closeModal, checkPendingJobs, renderNetworkIndicator } from '/js/shell.js';
+import { openModal, closeModal, checkPendingJobs, renderNetworkIndicator, renderUserMenu, applyTheme } from '/js/shell.js';
 
 let me;
 
 function renderTopbar() {
+  applyTheme(me.settings);
   const topbar = document.getElementById('topbar');
   topbar.innerHTML = `
     <a class="brand" href="/dashboard.html">HammGrid</a>
     <div class="row topbar-actions">
       ${me.role === 'admin' ? '<button id="new-project-btn" type="button">New Project</button>' : ''}
-      <span id="whoami" class="muted"></span>
-      <button id="logout" type="button">Sign out</button>
+      <div id="user-menu-slot"></div>
     </div>
   `;
+  renderUserMenu(topbar.querySelector('#user-menu-slot'), me);
   renderNetworkIndicator(topbar.querySelector('.topbar-actions'));
-  topbar.querySelector('#whoami').textContent = `${me.name} (${me.role})`;
-  topbar.querySelector('#logout').addEventListener('click', async () => {
-    await api('POST', '/api/auth/logout');
-    window.location.href = '/login.html';
-  });
   const newBtn = topbar.querySelector('#new-project-btn');
   if (newBtn) newBtn.addEventListener('click', openNewProjectModal);
 }

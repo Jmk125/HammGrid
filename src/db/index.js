@@ -45,6 +45,7 @@ addColumnIfMissing('shares', 'document_folder_ids', "TEXT NOT NULL DEFAULT '[]'"
 addColumnIfMissing('shares', 'document_ids', "TEXT NOT NULL DEFAULT '[]'");
 
 addColumnIfMissing('users', 'can_takeoff', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('users', 'settings', "TEXT NOT NULL DEFAULT '{}'");
 
 addColumnIfMissing('take_off_items', 'properties', "TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing('take_off_items', 'formula', 'TEXT');
