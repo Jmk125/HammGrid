@@ -409,14 +409,19 @@ export function initMarkups({
     return markups.filter((m) => (m.geometry.page || 1) === currentPage);
   }
 
-  function renderAll() {
+  // refreshPopup=false is used by the zoom/pan/page-driven call sites
+  // (setZoomScale, setPage) below - those need the popup repositioned to
+  // follow the markup on screen, but must NOT rebuild its contents, or an
+  // in-progress flag description/comment (typed but not yet saved) gets
+  // silently reset to the last-saved value every time the view moves.
+  function renderAll({ refreshPopup = true } = {}) {
     svgEl.querySelectorAll('[data-markup-id], [data-handles-for]').forEach((n) => n.remove());
     for (const m of visibleMarkups()) svgEl.appendChild(renderMarkupEl(m));
     if (editingId) {
       const m = findMarkup(editingId);
       if (m) svgEl.appendChild(renderHandles(m));
     }
-    positionPopup();
+    positionPopup(refreshPopup);
   }
 
   function permissions(m) {
@@ -430,7 +435,11 @@ export function initMarkups({
     };
   }
 
-  function positionPopup() {
+  // Positions/shows the popup for the selected markup, rebuilding its
+  // contents from m.geometry (refreshContent=true, the default) unless
+  // called from a zoom/pan/page tick via renderAll({ refreshPopup: false })
+  // - see that comment for why those must not touch the popup's DOM.
+  function positionPopup(refreshContent = true) {
     if (!selectedId) {
       popupEl.style.display = 'none';
       return;
@@ -446,17 +455,43 @@ export function initMarkups({
       return;
     }
 
+    if (refreshContent) renderPopupButtons(m);
+    popupEl.style.transform = 'translateX(-50%)';
+    popupEl.style.display = 'flex';
+    applyPopupPosition(m);
+  }
+
+  // Anchors the popup under the markup by default, but clamps it inside
+  // the visible .zoom-wrap area (measuring the popup's real rendered size)
+  // and flips it above the markup when there isn't room below - a flag
+  // placed low on the canvas would otherwise push its own Save button off
+  // screen, with no way to reach it except panning (which, before this
+  // fix, would also wipe whatever had been typed - see renderAll above).
+  function applyPopupPosition(m) {
+    const wrapEl = svgEl.closest('.zoom-wrap');
+    const wrapRect = wrapEl.getBoundingClientRect();
     const b = bounds(m);
     const { w: vbW, h: vbH } = vbSize();
     const rect = svgEl.getBoundingClientRect();
-    const parentRect = svgEl.closest('.zoom-wrap').getBoundingClientRect();
-    const screenX = rect.left - parentRect.left + ((b.x + b.w / 2) / vbW) * rect.width;
-    const screenY = rect.top - parentRect.top + ((b.y + b.h) / vbH) * rect.height;
-    popupEl.style.left = `${screenX}px`;
-    popupEl.style.top = `${screenY + 8}px`;
-    popupEl.style.transform = 'translateX(-50%)';
-    popupEl.style.display = 'flex';
-    renderPopupButtons(m);
+    const centerX = rect.left - wrapRect.left + ((b.x + b.w / 2) / vbW) * rect.width;
+    const topY = rect.top - wrapRect.top + (b.y / vbH) * rect.height;
+    const bottomY = rect.top - wrapRect.top + ((b.y + b.h) / vbH) * rect.height;
+
+    popupEl.style.left = `${centerX}px`;
+    popupEl.style.top = `${bottomY + 8}px`; // provisional - just to get a real size below
+    const popRect = popupEl.getBoundingClientRect();
+    const popW = popRect.width;
+    const popH = popRect.height;
+
+    const PAD = 6;
+    const halfW = popW / 2;
+    const minCenterX = halfW + PAD;
+    const maxCenterX = Math.max(minCenterX, wrapRect.width - halfW - PAD);
+    popupEl.style.left = `${Math.min(Math.max(centerX, minCenterX), maxCenterX)}px`;
+
+    const spaceBelow = wrapRect.height - bottomY;
+    const fitsBelow = popH + 8 + PAD <= spaceBelow;
+    popupEl.style.top = `${fitsBelow ? bottomY + 8 : Math.max(PAD, topY - popH - 8)}px`;
   }
 
   function renderPopupButtons(m) {
@@ -1011,11 +1046,11 @@ export function initMarkups({
     },
     setZoomScale(scale) {
       currentZoomScale = scale || 1;
-      renderAll();
+      renderAll({ refreshPopup: false });
     },
     setPage(n) {
       currentPage = n;
-      renderAll();
+      renderAll({ refreshPopup: false });
     },
     isToolActive() {
       return activeTool !== 'select';
@@ -1023,7 +1058,7 @@ export function initMarkups({
     hasSelection() {
       return !!selectedId;
     },
-    repositionPopup: positionPopup,
+    repositionPopup: () => positionPopup(false),
     forceSelectTool() {
       activateTool('select');
     },
