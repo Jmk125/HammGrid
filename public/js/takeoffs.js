@@ -4,12 +4,19 @@ import { computeTakeoffOutput, parseTakeoffProperties, resolveTakeoffName } from
 
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
-// Set by "Go to Item in Take-offs" on a sheet's take-off right-click menu -
-// consumed once by highlightRequestedItem() after the first render, not
-// re-checked on every subsequent render (a folder-collapse toggle or search
-// shouldn't re-trigger the scroll/flash).
-const highlightItemIdParam = params.get('itemId') ? Number(params.get('itemId')) : null;
-let highlightItemIdPending = highlightItemIdParam;
+// Set by "Go to Item in Take-offs" on a sheet's take-off right-click menu.
+// Unlike a one-shot flash, this stays set for the life of the page - with
+// hundreds of items on screen, a highlight that fades after a couple
+// seconds is easy to lose track of while scrolling/searching back to it.
+// Re-applied to the matching row on every render (renderByItemTable
+// rebuilds the table from scratch on every reload/folder-toggle/search).
+let highlightedItemId = params.get('itemId') ? Number(params.get('itemId')) : null;
+// One-shot guards, separate from highlightedItemId itself - the
+// auto-expand-its-folder and scroll-into-view steps should only happen
+// once, on arrival, not redone every time something else re-renders the
+// table while the item stays highlighted.
+let hasAutoExpandedForHighlight = false;
+let hasScrolledToHighlight = false;
 
 let allItems = [];
 let bySheetRows = null; // fetched lazily on first switch to the By Sheet view, then cached
@@ -320,6 +327,7 @@ function renderByItemTable() {
           .join('');
       const tr = document.createElement('tr');
       tr.dataset.itemId = item.id;
+      if (item.id === highlightedItemId) tr.classList.add('takeoff-row-highlighted');
       tr.innerHTML = `
         <td><button type="button" class="icon-btn takeoff-expand-btn" title="Show drawings">&#9656;</button></td>
         <td><span class="takeoff-color-dot" style="background:${item.color};"></span></td>
@@ -388,34 +396,41 @@ function renderByItemTable() {
     });
   });
 
-  highlightRequestedItem();
+  settleItemHighlight();
 }
 
-// Consumes highlightItemIdPending (set from ?itemId=, arriving via "Go to
-// Item in Take-offs" on a sheet's take-off right-click menu) exactly once.
-// If the item's folder is collapsed, expand it first and re-render - the
-// row doesn't exist in the DOM to scroll to otherwise - then finish on the
-// pass where it's actually visible.
-function highlightRequestedItem() {
-  if (highlightItemIdPending == null) return;
-  const item = allItems.find((i) => i.id === highlightItemIdPending);
-  if (!item) {
-    highlightItemIdPending = null; // wrong project, or the item's gone - nothing to jump to
-    return;
+// The persistent highlight class itself is applied inline in the row loop
+// above (item.id === highlightedItemId), so it's already correct on every
+// render including this one. What's left is the two ONE-TIME arrival
+// steps: expand the item's folder if it's collapsed (the row can't be
+// scrolled to if it was never in the DOM), then scroll it into view -
+// each guarded so neither redoes itself on a later unrelated re-render
+// (search, a folder toggle, editing a different item) while the highlight
+// stays in place.
+function settleItemHighlight() {
+  if (highlightedItemId == null) return;
+  const item = allItems.find((i) => i.id === highlightedItemId);
+  if (!item) return; // wrong project, or the item's gone - nothing to expand/scroll to
+
+  if (!hasAutoExpandedForHighlight) {
+    const folderKey = item.folder_id && (allFolders || []).some((f) => f.id === item.folder_id) ? String(item.folder_id) : 'none';
+    if (collapsedItemFolders.has(folderKey)) {
+      collapsedItemFolders.delete(folderKey);
+      saveCollapsedFolders(itemFolderCollapseKey, collapsedItemFolders);
+      hasAutoExpandedForHighlight = true;
+      renderByItemTable();
+      return;
+    }
+    hasAutoExpandedForHighlight = true;
   }
-  const folderKey = item.folder_id && (allFolders || []).some((f) => f.id === item.folder_id) ? String(item.folder_id) : 'none';
-  if (collapsedItemFolders.has(folderKey)) {
-    collapsedItemFolders.delete(folderKey);
-    saveCollapsedFolders(itemFolderCollapseKey, collapsedItemFolders);
-    renderByItemTable();
-    return;
+
+  if (!hasScrolledToHighlight) {
+    const row = document.querySelector(`#takeoff-items-table tbody tr[data-item-id="${item.id}"]`);
+    if (row) {
+      row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      hasScrolledToHighlight = true;
+    }
   }
-  highlightItemIdPending = null;
-  const row = document.querySelector(`#takeoff-items-table tbody tr[data-item-id="${item.id}"]`);
-  if (!row) return;
-  row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  row.classList.add('takeoff-row-flash');
-  row.addEventListener('animationend', () => row.classList.remove('takeoff-row-flash'), { once: true });
 }
 
 async function loadBySheetRows() {
