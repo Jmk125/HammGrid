@@ -71,10 +71,24 @@ function panToRect(fracX, fracY, fracW, fracH) {
 }
 
 function setupZoomPan() {
+  const wrapEl = document.getElementById('zoom-wrap');
+  // Registered before setupSharedZoomPan() below adds its own wheel
+  // listener on the same element, so this one runs first and can
+  // intercept: a plain vertical scroll (no ctrl/shift - see
+  // wheelZoomRequiresCtrl below) that's already at the top/bottom edge of
+  // the current page, with nothing left to pan, turns the page instead of
+  // doing nothing - so scrolling reads through a multi-page document
+  // continuously instead of stopping dead at each page's edge.
+  // stopImmediatePropagation() suppresses zoomPan.js's own handler for
+  // that same event; any other wheel event (mid-page pan, ctrl-zoom,
+  // shift-pan) falls through untouched.
+  wrapEl.addEventListener('wheel', handlePageBoundaryScroll, { passive: false });
+
   zoomPan = setupSharedZoomPan({
-    wrapEl: document.getElementById('zoom-wrap'),
+    wrapEl,
     innerEl: document.getElementById('zoom-pan-inner'),
     isPanBlocked: () => !!(markupsController && markupsController.isToolActive()),
+    wheelZoomRequiresCtrl: true,
     onChange: (state) => {
       if (!suppressInteractionFlag) userHasZoomedOrPanned = true;
       if (markupsController) {
@@ -83,6 +97,68 @@ function setupZoomPan() {
       }
     },
   });
+}
+
+// A fast mouse wheel or trackpad fires many discrete events per physical
+// scroll gesture. Without this lock, several of those events land while
+// the first triggered transition's renderPage() is still awaiting - at
+// that point currentPage has already advanced (set synchronously below)
+// but zoomPan.state.y hasn't been repositioned yet, so the boundary check
+// still reads "at the edge" and queues another transition, letting one
+// scroll gesture skip several pages. Held for the full transition,
+// including the pan reposition after render.
+let pageTransitionInFlight = false;
+
+function handlePageBoundaryScroll(e) {
+  if (e.ctrlKey || e.shiftKey || e.deltaY === 0 || !zoomPan) return;
+  const wrapEl = document.getElementById('zoom-wrap');
+  const canvas = document.getElementById('pdf-canvas');
+  const wrapRect = wrapEl.getBoundingClientRect();
+  const TOL = 2; // px slack for float drift (e.g. fitToView's 0.96 margin)
+  const pageTop = zoomPan.state.y;
+  const pageBottom = zoomPan.state.y + canvas.height * zoomPan.state.scale;
+  if (e.deltaY > 0 && pageBottom <= wrapRect.height + TOL && currentPage < numPages) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (!pageTransitionInFlight) goToPageByScroll(1);
+  } else if (e.deltaY < 0 && pageTop >= -TOL && currentPage > 1) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (!pageTransitionInFlight) goToPageByScroll(-1);
+  }
+}
+
+// Like goToPage() below, but for the continuous-scroll case above:
+// preserves the current zoom scale and horizontal position across the
+// page change instead of resetting to fit-to-view, and lands the new page
+// at the edge being scrolled into (or centered, if the whole page already
+// fits the viewport) so the motion reads as continuous. goToPage()'s
+// always-fit-to-view behavior is unchanged for the explicit prev/next
+// buttons.
+async function goToPageByScroll(direction) {
+  const n = currentPage + direction;
+  if (n < 1 || n > numPages) return;
+  pageTransitionInFlight = true;
+  try {
+    const wrapEl = document.getElementById('zoom-wrap');
+    const wrapRect = wrapEl.getBoundingClientRect();
+    const { scale, x } = zoomPan.state;
+    currentPage = n;
+    await renderPage();
+    if (markupsController) markupsController.setPage(currentPage);
+    const canvas = document.getElementById('pdf-canvas');
+    const contentH = canvas.height * scale;
+    suppressInteractionFlag = true;
+    zoomPan.state.scale = scale;
+    zoomPan.state.x = x;
+    zoomPan.state.y =
+      contentH <= wrapRect.height ? (wrapRect.height - contentH) / 2 : direction > 0 ? 0 : wrapRect.height - contentH;
+    zoomPan.apply();
+    suppressInteractionFlag = false;
+    userHasZoomedOrPanned = true;
+  } finally {
+    pageTransitionInFlight = false;
+  }
 }
 
 function updatePageNavBadge() {

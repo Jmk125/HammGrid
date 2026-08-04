@@ -13,6 +13,14 @@ export function setupZoomPan({
   panButton = 0,
   touchPan = panButton === 0,
   isButtonAllowed,
+  // Default (sheet viewer, box-drawing tool): bare wheel zooms, shift+wheel
+  // pans horizontally. Opt in here for the opposite - bare wheel scrolls/
+  // pans (useful for paging through a tall/wide document), and zoom moves
+  // to ctrl+wheel - which is also how browsers report trackpad pinch-zoom
+  // (ctrlKey is true on a pinch gesture even with no physical key held), so
+  // this doubles as trackpad-pinch support for free. Real touchscreen pinch
+  // (touchstart/touchmove below) always zooms either way, unaffected by this.
+  wheelZoomRequiresCtrl = false,
 }) {
   const state = { scale: 1, x: 0, y: 0 };
 
@@ -40,21 +48,34 @@ export function setupZoomPan({
     apply();
   }
 
+  function zoomAt(clientX, clientY, factor) {
+    const rect = wrapEl.getBoundingClientRect();
+    const cx = clientX - rect.left;
+    const cy = clientY - rect.top;
+    const newScale = Math.min(6, Math.max(0.1, state.scale * factor));
+    state.x = cx - (cx - state.x) * (newScale / state.scale);
+    state.y = cy - (cy - state.y) * (newScale / state.scale);
+    state.scale = newScale;
+  }
+
   wrapEl.addEventListener(
     'wheel',
     (e) => {
       e.preventDefault();
-      if (e.shiftKey) {
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      if (wheelZoomRequiresCtrl) {
+        if (e.ctrlKey) {
+          zoomAt(e.clientX, e.clientY, factor);
+        } else if (e.shiftKey) {
+          state.x -= e.deltaY;
+        } else {
+          state.x -= e.deltaX;
+          state.y -= e.deltaY;
+        }
+      } else if (e.shiftKey) {
         state.x -= e.deltaY;
       } else {
-        const rect = wrapEl.getBoundingClientRect();
-        const cx = e.clientX - rect.left;
-        const cy = e.clientY - rect.top;
-        const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-        const newScale = Math.min(6, Math.max(0.1, state.scale * factor));
-        state.x = cx - (cx - state.x) * (newScale / state.scale);
-        state.y = cy - (cy - state.y) * (newScale / state.scale);
-        state.scale = newScale;
+        zoomAt(e.clientX, e.clientY, factor);
       }
       apply();
     },
