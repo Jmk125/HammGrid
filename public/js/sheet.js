@@ -4328,9 +4328,16 @@ function setupTakeoffEditInteraction() {
     'touchstart',
     (e) => {
       if (!isPrimaryTakeoffTouch(e)) return;
+      // Claim the gesture immediately while editing. Without this, iOS both
+      // delays committing to "this is a drag" (the "little bits, then
+      // normal" stutter) AND, since preventDefault was never called,
+      // synthesizes a phantom mousedown/mouseup/click ~300ms after touchend
+      // at the same point - which hitTestTakeoffEditPoint sees as a second
+      // tap on the same point within the double-click window, deleting it.
+      if (editingInstance) e.preventDefault();
       handleTakeoffEditPointerDown(e);
     },
-    { passive: true }
+    { passive: false }
   );
   svg.addEventListener(
     'touchmove',
