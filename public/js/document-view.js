@@ -192,24 +192,60 @@ async function renderPage() {
   updatePageNavBadge();
 }
 
+// Loads a non-PDF file (a photo, now that the document store accepts those -
+// see documents.routes.js) straight into the same canvas the PDF path uses.
+// Everything downstream - zoom/pan, markups, fitToView - is already just
+// canvas-pixel-space math with no idea whether a PDF page or an image put
+// those pixels there, so this needs zero changes anywhere else.
+function renderImage(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.getElementById('pdf-canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0);
+      currentPdf = null;
+      numPages = 1;
+      currentPage = 1;
+      document.getElementById('pdf-status').textContent = '';
+      if (markupsController) markupsController.resync();
+      updatePageNavBadge();
+      fitToView(canvas.width, canvas.height);
+      resolve(true);
+    };
+    img.onerror = () => resolve(false);
+    img.src = url;
+  });
+}
+
 async function renderPdf() {
   const statusEl = document.getElementById('pdf-status');
   statusEl.textContent = 'Loading...';
   const canvas = document.getElementById('pdf-canvas');
-  const pdfUrl = shareToken
+  const fileUrl = shareToken
     ? `/api/share/${shareToken}/documents/${documentId}/pdf`
     : stagedSheetId
     ? `/api/staged-sheets/${stagedSheetId}/pdf`
     : versionId ? `/api/document-versions/${versionId}/pdf` : `/api/documents/${documentId}/pdf`;
   try {
-    const loadingTask = pdfjsLib.getDocument({ url: pdfUrl });
+    const loadingTask = pdfjsLib.getDocument({ url: fileUrl });
     currentPdf = await loadingTask.promise;
     numPages = currentPdf.numPages;
     currentPage = 1;
     await renderPage();
     fitToView(canvas.width, canvas.height);
   } catch (err) {
-    statusEl.textContent = `Failed to render document: ${err.message}`;
+    // Not a PDF (or PDF.js couldn't parse it) - try it as an image instead.
+    // Deliberately try-then-fallback rather than checking the extension up
+    // front: this page has four different fetch paths (direct, share-token,
+    // staged-sheet, specific-version) and PDF.js failing is already the one
+    // signal common to all of them, so no new metadata plumbing is needed.
+    const ok = await renderImage(fileUrl);
+    if (!ok) statusEl.textContent = `Failed to render document: ${err.message}`;
   }
 }
 

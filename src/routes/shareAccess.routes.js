@@ -1,9 +1,11 @@
 const express = require('express');
+const path = require('path');
 const db = require('../db');
 const { resolveShare, getShareSheets, getShareDocuments, canAccessShareDocument, logShareActivity } = require('../lib/shareAccess');
 const { streamZip, streamMergedPdf } = require('../lib/exportPdfs');
 const { streamFile } = require('../lib/streamFile');
 const { annotatePdfToResponse } = require('../lib/annotatePdf');
+const { mimeForPath } = require('../lib/documentFileTypes');
 
 const router = express.Router();
 
@@ -94,7 +96,7 @@ router.get('/:token/documents/:documentId/download', requireValidShare, (req, re
   if (!document) return res.status(404).json({ error: 'Not found' });
   const row = db.prepare(`SELECT dv.pdf_path AS p FROM documents d JOIN document_versions dv ON dv.id = d.current_version_id WHERE d.id = ?`).get(document.id);
   if (!row || !row.p) return res.status(404).end();
-  res.download(row.p, `${document.name || 'document'}.pdf`);
+  res.download(row.p, `${document.name || 'document'}${path.extname(row.p)}`);
 });
 
 router.get('/:token/documents/:documentId/pdf', requireValidShare, (req, res) => {
@@ -104,7 +106,7 @@ router.get('/:token/documents/:documentId/pdf', requireValidShare, (req, res) =>
     .prepare(`SELECT dv.pdf_path AS p FROM documents d JOIN document_versions dv ON dv.id = d.current_version_id WHERE d.id = ?`)
     .get(document.id);
   if (!row || !row.p) return res.status(404).end();
-  streamFile(res, row.p, 'application/pdf');
+  streamFile(res, row.p, mimeForPath(row.p));
 });
 
 router.get('/:token/sheet-versions/:versionId/pdf', requireValidShare, requireVersionInShare, serveShareFile('pdf_path', 'application/pdf'));

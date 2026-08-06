@@ -7,6 +7,7 @@ const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { toPortablePath } = require('../lib/paths');
+const { ALLOWED_DOCUMENT_EXTENSIONS, extOf, isImagePath } = require('../lib/documentFileTypes');
 
 const router = express.Router({ mergeParams: true });
 
@@ -16,9 +17,13 @@ fs.mkdirSync(docsDir, { recursive: true });
 const upload = multer({
   storage: multer.diskStorage({
     destination: docsDir,
-    filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}.pdf`),
+    // Preserves the real extension (jpg/png/etc) instead of forcing .pdf -
+    // downstream serving (documentFiles.routes.js, documentVersions.routes.js)
+    // derives Content-Type from this on disk, and it's what lets a photo
+    // download with a sane filename.
+    filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}${extOf(file.originalname)}`),
   }),
-  fileFilter: (req, file, cb) => cb(null, /\.pdf$/i.test(file.originalname)),
+  fileFilter: (req, file, cb) => cb(null, ALLOWED_DOCUMENT_EXTENSIONS.includes(extOf(file.originalname))),
   limits: { fileSize: 200 * 1024 * 1024 },
 });
 
@@ -53,10 +58,11 @@ router.post('/folders', requireRole('admin', 'editor'), (req, res) => {
 // anyway to resolve a linked_document_id to a display name regardless of
 // which folder it lives in.
 router.get('/', requireAuth, (req, res) => {
-  const documents = db
+  const rows = db
     .prepare(
       `SELECT d.id, d.folder_id, d.name, d.created_at,
               dv.id AS current_version_id, dv.revision_name, dv.issue_date, dv.created_at AS version_created_at,
+              dv.pdf_path AS current_path,
               (SELECT COUNT(DISTINCT m.sheet_id) FROM markups m WHERE m.linked_document_id = d.id) AS linked_sheet_count
        FROM documents d
        LEFT JOIN document_versions dv ON dv.id = d.current_version_id
@@ -64,12 +70,15 @@ router.get('/', requireAuth, (req, res) => {
        ORDER BY d.name`
     )
     .all(req.params.projectId);
+  // Raw file paths stay server-side - only the derived flag the table's
+  // thumbnail rendering needs (documents.js) crosses the wire.
+  const documents = rows.map(({ current_path, ...rest }) => ({ ...rest, is_image: isImagePath(current_path) }));
   res.json({ documents });
 });
 
 router.post('/', requireRole('admin', 'editor'), upload.single('file'), (req, res) => {
   const { name, folder_id, issue_date } = req.body;
-  if (!req.file) return res.status(400).json({ error: 'A PDF file is required' });
+  if (!req.file) return res.status(400).json({ error: 'A PDF or image file is required' });
   if (!name || !name.trim()) {
     fs.unlink(req.file.path, () => {});
     return res.status(400).json({ error: 'name is required' });
@@ -112,7 +121,7 @@ router.post('/:id/versions', requireRole('admin', 'editor'), upload.single('file
     if (req.file) fs.unlink(req.file.path, () => {});
     return res.status(404).json({ error: 'Not found' });
   }
-  if (!req.file) return res.status(400).json({ error: 'A PDF file is required' });
+  if (!req.file) return res.status(400).json({ error: 'A PDF or image file is required' });
 
   const { revision_name, issue_date } = req.body;
   const versionResult = db

@@ -1,8 +1,10 @@
 const express = require('express');
 const fs = require('fs');
+const path = require('path');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { streamFile } = require('../lib/streamFile');
+const { mimeForPath } = require('../lib/documentFileTypes');
 
 const router = express.Router();
 
@@ -26,7 +28,7 @@ router.get('/:id/download', requireAuth, (req, res) => {
     .prepare(`SELECT d.name, dv.pdf_path AS p FROM documents d JOIN document_versions dv ON dv.id = d.current_version_id WHERE d.id = ?`)
     .get(req.params.id);
   if (!row || !row.p) return res.status(404).end();
-  res.download(row.p, `${row.name || 'document'}.pdf`);
+  res.download(row.p, `${row.name || 'document'}${path.extname(row.p)}`);
 });
 
 router.get('/:id/pdf', requireAuth, (req, res) => {
@@ -38,7 +40,7 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
     )
     .get(req.params.id);
   if (!row || !row.p) return res.status(404).end();
-  streamFile(res, row.p, 'application/pdf');
+  streamFile(res, row.p, mimeForPath(row.p));
 });
 
 router.patch('/:id', requireRole('admin', 'editor'), (req, res) => {

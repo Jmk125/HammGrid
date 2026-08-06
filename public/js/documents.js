@@ -33,6 +33,12 @@ function escapeHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 }
 
+const ACCEPTED_DOC_TYPES = '.pdf,.jpg,.jpeg,.png,.webp,.gif';
+
+function stripExt(filename) {
+  return filename.replace(/\.[^.]+$/, '');
+}
+
 function formatDateTime(s) {
   if (!s) return '';
   return new Date(s.replace(' ', 'T') + 'Z').toLocaleString();
@@ -122,8 +128,15 @@ function renderTable() {
 
   for (const d of childDocs) {
     const tr = document.createElement('tr');
+    // A photo gets a real (downscaled-by-CSS) thumbnail instead of the
+    // generic file icon - the full image is small enough at this document
+    // count that a separate thumbnail-generation pipeline isn't worth it,
+    // same URL the viewer itself uses.
+    const icon = d.is_image
+      ? `<img class="doc-icon doc-thumb" src="/api/documents/${d.id}/pdf" alt="" loading="lazy">`
+      : `<svg viewBox="0 0 20 20" class="doc-icon"><path d="M5 2h7l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M12 2v4h4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`;
     tr.innerHTML = `
-      <td><svg viewBox="0 0 20 20" class="doc-icon"><path d="M5 2h7l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M12 2v4h4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg></td>
+      <td>${icon}</td>
       <td class="doc-row-name"><a href="/document-view.html?documentId=${d.id}" target="_blank">${escapeHtml(d.name)}</a></td>
       <td>${escapeHtml(d.revision_name) || '<span class="muted">Original</span>'}</td>
       <td>${escapeHtml(d.issue_date) || ''}</td>
@@ -220,7 +233,7 @@ function openIssueRevisionModal(d) {
     <h2>Issue revision — ${escapeHtml(d.name)}</h2>
     <div class="field"><label>Revision name</label><input id="modal-rev-name" placeholder="e.g. Rev A, Issued for Construction"></div>
     <div class="field"><label>Issue date</label><input id="modal-rev-date" type="date"></div>
-    <div class="field"><label>File</label><input id="modal-rev-file" type="file" accept="application/pdf"></div>
+    <div class="field"><label>File</label><input id="modal-rev-file" type="file" accept="${ACCEPTED_DOC_TYPES}"></div>
     <p class="error" id="modal-error" style="display:none;"></p>
     <div class="modal-actions">
       <button type="button" id="modal-cancel">Cancel</button>
@@ -287,9 +300,9 @@ function openUploadModal() {
   openModal(`
     <h2>Upload document(s)</h2>
     <div class="drop-zone" id="modal-drop-zone">
-      <div class="drop-zone-title">Drag &amp; drop PDF(s) here</div>
+      <div class="drop-zone-title">Drag &amp; drop PDF(s) or photo(s) here</div>
       <div>or click to browse</div>
-      <input type="file" id="modal-doc-file" accept="application/pdf" multiple style="display:none;">
+      <input type="file" id="modal-doc-file" accept="${ACCEPTED_DOC_TYPES}" multiple style="display:none;">
     </div>
     <div id="modal-single-fields" style="display:none; margin-top:12px;">
       <div class="field"><label>Name</label><input id="modal-doc-name" placeholder="e.g. RFI-042 - Beam size at gridline C"></div>
@@ -318,7 +331,7 @@ function openUploadModal() {
     if (files.length === 1) {
       singleFields.style.display = '';
       multiSummary.style.display = 'none';
-      if (!nameInput.value) nameInput.value = files[0].name.replace(/\.pdf$/i, '');
+      if (!nameInput.value) nameInput.value = stripExt(files[0].name);
     } else if (files.length > 1) {
       singleFields.style.display = 'none';
       multiSummary.style.display = '';
@@ -338,7 +351,7 @@ function openUploadModal() {
   dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    setSelectedFiles(pdfFilesFrom(e.dataTransfer));
+    setSelectedFiles(acceptedFilesFrom(e.dataTransfer));
   });
   fileInput.addEventListener('change', () => setSelectedFiles(Array.from(fileInput.files)));
 
@@ -430,7 +443,7 @@ function setupDragAndDrop() {
     const folderRow = e.target.closest('tr.doc-row-folder');
     zone.querySelectorAll('.drag-target-folder').forEach((tr) => tr.classList.remove('drag-target-folder'));
     const targetFolderId = folderRow ? Number(folderRow.dataset.folderId) : currentFolderId;
-    const files = pdfFilesFrom(e.dataTransfer);
+    const files = acceptedFilesFrom(e.dataTransfer);
     if (files.length) await uploadFilesBulk(files, targetFolderId);
   });
 }
@@ -439,9 +452,11 @@ function isFileDrag(e) {
   return e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
 }
 
-function pdfFilesFrom(dataTransfer) {
+const ACCEPTED_DOC_EXTENSIONS = /\.(pdf|jpe?g|png|webp|gif)$/i;
+
+function acceptedFilesFrom(dataTransfer) {
   return Array.from(dataTransfer.files || []).filter(
-    (f) => f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+    (f) => f.type === 'application/pdf' || f.type.startsWith('image/') || ACCEPTED_DOC_EXTENSIONS.test(f.name)
   );
 }
 
@@ -464,7 +479,7 @@ function ensureUploadPanel() {
 
 function uploadOneFileXhr(file, folderId, panel) {
   return new Promise((resolve) => {
-    const name = file.name.replace(/\.pdf$/i, '');
+    const name = stripExt(file.name);
     const row = document.createElement('div');
     row.className = 'upload-row';
     row.innerHTML = `
