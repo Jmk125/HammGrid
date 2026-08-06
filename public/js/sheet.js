@@ -4024,10 +4024,10 @@ function distanceToSegment(p, a, b) {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
-function hitTestTakeoffEditPoint(pt) {
+function hitTestTakeoffEditPoint(pt, radiusPx = 10) {
   if (!editingInstance) return null;
   const scale = zoomPan ? zoomPan.state.scale : 1;
-  const r = 10 / scale;
+  const r = radiusPx / scale;
   for (const [ring, pts] of takeoffEditRings()) {
     for (let i = 0; i < pts.length; i++) {
       if (Math.hypot(pts[i].x - pt.x, pts[i].y - pt.y) <= r) return `${ring}:${i}`;
@@ -4101,13 +4101,16 @@ function renderTakeoffEditOverlay() {
     shapeEl.setAttribute('stroke-width', 3 / scale);
     shapeEl.setAttribute('fill', editingInstance.item_type === 'area' ? color : 'none');
     shapeEl.setAttribute('fill-opacity', '0.15');
+    shapeEl.id = 'takeoff-edit-shape'; // looked up by repositionTakeoffEditOverlay() - see there for why
     layer.appendChild(shapeEl);
   }
 
   for (const [ring, ringPts] of takeoffEditRings()) {
     ringPts.forEach((p, i) => {
-      const selected = editSelectedPointIndices.has(`${ring}:${i}`);
+      const key = `${ring}:${i}`;
+      const selected = editSelectedPointIndices.has(key);
       const c = measureSvgNs('circle');
+      c.setAttribute('data-key', key); // looked up by repositionTakeoffEditOverlay() - see there for why
       c.setAttribute('cx', p.x);
       c.setAttribute('cy', p.y);
       c.setAttribute('r', 7 / scale);
@@ -4151,6 +4154,43 @@ function renderTakeoffEditOverlay() {
   }
 }
 
+// Lighter-weight alternative to renderTakeoffEditOverlay() for use WHILE a
+// point drag is in progress - updates the moved circles' cx/cy and the
+// outer shape's points/d attribute in place instead of clearing and
+// rebuilding the whole layer. This matters specifically for touch: a real
+// mouse drag never cared which DOM node was under the cursor (mousemove is
+// re-targeted every event), but a touch's touchmove/touchend are pinned to
+// whichever element touchstart actually landed on - if that circle gets
+// removed and replaced (as the full rebuild does every frame), iOS fires
+// touchcancel and the drag dies after one tiny movement. Keeping the same
+// DOM nodes alive for the duration of the gesture fixes that.
+function repositionTakeoffEditOverlay(movedKeys) {
+  const layer = ensureTakeoffEditLayer();
+  if (!editingInstance) return;
+  const pts = editingInstance.geometry.points;
+  const holes = editingInstance.geometry.holes || [];
+
+  const shapeEl = layer.querySelector('#takeoff-edit-shape');
+  if (shapeEl && pts.length > 1) {
+    if (editingInstance.item_type === 'area' && holes.length) {
+      shapeEl.setAttribute('d', areaPathD(pts, holes));
+    } else {
+      shapeEl.setAttribute('points', pts.map((p) => `${p.x},${p.y}`).join(' '));
+    }
+  }
+
+  for (const key of movedKeys) {
+    const c = layer.querySelector(`circle[data-key="${key}"]`);
+    if (!c) continue;
+    const [ring, idxStr] = key.split(':');
+    const idx = Number(idxStr);
+    const p = ring === 'outer' ? pts[idx] : holes[Number(ring)][idx];
+    if (!p) continue;
+    c.setAttribute('cx', p.x);
+    c.setAttribute('cy', p.y);
+  }
+}
+
 function setupTakeoffEditInteraction() {
   const svg = document.getElementById('markup-svg');
 
@@ -4168,7 +4208,9 @@ function setupTakeoffEditInteraction() {
     if (!e.touches && e.button !== 0) return;
     e.stopPropagation();
     const pt = getMeasureSvgPoint(e);
-    const hitPoint = hitTestTakeoffEditPoint(pt);
+    // Touch gets a bigger hit radius than mouse - a fingertip is nowhere
+    // near as precise as a cursor, and the default 10px was tuned for mouse.
+    const hitPoint = hitTestTakeoffEditPoint(pt, e.touches ? 16 : 10);
 
     if (hitPoint !== null) {
       const now = Date.now();
@@ -4260,7 +4302,9 @@ function setupTakeoffEditInteraction() {
         arr[idx].x += dx;
         arr[idx].y += dy;
       }
-      renderTakeoffEditOverlay();
+      // Reposition, not a full rebuild - see repositionTakeoffEditOverlay's
+      // comment for why rebuilding here breaks touch dragging specifically.
+      repositionTakeoffEditOverlay(editSelectedPointIndices);
     } else if (takeoffMarquee) {
       takeoffMarquee.currentPt = pt;
       renderTakeoffEditOverlay();
