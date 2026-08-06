@@ -5442,13 +5442,20 @@ function setupTakeoffInteraction() {
 
   // Touch-only precision aid: iPad has no live mousemove preview (a touch
   // doesn't generate one until it lifts), and a fingertip covers the exact
-  // spot you're trying to place a point on. Holding still for TOUCH_HOLD_MS
+  // spot you're trying to place a point on. Holding still for TAKEOFF_HOLD_MS
   // instead of tapping immediately brings up the corner magnifier and keeps
   // it (plus the normal rubber-band preview) tracking the finger live, so
-  // you can slide into position before lifting. Deliberately never calls
-  // preventDefault anywhere - this only drives UI feedback, the actual
-  // placement still happens through the click handler above via iOS's
-  // normal tap->click synthesis, completely unchanged.
+  // you can slide into position before lifting.
+  //
+  // Committing the point on release can't just rely on iOS's normal
+  // tap->click synthesis the way a quick tap does - that synthesis is
+  // suppressed once a touch has actually moved, which is exactly what
+  // happens every time this feature's drag-to-adjust is used. So once the
+  // hold has engaged, touchend explicitly preventDefaults (killing whatever
+  // native synthesis might otherwise fire, avoiding a double-placement) and
+  // dispatches its own synthetic click at the final position instead -
+  // reusing the click handler above completely unchanged rather than
+  // duplicating its placement logic.
   const TAKEOFF_HOLD_MS = 300;
   let takeoffHoldTimer = null;
   let takeoffHoldActive = false;
@@ -5478,13 +5485,26 @@ function setupTakeoffInteraction() {
     },
     { passive: true }
   );
-  function endTakeoffHold() {
+  svg.addEventListener(
+    'touchend',
+    (e) => {
+      clearTimeout(takeoffHoldTimer);
+      if (!takeoffHoldActive) return; // quick tap - untouched native click synthesis places it, same as always
+      takeoffHoldActive = false;
+      magnifierLens.hideCorner();
+      e.preventDefault();
+      const t = e.changedTouches && e.changedTouches[0];
+      if (t) {
+        svg.dispatchEvent(new MouseEvent('click', { clientX: t.clientX, clientY: t.clientY, bubbles: true, cancelable: true }));
+      }
+    },
+    { passive: false }
+  );
+  svg.addEventListener('touchcancel', () => {
     clearTimeout(takeoffHoldTimer);
     if (takeoffHoldActive) magnifierLens.hideCorner();
     takeoffHoldActive = false;
-  }
-  svg.addEventListener('touchend', endTakeoffHold);
-  svg.addEventListener('touchcancel', endTakeoffHold);
+  });
 
   document.addEventListener('keydown', (e) => {
     // A fresh linear take-off is always exactly 2 clicks (finished
