@@ -7,7 +7,7 @@ const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { toPortablePath } = require('../lib/paths');
-const { ALLOWED_DOCUMENT_EXTENSIONS, extOf, isImagePath } = require('../lib/documentFileTypes');
+const { ALLOWED_DOCUMENT_EXTENSIONS, extOf, isImagePath, validateFileContent } = require('../lib/documentFileTypes');
 
 const router = express.Router({ mergeParams: true });
 
@@ -79,6 +79,11 @@ router.get('/', requireAuth, (req, res) => {
 router.post('/', requireRole('admin', 'editor'), upload.single('file'), (req, res) => {
   const { name, folder_id, issue_date } = req.body;
   if (!req.file) return res.status(400).json({ error: 'A PDF or image file is required' });
+  const contentError = validateFileContent(req.file.path);
+  if (contentError) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: contentError });
+  }
   if (!name || !name.trim()) {
     fs.unlink(req.file.path, () => {});
     return res.status(400).json({ error: 'name is required' });
@@ -122,6 +127,11 @@ router.post('/:id/versions', requireRole('admin', 'editor'), upload.single('file
     return res.status(404).json({ error: 'Not found' });
   }
   if (!req.file) return res.status(400).json({ error: 'A PDF or image file is required' });
+  const contentError = validateFileContent(req.file.path);
+  if (contentError) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: contentError });
+  }
 
   const { revision_name, issue_date } = req.body;
   const versionResult = db
