@@ -161,6 +161,38 @@ async function goToPageByScroll(direction) {
   }
 }
 
+// Lets a photo document cycle to the next/previous photo in the same folder
+// (a "progress photos" folder is the obvious case) without going back to the
+// table view each time. Reuses the folder-scoped list the documents.js table
+// already fetches, filtered/sorted the same way (is_image, name order) so
+// "next" here matches what "next row down" would be there. A full page
+// navigation, same pattern as sheet.js's prev/next sheet buttons - simpler
+// and more robust than trying to reset all the canvas/markup state in place.
+async function setupGalleryNav(doc) {
+  try {
+    const { documents } = await api('GET', `/api/projects/${doc.project_id}/documents`);
+    const images = documents
+      .filter((d) => d.is_image && (d.folder_id || null) === (doc.folder_id || null))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const idx = images.findIndex((d) => d.id === doc.id);
+    if (idx === -1 || images.length < 2) return; // this document isn't an image, or nothing else to cycle to
+    document.getElementById('gallery-nav-badge').style.display = '';
+    document.getElementById('doc-gallery-label').textContent = `Photo ${idx + 1} / ${images.length}`;
+    const prevBtn = document.getElementById('doc-gallery-prev-btn');
+    const nextBtn = document.getElementById('doc-gallery-next-btn');
+    prevBtn.disabled = idx <= 0;
+    nextBtn.disabled = idx >= images.length - 1;
+    prevBtn.addEventListener('click', () => {
+      if (idx > 0) window.location.href = `/document-view.html?documentId=${images[idx - 1].id}`;
+    });
+    nextBtn.addEventListener('click', () => {
+      if (idx < images.length - 1) window.location.href = `/document-view.html?documentId=${images[idx + 1].id}`;
+    });
+  } catch (err) {
+    // Gallery nav is a convenience, not critical to viewing the document.
+  }
+}
+
 function updatePageNavBadge() {
   const badge = document.getElementById('page-nav-badge');
   if (numPages <= 1) {
@@ -354,6 +386,10 @@ document.getElementById('download-doc-btn').addEventListener('click', () => {
         const issueDate = shownVersion && shownVersion.issue_date ? ` (${shownVersion.issue_date})` : '';
         const staleNote = versionId && versions[0] && String(versions[0].id) !== versionId ? ' — not the current version' : '';
         document.getElementById('doc-label').textContent = `${doc.name} — ${revisionLabel}${issueDate}${staleNote}`;
+        // Only for the plain "current version" view - navigating to a sibling
+        // photo would otherwise ditch the "specific historical version"
+        // context of a ?versionId= link in a confusing way.
+        if (!versionId) await setupGalleryNav(doc);
       } catch (err) {
         // metadata fetch failed - still try to render the PDF itself
       }

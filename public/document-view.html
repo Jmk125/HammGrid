@@ -26,6 +26,15 @@
           </div>
           <button type="button" id="doc-page-next-btn" title="Next page">&#9654;</button>
         </div>
+        <!-- Mutually exclusive with page-nav-badge above (a photo is never a
+             multi-page PDF), so sharing the same corner never overlaps. -->
+        <div class="version-badge" id="gallery-nav-badge" style="display:none;">
+          <button type="button" id="doc-gallery-prev-btn" title="Previous photo">&#9664;</button>
+          <div class="version-badge-inner">
+            <span id="doc-gallery-label">Photo 1 / 1</span>
+          </div>
+          <button type="button" id="doc-gallery-next-btn" title="Next photo">&#9654;</button>
+        </div>
         <div class="zoom-pan-inner" id="zoom-pan-inner">
           <div class="markup-stage">
             <canvas id="pdf-canvas"></canvas>

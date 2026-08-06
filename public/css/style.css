@@ -728,7 +728,10 @@ tr.ignored td { opacity: 0.5; }
    aligned with the row". display:block removes it from that text flow so
    the cell's vertical-align:middle can center it properly. */
 .doc-icon { display: block; width: 18px; height: 18px; flex-shrink: 0; color: var(--muted); }
-.doc-thumb { object-fit: cover; border-radius: 3px; background: var(--border); }
+/* Bigger than the plain file/folder icons (18px) - big enough to actually
+   recognize the photo, not just tell "this row has an image". Overrides
+   .doc-icon's width/height since both classes are set together in markup. */
+.doc-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; background: var(--border); }
 /* Icon and name live in separate <td>s (not one flex-wrapped cell), so this
    must NOT set display:flex - that overrides the cell's display:table-cell,
    which breaks its normal box model (borders/height hug the flex content
