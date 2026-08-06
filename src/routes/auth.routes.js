@@ -47,17 +47,22 @@ router.get('/me', requireAuth, (req, res) => {
 });
 
 const ALLOWED_THEMES = ['default', 'light', 'dark'];
+const ALLOWED_MAGNIFIER_CORNERS = ['bottom-left', 'bottom-right'];
 
 router.put('/settings', requireAuth, (req, res) => {
-  const { theme, darkCanvas } = req.body || {};
+  const { theme, darkCanvas, magnifierCorner } = req.body || {};
   if (theme !== undefined && !ALLOWED_THEMES.includes(theme)) {
     return res.status(400).json({ error: `theme must be one of: ${ALLOWED_THEMES.join(', ')}` });
+  }
+  if (magnifierCorner !== undefined && !ALLOWED_MAGNIFIER_CORNERS.includes(magnifierCorner)) {
+    return res.status(400).json({ error: `magnifierCorner must be one of: ${ALLOWED_MAGNIFIER_CORNERS.join(', ')}` });
   }
 
   const current = req.session.user.settings || {};
   const next = { ...current };
   if (theme !== undefined) next.theme = theme;
   if (darkCanvas !== undefined) next.darkCanvas = !!darkCanvas;
+  if (magnifierCorner !== undefined) next.magnifierCorner = magnifierCorner;
 
   db.prepare('UPDATE users SET settings = ? WHERE id = ?').run(JSON.stringify(next), req.session.user.id);
   req.session.user.settings = next;

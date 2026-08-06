@@ -22,6 +22,14 @@
       <p class="muted">Invert sheets so the drawing background is black and lines are white, independent of the theme above.</p>
       <label class="settings-checkbox"><input type="checkbox" id="dark-canvas-checkbox"> Dark drawing canvas</label>
     </div>
+    <div class="card">
+      <h2>Magnifier position (iPad)</h2>
+      <p class="muted">While dragging a take-off point or holding to place one, a magnified preview appears in this corner - pick the side your hand isn't covering.</p>
+      <div class="settings-radio-group" id="magnifier-corner-options">
+        <label class="settings-radio"><input type="radio" name="magnifierCorner" value="bottom-left"> Bottom left</label>
+        <label class="settings-radio"><input type="radio" name="magnifierCorner" value="bottom-right"> Bottom right</label>
+      </div>
+    </div>
     <p class="muted" id="settings-status" style="min-height: 18px;"></p>
   </main>
   <script src="/js/api.js"></script>

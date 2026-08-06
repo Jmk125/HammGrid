@@ -50,6 +50,8 @@ let sheetLinkLoadToken = 0;
 let canManage = false;
 let canTakeoff = false;
 let isAdmin = false;
+let magnifierLens = null; // set up by setupMagnifierLens() - see its return value
+let magnifierCorner = 'bottom-left'; // from user settings, read in init()
 let allVersions = [];
 let displayedVersionId = null;
 
@@ -2286,21 +2288,25 @@ function setupMagnifierLens() {
   const ctx = lens.getContext('2d');
   const SIZE = 220; // CSS px and canvas px - 1:1, matches the CSS lens size
   const ZOOM = 3;
+  const CORNER_MARGIN = 16;
 
   lens.width = SIZE;
   lens.height = SIZE;
 
   let active = false;
   let lastEvent = null;
+  // True while shown via the touch API below (showAtCorner) instead of the
+  // M key - pins the lens to a fixed screen corner instead of following the
+  // cursor, since a finger (unlike a mouse pointer) covers whatever it's
+  // touching and would otherwise hide the very spot it's meant to reveal.
+  let cornerMode = false;
 
-  function draw() {
-    if (!active || !lastEvent) return;
+  // Shared crop-drawing core - takes a point already in canvas-bitmap space
+  // (see the comment on the old single-purpose draw(), same reasoning
+  // applies here) and returns whether there was anything to draw.
+  function drawCropAt(pt) {
     const pdfCanvas = document.getElementById('pdf-canvas');
-    if (!pdfCanvas.width) return; // nothing rendered yet
-    // getMeasureSvgPoint's viewBox is set to the canvas's own pixel
-    // dimensions (see setupZoomPan), so this is already canvas-bitmap space -
-    // no extra zoom/pan math needed to know what's "under the cursor".
-    const pt = getMeasureSvgPoint(lastEvent);
+    if (!pdfCanvas.width) return false; // nothing rendered yet
     const srcSize = SIZE / ZOOM;
     ctx.clearRect(0, 0, SIZE, SIZE);
     ctx.drawImage(pdfCanvas, pt.x - srcSize / 2, pt.y - srcSize / 2, srcSize, srcSize, 0, 0, SIZE, SIZE);
@@ -2312,6 +2318,16 @@ function setupMagnifierLens() {
     ctx.moveTo(SIZE / 2, SIZE / 2 - 8);
     ctx.lineTo(SIZE / 2, SIZE / 2 + 8);
     ctx.stroke();
+    return true;
+  }
+
+  function draw() {
+    if (!active || !lastEvent) return;
+    // getMeasureSvgPoint's viewBox is set to the canvas's own pixel
+    // dimensions (see setupZoomPan), so this is already canvas-bitmap space -
+    // no extra zoom/pan math needed to know what's "under the cursor".
+    const pt = getMeasureSvgPoint(lastEvent);
+    if (!drawCropAt(pt)) return;
     lens.style.left = `${lastEvent.clientX - SIZE / 2}px`;
     lens.style.top = `${lastEvent.clientY - SIZE / 2}px`;
   }
@@ -2319,6 +2335,7 @@ function setupMagnifierLens() {
   function hide() {
     if (!active) return;
     active = false;
+    cornerMode = false;
     lens.style.display = 'none';
   }
 
@@ -2328,6 +2345,7 @@ function setupMagnifierLens() {
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     active = true;
+    cornerMode = false;
     // display only flips on once draw() has somewhere valid to put it -
     // otherwise pressing M while the mouse is over the pane, not the
     // canvas, would flash the lens at whatever position it was last left.
@@ -2341,12 +2359,40 @@ function setupMagnifierLens() {
 
   zoomWrap.addEventListener('mousemove', (e) => {
     lastEvent = e;
-    if (active) {
+    if (active && !cornerMode) {
       lens.style.display = 'block';
       draw();
     }
   });
-  zoomWrap.addEventListener('mouseleave', hide);
+  zoomWrap.addEventListener('mouseleave', () => {
+    if (!cornerMode) hide();
+  });
+
+  // ---- Touch API ----
+  // iPad has no "hold M" - take-off point drag/placement calls these
+  // directly instead while a finger is down. magnifierCorner (from user
+  // settings) picks which bottom corner, so it stays clear of whichever
+  // hand is holding/dragging.
+  function showAtCorner(pt) {
+    active = true;
+    cornerMode = true;
+    if (!drawCropAt(pt)) return;
+    lens.style.top = `${window.innerHeight - SIZE - CORNER_MARGIN}px`;
+    lens.style.left =
+      magnifierCorner === 'bottom-right'
+        ? `${window.innerWidth - SIZE - CORNER_MARGIN}px`
+        : `${CORNER_MARGIN}px`;
+    lens.style.display = 'block';
+  }
+  function updateCorner(pt) {
+    if (!active || !cornerMode) return;
+    drawCropAt(pt);
+  }
+  function hideCorner() {
+    if (cornerMode) hide();
+  }
+
+  return { showAtCorner, updateCorner, hideCorner };
 }
 
 function getMeasureSvgPoint(evt) {
@@ -4241,7 +4287,13 @@ function setupTakeoffEditInteraction() {
       // armed - while box/brush is on, every mouse gesture is for building a
       // selection, never for moving it. Exit select mode (see
       // setupTakeoffEditToolbar) to drag whatever ended up selected.
-      if (!takeoffEditSelectMode) takeoffEditDrag = { startPt: pt, moved: false };
+      if (!takeoffEditSelectMode) {
+        takeoffEditDrag = { startPt: pt, moved: false };
+        // Corner magnifier only on touch - a mouse cursor doesn't cover the
+        // point it's dragging, so it doesn't need the assist (M key still
+        // works for mouse if wanted).
+        if (e.touches) magnifierLens.showAtCorner(pt);
+      }
       return;
     }
 
@@ -4305,6 +4357,7 @@ function setupTakeoffEditInteraction() {
       // Reposition, not a full rebuild - see repositionTakeoffEditOverlay's
       // comment for why rebuilding here breaks touch dragging specifically.
       repositionTakeoffEditOverlay(editSelectedPointIndices);
+      if (e.touches) magnifierLens.updateCorner(pt);
     } else if (takeoffMarquee) {
       takeoffMarquee.currentPt = pt;
       renderTakeoffEditOverlay();
@@ -4331,6 +4384,7 @@ function setupTakeoffEditInteraction() {
     if (takeoffEditDrag) {
       const moved = takeoffEditDrag.moved;
       takeoffEditDrag = null;
+      magnifierLens.hideCorner();
       if (moved) applyTakeoffEditGeometry(editingInstance.geometry.points, editingInstance.geometry.holes);
       return;
     }
@@ -5359,9 +5413,11 @@ function setupTakeoffInteraction() {
     true
   );
 
-  svg.addEventListener('mousemove', (e) => {
-    if (!takeoffTool || takeoffPoints.length === 0) return;
-    let pt = getMeasureSvgPoint(e);
+  // Shared by the mouse preview below and the touch hold-preview further
+  // down, so both show exactly the same snapped position the eventual click
+  // will actually place - factored out rather than duplicated so they can't
+  // drift out of sync with each other.
+  function computeTakeoffPreviewPoint(pt, e) {
     let pointSnapped = false;
     if (snapToPointsEnabled) {
       const nearby = findNearbyTakeoffSnapPoint(pt);
@@ -5375,8 +5431,60 @@ function setupTakeoffInteraction() {
     if (wantsSnap && !inBoxPlacement && !awaitingArcThrough && !arcThroughPoint && !pointSnapped) {
       pt = snapToAngle(takeoffPoints[takeoffPoints.length - 1], pt);
     }
+    return pt;
+  }
+
+  svg.addEventListener('mousemove', (e) => {
+    if (!takeoffTool || takeoffPoints.length === 0) return;
+    const pt = computeTakeoffPreviewPoint(getMeasureSvgPoint(e), e);
     redrawTakeoff(pt);
   });
+
+  // Touch-only precision aid: iPad has no live mousemove preview (a touch
+  // doesn't generate one until it lifts), and a fingertip covers the exact
+  // spot you're trying to place a point on. Holding still for TOUCH_HOLD_MS
+  // instead of tapping immediately brings up the corner magnifier and keeps
+  // it (plus the normal rubber-band preview) tracking the finger live, so
+  // you can slide into position before lifting. Deliberately never calls
+  // preventDefault anywhere - this only drives UI feedback, the actual
+  // placement still happens through the click handler above via iOS's
+  // normal tap->click synthesis, completely unchanged.
+  const TAKEOFF_HOLD_MS = 300;
+  let takeoffHoldTimer = null;
+  let takeoffHoldActive = false;
+
+  svg.addEventListener(
+    'touchstart',
+    (e) => {
+      takeoffHoldActive = false;
+      clearTimeout(takeoffHoldTimer);
+      if (!takeoffTool || takeoffTool === 'assembly-box' || e.touches.length !== 1) return;
+      takeoffHoldTimer = setTimeout(() => {
+        takeoffHoldActive = true;
+        const pt = takeoffPoints.length > 0 ? computeTakeoffPreviewPoint(getMeasureSvgPoint(e), e) : getMeasureSvgPoint(e);
+        magnifierLens.showAtCorner(pt);
+        if (takeoffPoints.length > 0) redrawTakeoff(pt);
+      }, TAKEOFF_HOLD_MS);
+    },
+    { passive: true }
+  );
+  svg.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!takeoffHoldActive || e.touches.length !== 1) return;
+      const pt = takeoffPoints.length > 0 ? computeTakeoffPreviewPoint(getMeasureSvgPoint(e), e) : getMeasureSvgPoint(e);
+      magnifierLens.updateCorner(pt);
+      if (takeoffPoints.length > 0) redrawTakeoff(pt);
+    },
+    { passive: true }
+  );
+  function endTakeoffHold() {
+    clearTimeout(takeoffHoldTimer);
+    if (takeoffHoldActive) magnifierLens.hideCorner();
+    takeoffHoldActive = false;
+  }
+  svg.addEventListener('touchend', endTakeoffHold);
+  svg.addEventListener('touchcancel', endTakeoffHold);
 
   document.addEventListener('keydown', (e) => {
     // A fresh linear take-off is always exactly 2 clicks (finished
@@ -7129,6 +7237,7 @@ async function loadSheetOffline() {
   canManage = me.role === 'admin' || me.role === 'editor';
   canTakeoff = me.role === 'admin' || !!me.can_takeoff;
   isAdmin = me.role === 'admin';
+  magnifierCorner = me.settings && me.settings.magnifierCorner === 'bottom-right' ? 'bottom-right' : 'bottom-left';
 
   let sheet;
   let versions;
@@ -7188,7 +7297,7 @@ async function loadSheetOffline() {
   updateVersionBadge();
   renderSearchTermChip();
   setupZoomPan();
-  setupMagnifierLens();
+  magnifierLens = setupMagnifierLens();
   setupFreezePaneTool();
   restorePersistedFreezePanes();
   setupOverlayAlignDrag();

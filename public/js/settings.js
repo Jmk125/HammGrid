@@ -33,11 +33,17 @@ async function save(patch) {
   const themeInput = document.querySelector(`input[name="theme"][value="${themeValue}"]`);
   if (themeInput) themeInput.checked = true;
   document.getElementById('dark-canvas-checkbox').checked = !!settings.darkCanvas;
+  const magnifierCornerValue = settings.magnifierCorner === 'bottom-right' ? 'bottom-right' : 'bottom-left';
+  const magnifierCornerInput = document.querySelector(`input[name="magnifierCorner"][value="${magnifierCornerValue}"]`);
+  if (magnifierCornerInput) magnifierCornerInput.checked = true;
 
   document.querySelectorAll('input[name="theme"]').forEach((input) => {
     input.addEventListener('change', () => save({ theme: input.value }));
   });
   document.getElementById('dark-canvas-checkbox').addEventListener('change', (e) => {
     save({ darkCanvas: e.target.checked });
+  });
+  document.querySelectorAll('input[name="magnifierCorner"]').forEach((input) => {
+    input.addEventListener('change', () => save({ magnifierCorner: input.value }));
   });
 })();
