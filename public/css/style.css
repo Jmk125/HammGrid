@@ -1102,6 +1102,12 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   height: 72vh;
   cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
+  /* Without this, iPad Safari treats a long-press on SVG shapes/markers as
+     a "select content" gesture and pops its own Copy/Look Up/Translate
+     callout instead of letting our long-press-to-context-menu handling
+     (sheet.js) take over. */
+  -webkit-touch-callout: none;
   /* Keep iPad Safari from turning drawing gestures into page scroll/zoom.
      zoomPan.js and markups.js handle pan/pinch/draw inside this region. */
   touch-action: none;

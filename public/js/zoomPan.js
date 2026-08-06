@@ -113,7 +113,7 @@ export function setupZoomPan({
     return { x: (touches[0].clientX + touches[1].clientX) / 2, y: (touches[0].clientY + touches[1].clientY) / 2 };
   }
 
-  let pinch = null; // { startDist, startScale }
+  let pinch = null; // { startDist, startScale, prevMid } - prevMid also drives two-finger pan, see touchmove
   let touchPanState = null;
   wrapEl.addEventListener(
     'touchstart',
@@ -129,7 +129,7 @@ export function setupZoomPan({
       if (e.touches.length !== 2) return;
       e.preventDefault();
       touchPanState = null;
-      pinch = { startDist: touchDistance(e.touches), startScale: state.scale };
+      pinch = { startDist: touchDistance(e.touches), startScale: state.scale, prevMid: touchMidpoint(e.touches) };
     },
     { passive: false }
   );
@@ -146,8 +146,15 @@ export function setupZoomPan({
       }
       if (e.touches.length !== 2 || !pinch) return;
       e.preventDefault();
-      const rect = wrapEl.getBoundingClientRect();
       const mid = touchMidpoint(e.touches);
+      // Two-finger drag (no spread change) pans - move the content by however
+      // far the midpoint itself traveled since the last frame. This is on top
+      // of (not instead of) the existing pinch-to-zoom below, so a diagonal
+      // pinch-while-dragging gesture does both at once, like any native app.
+      state.x += mid.x - pinch.prevMid.x;
+      state.y += mid.y - pinch.prevMid.y;
+      pinch.prevMid = mid;
+      const rect = wrapEl.getBoundingClientRect();
       const cx = mid.x - rect.left;
       const cy = mid.y - rect.top;
       const newScale = Math.min(6, Math.max(0.1, pinch.startScale * (touchDistance(e.touches) / pinch.startDist)));

@@ -2353,9 +2353,10 @@ function getMeasureSvgPoint(evt) {
   const svg = document.getElementById('markup-svg');
   const rect = svg.getBoundingClientRect();
   const vb = svg.viewBox.baseVal;
+  const p = evt.changedTouches ? evt.changedTouches[0] : evt;
   return {
-    x: ((evt.clientX - rect.left) / rect.width) * vb.width,
-    y: ((evt.clientY - rect.top) / rect.height) * vb.height,
+    x: ((p.clientX - rect.left) / rect.width) * vb.width,
+    y: ((p.clientY - rect.top) / rect.height) * vb.height,
   };
 }
 
@@ -3462,6 +3463,61 @@ function drawTakeoffShapeMarker(point, shape, color, scale) {
   return el;
 }
 
+// iPad has no right mouse button, so touch-and-hold on a placed take-off is
+// the equivalent gesture for opening its context menu (Subtract Area, etc).
+// Cancels if the finger moves too far (that's a drag/pan, not a long-press)
+// or lifts before the hold completes. Sets takeoffLongPressSuppressClick
+// briefly so the 'click' handler that normally enters edit mode doesn't also
+// fire right after the menu opens.
+let takeoffLongPressSuppressClick = false;
+function addLongPressContextMenu(el, onLongPress) {
+  const LONG_PRESS_MS = 500;
+  const MOVE_TOLERANCE = 10;
+  let timer = null;
+  let startPt = null;
+  let firedForThisTouch = false;
+
+  function cancel() {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    startPt = null;
+  }
+
+  el.addEventListener(
+    'touchstart',
+    (e) => {
+      if (e.touches.length !== 1) {
+        cancel();
+        return;
+      }
+      firedForThisTouch = false;
+      const t = e.touches[0];
+      startPt = { x: t.clientX, y: t.clientY };
+      timer = setTimeout(() => {
+        timer = null;
+        firedForThisTouch = true;
+        takeoffLongPressSuppressClick = true;
+        onLongPress(startPt.x, startPt.y);
+      }, LONG_PRESS_MS);
+    },
+    { passive: true }
+  );
+  el.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!timer || !startPt) return;
+      const t = e.touches[0];
+      if (Math.hypot(t.clientX - startPt.x, t.clientY - startPt.y) > MOVE_TOLERANCE) cancel();
+    },
+    { passive: true }
+  );
+  el.addEventListener('touchend', () => {
+    cancel();
+    if (firedForThisTouch) setTimeout(() => (takeoffLongPressSuppressClick = false), 300);
+  });
+  el.addEventListener('touchcancel', cancel);
+}
+
 // Committed geometry is only clickable (to enter edit mode) while no
 // placement tool is armed - #takeoff-instances-layer's pointer-events are
 // toggled via the .edit-enabled class so an armed tool's placement clicks
@@ -3516,6 +3572,7 @@ function renderTakeoffInstances() {
       // independently mid-session - check fresh here so an active markup
       // draw tool still wins over entering take-off edit mode.
       if (markupsController && markupsController.isToolActive()) return;
+      if (takeoffLongPressSuppressClick) return; // long-press just opened the menu - don't also enter edit mode
       e.stopPropagation();
       enterTakeoffEditMode(inst);
     });
@@ -3525,6 +3582,11 @@ function renderTakeoffInstances() {
       e.stopPropagation();
       hideTakeoffTooltip();
       showTakeoffContextMenu(e.clientX, e.clientY, inst);
+    });
+    addLongPressContextMenu(el, (x, y) => {
+      if (markupsController && markupsController.isToolActive()) return;
+      hideTakeoffTooltip();
+      showTakeoffContextMenu(x, y, inst);
     });
     el.addEventListener('mouseenter', (e) => {
       if (markupsController && markupsController.isToolActive()) return;
@@ -4092,8 +4154,18 @@ function renderTakeoffEditOverlay() {
 function setupTakeoffEditInteraction() {
   const svg = document.getElementById('markup-svg');
 
-  svg.addEventListener('mousedown', (e) => {
-    if (!editingInstance || e.button !== 0) return;
+  // Touch mirror of the mousedown/mousemove/mouseup trio below - same body,
+  // reused via these named handlers so iPad point-drag/select/marquee/brush
+  // works identically to mouse instead of relying on iOS's tap-only click
+  // synthesis (which never fires a drag). Gated to single-finger touches so
+  // it never fights zoomPan.js's two-finger pinch/pan.
+  function isPrimaryTakeoffTouch(e) {
+    return !e.touches || e.touches.length === 1;
+  }
+
+  function handleTakeoffEditPointerDown(e) {
+    if (!editingInstance) return;
+    if (!e.touches && e.button !== 0) return;
     e.stopPropagation();
     const pt = getMeasureSvgPoint(e);
     const hitPoint = hitTestTakeoffEditPoint(pt);
@@ -4168,9 +4240,9 @@ function setupTakeoffEditInteraction() {
     } else {
       exitTakeoffEditMode();
     }
-  });
+  }
 
-  svg.addEventListener('mousemove', (e) => {
+  function handleTakeoffEditPointerMove(e) {
     if (!editingInstance) return;
     const pt = getMeasureSvgPoint(e);
     if (takeoffEditSelectMode === 'brush') {
@@ -4202,16 +4274,9 @@ function setupTakeoffEditInteraction() {
     } else if (takeoffEditSelectMode === 'brush') {
       renderTakeoffEditOverlay(); // just moving the hover cursor, nothing selected yet
     }
-  });
+  }
 
-  svg.addEventListener('mouseleave', () => {
-    if (takeoffEditSelectMode === 'brush' && !takeoffBrushStroke) {
-      takeoffBrushCursorPt = null;
-      renderTakeoffEditOverlay();
-    }
-  });
-
-  window.addEventListener('mouseup', () => {
+  function finishTakeoffEditGesture() {
     if (takeoffBrushStroke) {
       const touchedAny = takeoffBrushStroke.touchedAny;
       takeoffBrushStroke = null;
@@ -4252,6 +4317,39 @@ function setupTakeoffEditInteraction() {
         takeoffMarquee = null;
         exitTakeoffEditMode();
       }
+    }
+  }
+
+  svg.addEventListener('mousedown', handleTakeoffEditPointerDown);
+  svg.addEventListener('mousemove', handleTakeoffEditPointerMove);
+  window.addEventListener('mouseup', finishTakeoffEditGesture);
+
+  svg.addEventListener(
+    'touchstart',
+    (e) => {
+      if (!isPrimaryTakeoffTouch(e)) return;
+      handleTakeoffEditPointerDown(e);
+    },
+    { passive: true }
+  );
+  svg.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!isPrimaryTakeoffTouch(e)) return;
+      if (takeoffEditDrag || takeoffMarquee || takeoffBrushStroke) e.preventDefault();
+      handleTakeoffEditPointerMove(e);
+    },
+    { passive: false }
+  );
+  window.addEventListener('touchend', (e) => {
+    if (e.touches.length > 0) return;
+    finishTakeoffEditGesture();
+  });
+
+  svg.addEventListener('mouseleave', () => {
+    if (takeoffEditSelectMode === 'brush' && !takeoffBrushStroke) {
+      takeoffBrushCursorPt = null;
+      renderTakeoffEditOverlay();
     }
   });
 
