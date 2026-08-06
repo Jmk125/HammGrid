@@ -33,7 +33,9 @@ function escapeHtml(str) {
   return String(str ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 }
 
-const ACCEPTED_DOC_TYPES = '.pdf,.jpg,.jpeg,.png,.webp,.gif';
+// .heic/.heif accepted here too - the server converts them to a real JPEG
+// on upload (see src/lib/documentUpload.js) rather than storing them as-is.
+const ACCEPTED_DOC_TYPES = '.pdf,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif';
 
 function stripExt(filename) {
   return filename.replace(/\.[^.]+$/, '');
@@ -452,7 +454,7 @@ function isFileDrag(e) {
   return e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
 }
 
-const ACCEPTED_DOC_EXTENSIONS = /\.(pdf|jpe?g|png|webp|gif)$/i;
+const ACCEPTED_DOC_EXTENSIONS = /\.(pdf|jpe?g|png|webp|gif|heic|heif)$/i;
 
 function acceptedFilesFrom(dataTransfer) {
   return Array.from(dataTransfer.files || []).filter(

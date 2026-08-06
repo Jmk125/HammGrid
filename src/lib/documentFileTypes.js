@@ -1,11 +1,12 @@
 const path = require('path');
+const fs = require('fs');
 
 // Extensions the document store (RFI/submittal/photo library) accepts and
 // knows how to serve with the right Content-Type. HEIC/HEIF (an iPad
-// camera's default format) is deliberately not included - it has no direct
-// <img>/canvas support outside Safari, so a photo saved in that format
-// wouldn't display for most of the team. iPad Settings > Camera > Formats >
-// "Most Compatible" saves JPEGs instead and avoids this.
+// camera's default format) is accepted at upload but never actually stored
+// or served as-is - documentUpload.js converts it to a real JPEG first,
+// since browsers have no direct <img>/canvas support for it regardless of
+// what extension or Content-Type it's served with.
 const MIME_BY_EXT = {
   '.pdf': 'application/pdf',
   '.jpg': 'image/jpeg',
@@ -13,6 +14,8 @@ const MIME_BY_EXT = {
   '.png': 'image/png',
   '.webp': 'image/webp',
   '.gif': 'image/gif',
+  '.heic': 'image/heic',
+  '.heif': 'image/heic',
 };
 
 const ALLOWED_DOCUMENT_EXTENSIONS = Object.keys(MIME_BY_EXT);
@@ -29,14 +32,23 @@ function isImagePath(filePath) {
   return mimeForPath(filePath).startsWith('image/');
 }
 
-// A browser decodes an image by its actual byte content, not its filename -
-// renaming a HEIC photo (an iPhone/iPad camera's default format) to .jpg
-// does not convert it, and it will fail to display no matter what extension
-// or Content-Type header it's served with. Sniffing the real format from
-// the first bytes lets upload reject that case immediately with a message
-// that explains what actually went wrong, instead of a confusing failure
-// later when someone tries to view it.
-const EXPECTED_KIND_BY_EXT = { '.jpg': 'jpeg', '.jpeg': 'jpeg', '.png': 'png', '.webp': 'webp', '.gif': 'gif', '.pdf': 'pdf' };
+// A browser (or this sniffer) decodes/recognizes a file by its actual byte
+// content, not its filename - renaming a HEIC photo to .jpg doesn't convert
+// it. Used two ways: EXPECTED_KIND_BY_EXT + sniffKind together catch a
+// genuine mismatch (wrong/corrupted file), and sniffKind alone flags HEIC
+// content for conversion (documentUpload.js) regardless of which extension
+// it arrived under - a mislabeled .jpg is exactly as common in practice as
+// a correctly-named .heic.
+const EXPECTED_KIND_BY_EXT = {
+  '.jpg': 'jpeg',
+  '.jpeg': 'jpeg',
+  '.png': 'png',
+  '.webp': 'webp',
+  '.gif': 'gif',
+  '.pdf': 'pdf',
+  '.heic': 'heic',
+  '.heif': 'heic',
+};
 
 function sniffKind(buf) {
   if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'jpeg';
@@ -51,22 +63,29 @@ function sniffKind(buf) {
   return 'unknown';
 }
 
-// Returns an error message string if the file's real content doesn't match
-// its extension, or null if it's fine.
-function validateFileContent(filePath) {
-  const expected = EXPECTED_KIND_BY_EXT[extOf(filePath)];
-  if (!expected) return null; // unrecognized extension - fileFilter already blocks this case at upload time
-  const fs = require('fs');
+function readMagicBytes(filePath) {
   const fd = fs.openSync(filePath, 'r');
   const buf = Buffer.alloc(16);
   fs.readSync(fd, buf, 0, 16, 0);
   fs.closeSync(fd);
-  const kind = sniffKind(buf);
-  if (kind === expected) return null;
-  if (kind === 'heic') {
-    return 'This looks like a HEIC photo (an iPhone/iPad default format) renamed to .jpg rather than actually converted - browsers can\'t display HEIC directly. Set the camera to save JPEGs instead (Settings > Camera > Formats > "Most Compatible") or convert the photo before uploading.';
-  }
-  return `This file's contents don't actually look like a ${extOf(filePath).slice(1).toUpperCase()} - it may be a renamed or corrupted file. Try re-exporting it and uploading again.`;
+  return buf;
 }
 
-module.exports = { MIME_BY_EXT, ALLOWED_DOCUMENT_EXTENSIONS, extOf, mimeForPath, isImagePath, validateFileContent };
+// { kind, expected, matches } - matches is true when the sniffed content
+// agrees with what the extension claims (or the extension is unrecognized,
+// which fileFilter already blocks at upload time regardless).
+function checkFileContent(filePath) {
+  const expected = EXPECTED_KIND_BY_EXT[extOf(filePath)];
+  const kind = sniffKind(readMagicBytes(filePath));
+  return { kind, expected, matches: !expected || kind === expected };
+}
+
+module.exports = {
+  MIME_BY_EXT,
+  ALLOWED_DOCUMENT_EXTENSIONS,
+  extOf,
+  mimeForPath,
+  isImagePath,
+  sniffKind,
+  checkFileContent,
+};

@@ -1,3 +1,4 @@
 PyMuPDF==1.28.0
 Pillow==12.2.0
 pytesseract==0.3.13
+pillow-heif==1.5.0
