@@ -9,6 +9,10 @@
     <div class="row" style="gap:6px;">
       <button id="back-btn" type="button">&larr; Back</button>
       <button id="download-doc-btn" class="icon-btn" type="button" title="Download">⬇</button>
+      <!-- Hidden until renderPdf() confirms there's actually a text layer to
+           search (a photo has none) - see the doc-search-btn display toggle
+           in document-view.js. -->
+      <button id="doc-search-btn" class="icon-btn" type="button" title="Find in document" style="display:none;">&#128269;</button>
       <a class="brand" href="/dashboard.html">HammGrid</a>
     </div>
     <div class="row">
@@ -34,6 +38,13 @@
             <span id="doc-gallery-label">Photo 1 / 1</span>
           </div>
           <button type="button" id="doc-gallery-next-btn" title="Next photo">&#9654;</button>
+        </div>
+        <div class="doc-search-bar" id="doc-search-bar" style="display:none;">
+          <input type="text" id="doc-search-input" placeholder="Find in document...">
+          <button type="button" id="doc-search-prev-btn" title="Previous match" disabled>&#9664;</button>
+          <span id="doc-search-count" class="doc-search-count"></span>
+          <button type="button" id="doc-search-next-btn" title="Next match" disabled>&#9654;</button>
+          <button type="button" id="doc-search-close-btn" title="Close search">&times;</button>
         </div>
         <div class="zoom-pan-inner" id="zoom-pan-inner">
           <div class="markup-stage">

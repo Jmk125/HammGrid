@@ -32,6 +32,14 @@ let markupsController = null;
 let currentPage = 1;
 let numPages = 1;
 let currentPdf = null;
+let currentViewport = null; // set in renderPage() - needed to place search highlight rects
+let currentRenderScale = null; // set in renderPage() - same
+
+// ---------- Find-in-document text search ----------
+let searchMatches = []; // [{ pageNum, item }] across the whole document, PDF.js text items
+let searchIndex = -1;
+let searchToken = 0; // bumped on every new search - lets an in-flight one detect it's stale and bail
+const pageTextCache = new Map(); // pageNum -> textContent.items, so re-searching doesn't re-fetch
 
 // Markups/flags only make sense for a real, logged-in view of a saved
 // document - not a contractor share-token link (those have their own
@@ -213,6 +221,8 @@ async function renderPage() {
   const longestPt = Math.max(unitViewport.width, unitViewport.height);
   const renderScale = Math.min(RENDER_SCALE, MAX_RENDER_PX / longestPt);
   const viewport = page.getViewport({ scale: renderScale });
+  currentViewport = viewport;
+  currentRenderScale = renderScale;
   canvas.width = viewport.width;
   canvas.height = viewport.height;
   const ctx = canvas.getContext('2d');
@@ -222,6 +232,7 @@ async function renderPage() {
   statusEl.textContent = '';
   if (markupsController) markupsController.resync();
   updatePageNavBadge();
+  renderSearchHighlights();
 }
 
 // Loads a non-PDF file (a photo, now that the document store accepts those -
@@ -241,6 +252,8 @@ function renderImage(url) {
       ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(img, 0, 0);
       currentPdf = null;
+      currentViewport = null;
+      currentRenderScale = null;
       numPages = 1;
       currentPage = 1;
       document.getElementById('pdf-status').textContent = '';
@@ -270,6 +283,7 @@ async function renderPdf() {
     currentPage = 1;
     await renderPage();
     fitToView(canvas.width, canvas.height);
+    document.getElementById('doc-search-btn').style.display = ''; // only shown once there's a real text layer to search
   } catch (err) {
     // Not a PDF (or PDF.js couldn't parse it) - try it as an image instead.
     // Deliberately try-then-fallback rather than checking the extension up
@@ -291,6 +305,161 @@ async function goToPage(n) {
 
 document.getElementById('doc-page-prev-btn').addEventListener('click', () => goToPage(currentPage - 1));
 document.getElementById('doc-page-next-btn').addEventListener('click', () => goToPage(currentPage + 1));
+
+// ---------- Find-in-document text search ----------
+// PDF.js text items only, so this only ever runs for a real PDF (the search
+// button stays hidden for a photo document - see renderPdf()). Searches
+// every page up front rather than page-by-page as you navigate, since these
+// are RFI/submittal-scale documents (a handful of pages), not the hundreds-
+// of-sheets drawing sets sheet.js deals with.
+function ensureSearchHighlightLayer() {
+  const svg = document.getElementById('markup-svg');
+  let g = svg.querySelector('#search-highlight-layer');
+  if (!g) {
+    g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.id = 'search-highlight-layer';
+    svg.appendChild(g);
+  }
+  return g;
+}
+
+function clearSearchHighlights() {
+  ensureSearchHighlightLayer().innerHTML = '';
+}
+
+// item.transform is unscaled PDF-point space - combining it with the
+// render viewport's own transform (render scale + the PDF-bottom-up ->
+// canvas-top-down y-flip) lands directly in canvas-pixel space, same idiom
+// sheet.js's own drawSearchHighlights uses for its (unrelated) sheet-number
+// search highlight.
+function searchItemRect(item) {
+  const tx = pdfjsLib.Util.transform(currentViewport.transform, item.transform);
+  const w = item.width * currentRenderScale;
+  const h = item.height * currentRenderScale;
+  return { x: tx[4], y: tx[5] - h, w, h };
+}
+
+function renderSearchHighlights() {
+  const layer = ensureSearchHighlightLayer();
+  layer.innerHTML = '';
+  if (!currentViewport) return;
+  searchMatches.forEach((m, i) => {
+    if (m.pageNum !== currentPage) return;
+    const r = searchItemRect(m.item);
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', r.x);
+    rect.setAttribute('y', r.y);
+    rect.setAttribute('width', r.w);
+    rect.setAttribute('height', r.h);
+    rect.classList.add('search-highlight-rect');
+    if (i === searchIndex) rect.classList.add('search-highlight-current');
+    layer.appendChild(rect);
+  });
+}
+
+async function getPageTextItems(pageNum) {
+  if (pageTextCache.has(pageNum)) return pageTextCache.get(pageNum);
+  const page = await currentPdf.getPage(pageNum);
+  const textContent = await page.getTextContent();
+  pageTextCache.set(pageNum, textContent.items);
+  return textContent.items;
+}
+
+function setSearchCount(text) {
+  document.getElementById('doc-search-count').textContent = text;
+}
+
+function setSearchNavEnabled(enabled) {
+  document.getElementById('doc-search-prev-btn').disabled = !enabled;
+  document.getElementById('doc-search-next-btn').disabled = !enabled;
+}
+
+async function runSearch(term) {
+  const myToken = ++searchToken;
+  searchMatches = [];
+  searchIndex = -1;
+  clearSearchHighlights();
+  setSearchNavEnabled(false);
+
+  const trimmed = term.trim();
+  if (!trimmed || !currentPdf) {
+    setSearchCount('');
+    return;
+  }
+  setSearchCount('Searching…');
+  const needle = trimmed.toLowerCase();
+  const matches = [];
+  for (let p = 1; p <= numPages; p++) {
+    const items = await getPageTextItems(p);
+    if (myToken !== searchToken) return; // a newer search started while this one was still indexing
+    for (const item of items) {
+      if (item.str && item.str.toLowerCase().includes(needle)) matches.push({ pageNum: p, item });
+    }
+  }
+  if (myToken !== searchToken) return;
+
+  searchMatches = matches;
+  if (matches.length === 0) {
+    setSearchCount('No matches');
+    return;
+  }
+  setSearchNavEnabled(true);
+  await goToSearchMatch(0);
+}
+
+async function goToSearchMatch(idx) {
+  if (searchMatches.length === 0) return;
+  searchIndex = ((idx % searchMatches.length) + searchMatches.length) % searchMatches.length; // wraps both directions
+  const match = searchMatches[searchIndex];
+  await goToPage(match.pageNum); // no-op (including no re-render) if already on that page
+  renderSearchHighlights(); // goToPage() only re-renders (and re-highlights) on an actual page change
+  setSearchCount(`${searchIndex + 1} / ${searchMatches.length}`);
+  const canvas = document.getElementById('pdf-canvas');
+  if (canvas.width) {
+    const r = searchItemRect(match.item);
+    userHasZoomedOrPanned = true;
+    panToRect(r.x / canvas.width, r.y / canvas.height, r.w / canvas.width, r.h / canvas.height);
+  }
+}
+
+(function setupDocumentSearch() {
+  const bar = document.getElementById('doc-search-bar');
+  const input = document.getElementById('doc-search-input');
+  let debounceTimer = null;
+
+  function closeSearch() {
+    bar.style.display = 'none';
+    input.value = '';
+    runSearch('');
+  }
+
+  document.getElementById('doc-search-btn').addEventListener('click', () => {
+    const opening = bar.style.display === 'none';
+    bar.style.display = opening ? '' : 'none';
+    if (opening) input.focus();
+    else closeSearch();
+  });
+  document.getElementById('doc-search-close-btn').addEventListener('click', closeSearch);
+  input.addEventListener('input', () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => runSearch(input.value), 300);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (searchMatches.length === 0) {
+        clearTimeout(debounceTimer);
+        runSearch(input.value);
+      } else {
+        goToSearchMatch(searchIndex + (e.shiftKey ? -1 : 1));
+      }
+    } else if (e.key === 'Escape') {
+      closeSearch();
+    }
+  });
+  document.getElementById('doc-search-prev-btn').addEventListener('click', () => goToSearchMatch(searchIndex - 1));
+  document.getElementById('doc-search-next-btn').addEventListener('click', () => goToSearchMatch(searchIndex + 1));
+})();
 
 // ---------- Right pane: collapse + resize (mirrors sheet.js's setup, kept
 // self-contained here since this is a separate page/module) ----------

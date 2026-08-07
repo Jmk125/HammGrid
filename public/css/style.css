@@ -802,6 +802,44 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   stroke: rgba(202, 138, 4, 0.9);
   stroke-width: 1;
 }
+/* The currently-cycled-to match (document-view.js's find-in-document) reads
+   distinctly from the rest so "next/previous" is obviously doing something. */
+#search-highlight-layer .search-highlight-current {
+  fill: rgba(249, 115, 22, 0.65);
+  stroke: rgba(194, 65, 12, 0.95);
+  stroke-width: 2;
+}
+
+.doc-search-bar {
+  position: absolute;
+  top: 10px; right: 10px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(15,43,70,0.9);
+  border-radius: 6px;
+  padding: 5px 6px;
+}
+.doc-search-bar input {
+  border: none;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  width: 160px;
+}
+.doc-search-bar button {
+  background: transparent;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 5px 8px;
+}
+.doc-search-bar button:hover:not(:disabled) { background: rgba(255,255,255,0.15); }
+.doc-search-bar button:disabled { opacity: 0.35; cursor: default; }
+.doc-search-bar .doc-search-count { color: #fff; font-size: 12px; white-space: nowrap; min-width: 44px; text-align: center; }
 
 .search-term-chip {
   display: inline-flex;
