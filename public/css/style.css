@@ -954,26 +954,18 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 #edit-layout-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* Edit/Remove/Delete/Stop only apply to whichever item is currently
-   selected, so they live in one fixed bar docked under the pane instead of
-   repeating on every row - keeps the row itself down to just name, total,
-   and the always-available hide toggle. Width is kept in sync with the
-   (resizable) pane's own width via JS, not CSS, since the pane can be
-   dragged to any width between MIN/MAX. */
-.takeoff-item-actions-bar {
-  position: fixed;
-  right: 0;
-  bottom: 0;
-  z-index: 15;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 14px;
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  border-left: 1px solid var(--border);
-  box-shadow: 0 -4px 12px rgba(0,0,0,0.12);
-  box-sizing: border-box;
-}
+   selected, so they live in one bar instead of repeating on every row -
+   keeps the row itself down to just name, total, and the always-available
+   hide toggle. Shares .selection-bar's fixed/centered/pill positioning
+   (see sheet.html) rather than its own docked-to-the-pane one - that was
+   easy to lose off the bottom of a short iPad viewport, and Stop is the
+   only way to get out of an active take-off. bottom offset here stacks it
+   above #takeoff-toolbar/#takeoff-edit-toolbar (both also bottom:24px),
+   which are frequently visible at the same time as this one - simpler
+   than dynamically recalculating an offset in JS, and floating a bit
+   higher than strictly necessary when it's the only bar visible isn't a
+   real problem. */
+.takeoff-item-actions-bar { bottom: 76px; gap: 6px; }
 .takeoff-item-actions-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
 /* Live running quantity while a line/area/perimeter is being traced (see
    redrawTakeoff's updateLiveTakeoffQuantity) - empty and takes no visible

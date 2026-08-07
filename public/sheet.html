@@ -103,19 +103,26 @@
               </div>
             </div>
 
-            <div id="takeoff-item-actions-bar" class="takeoff-item-actions-bar" style="display:none;">
-              <span class="takeoff-color-dot" id="takeoff-item-actions-dot"></span>
-              <span class="takeoff-item-actions-name" id="takeoff-item-actions-name"></span>
-              <span class="takeoff-item-actions-live-qty" id="takeoff-item-actions-live-qty"></span>
-              <button type="button" id="takeoff-item-actions-stop">Stop</button>
-              <button type="button" class="icon-btn" id="takeoff-item-actions-edit" title="Edit properties &amp; formula">&#9998;</button>
-              <button type="button" class="icon-btn" id="takeoff-item-actions-remove" title="Remove from this sheet">&#8722;</button>
-              <button type="button" class="icon-btn" id="takeoff-item-actions-delete" title="Delete from project">&#128465;</button>
-            </div>
           </div>
         </div>
       </div>
     </div>
+  </div>
+  <!-- Moved out of the pane (was docked to its bottom-right corner) so it
+       shares the pane-independent, always-on-screen positioning the other
+       floating take-off bars below already have - a pane-docked bottom edge
+       is easy to lose off the bottom of a short iPad viewport, and Stop is
+       the only way to get out of an active take-off. bottom offset (see
+       CSS) stacks it above #takeoff-toolbar/#takeoff-edit-toolbar, which
+       are frequently visible at the same time as this one. -->
+  <div id="takeoff-item-actions-bar" class="selection-bar takeoff-item-actions-bar" style="display:none;">
+    <span class="takeoff-color-dot" id="takeoff-item-actions-dot"></span>
+    <span class="takeoff-item-actions-name" id="takeoff-item-actions-name"></span>
+    <span class="takeoff-item-actions-live-qty" id="takeoff-item-actions-live-qty"></span>
+    <button type="button" id="takeoff-item-actions-stop">Stop</button>
+    <button type="button" class="icon-btn" id="takeoff-item-actions-edit" title="Edit properties &amp; formula">&#9998;</button>
+    <button type="button" class="icon-btn" id="takeoff-item-actions-remove" title="Remove from this sheet">&#8722;</button>
+    <button type="button" class="icon-btn" id="takeoff-item-actions-delete" title="Delete from project">&#128465;</button>
   </div>
   <div id="takeoff-toolbar" class="selection-bar" style="display:none;">
     <div class="segmented" id="takeoff-placement-mode">

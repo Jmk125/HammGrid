@@ -241,7 +241,6 @@ function applySavedPaneWidth() {
       // Expanding again - restore whatever custom width was last dragged to,
       // rather than snapping back to the default .pane-wide width.
       applySavedPaneWidth();
-      syncItemActionsBarWidth();
     }
   });
 })();
@@ -286,7 +285,6 @@ function applySavedPaneWidth() {
     const dx = startX - e.clientX;
     currentWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + dx));
     pane.style.width = `${currentWidth}px`;
-    syncItemActionsBarWidth();
   });
   window.addEventListener('mouseup', () => {
     if (!dragging) return;
@@ -6491,15 +6489,11 @@ function renderTakeoffPane() {
   }
 }
 
-// ---------- Fixed action bar for the selected item (bottom of the pane) ----------
-// Docked to the pane's own width/right edge (not centered over the whole
-// viewport like #takeoff-toolbar) - kept in sync with the resizable pane via
-// JS since the pane's width isn't a fixed CSS value.
-function syncItemActionsBarWidth() {
-  const bar = document.getElementById('takeoff-item-actions-bar');
-  const pane = document.getElementById('sheet-pane');
-  if (bar.style.display !== 'none') bar.style.width = `${pane.getBoundingClientRect().width}px`;
-}
+// ---------- Fixed action bar for the selected item ----------
+// Floats over the canvas via .selection-bar (see sheet.html/style.css) -
+// previously docked to the pane's bottom-right corner, which was easy to
+// lose off the bottom of a short iPad viewport with Stop as the only way
+// out of an active take-off.
 
 // isArmed distinguishes actually placing (activeTakeoffItemId) from just
 // having picked the row (selectedTakeoffItemId) - see renderTakeoffPane.
@@ -6532,7 +6526,6 @@ function showTakeoffItemActionsBar(item, isArmed) {
   document.getElementById('takeoff-item-actions-delete').style.display = isMulti ? 'none' : '';
   document.getElementById('takeoff-item-actions-stop').textContent = isArmed ? 'Stop' : 'Start';
   bar.style.display = 'flex';
-  syncItemActionsBarWidth();
 }
 
 // Assemblies reuse the exact same bar DOM as an item's - just a different
@@ -6552,7 +6545,6 @@ function showAssemblyActionsBar(assembly, isArmed) {
   document.getElementById('takeoff-item-actions-delete').style.display = '';
   document.getElementById('takeoff-item-actions-stop').textContent = isArmed ? 'Stop' : 'Start';
   bar.style.display = 'flex';
-  syncItemActionsBarWidth();
 }
 
 function hideTakeoffItemActionsBar() {
