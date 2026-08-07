@@ -728,10 +728,15 @@ tr.ignored td { opacity: 0.5; }
    aligned with the row". display:block removes it from that text flow so
    the cell's vertical-align:middle can center it properly. */
 .doc-icon { display: block; width: 18px; height: 18px; flex-shrink: 0; color: var(--muted); }
-/* Bigger than the plain file/folder icons (18px) - big enough to actually
+/* Bigger than the plain file/folder icons (18px) - enough to actually
    recognize the photo, not just tell "this row has an image". Overrides
-   .doc-icon's width/height since both classes are set together in markup. */
-.doc-thumb { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; background: var(--border); }
+   .doc-icon's width/height since both classes are set together in markup.
+   Was 48px, but combined with td's default 8px padding that made photo
+   rows ~64px tall against ~36px for every other row - visibly "broke" the
+   table's rhythm. 32px + the tighter padding below lands much closer to a
+   normal row while still being a real upgrade over the 18px icon. */
+.doc-thumb { width: 32px; height: 32px; object-fit: cover; border-radius: 4px; background: var(--border); }
+td:has(> .doc-thumb) { padding-top: 4px; padding-bottom: 4px; }
 /* Icon and name live in separate <td>s (not one flex-wrapped cell), so this
    must NOT set display:flex - that overrides the cell's display:table-cell,
    which breaks its normal box model (borders/height hug the flex content
