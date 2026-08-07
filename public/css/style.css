@@ -954,18 +954,17 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 #edit-layout-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* Edit/Remove/Delete/Stop only apply to whichever item is currently
-   selected, so they live in one bar instead of repeating on every row -
+   selected, so they live in one group instead of repeating on every row -
    keeps the row itself down to just name, total, and the always-available
-   hide toggle. Shares .selection-bar's fixed/centered/pill positioning
-   (see sheet.html) rather than its own docked-to-the-pane one - that was
-   easy to lose off the bottom of a short iPad viewport, and Stop is the
-   only way to get out of an active take-off. bottom offset here stacks it
-   above #takeoff-toolbar/#takeoff-edit-toolbar (both also bottom:24px),
-   which are frequently visible at the same time as this one - simpler
-   than dynamically recalculating an offset in JS, and floating a bit
-   higher than strictly necessary when it's the only bar visible isn't a
-   real problem. */
-.takeoff-item-actions-bar { bottom: 76px; gap: 6px; }
+   hide toggle. #takeoff-item-actions-group lives inside #takeoff-toolbar
+   (see sheet.html) and shows/hides independently of the axis-lock/snap
+   controls there - see updateTakeoffToolbar in sheet.js. Previously its
+   own separate floating bar (before that, docked to the pane's corner,
+   which was easy to lose off the bottom of a short iPad viewport with
+   Stop as the only way out of an active take-off) - merged into the same
+   bar as Lock axes/Snap to points per explicit request, since the two are
+   frequently relevant at the same time (actively tracing a line/perimeter/
+   area shows both at once). */
 .takeoff-item-actions-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
 /* Live running quantity while a line/area/perimeter is being traced (see
    redrawTakeoff's updateLiveTakeoffQuantity) - empty and takes no visible

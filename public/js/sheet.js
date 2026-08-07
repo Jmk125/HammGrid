@@ -6368,6 +6368,13 @@ function renderTakeoffPane() {
   else if (selectedAssembly) showAssemblyActionsBar(selectedAssembly, false);
   else if (editingItem) showTakeoffItemActionsBar(editingItem, false);
   else hideTakeoffItemActionsBar();
+  // Many call sites update renderTakeoffPane() without also calling
+  // updateTakeoffToolbar() directly - folding this in here is what keeps
+  // #takeoff-toolbar's own visibility (now also driven by whether there's
+  // an active/selected item or assembly, not just axis-lock placement -
+  // see updateTakeoffToolbar) correct everywhere, without auditing every
+  // call site individually. Cheap and idempotent, safe to call redundantly.
+  updateTakeoffToolbar();
 
   // Pin whatever just got armed so it survives Escape/Stop with zero
   // instances placed - see sheetPinnedItemIds above. An empty item created
@@ -6489,20 +6496,19 @@ function renderTakeoffPane() {
   }
 }
 
-// ---------- Fixed action bar for the selected item ----------
-// Floats over the canvas via .selection-bar (see sheet.html/style.css) -
-// previously docked to the pane's bottom-right corner, which was easy to
-// lose off the bottom of a short iPad viewport with Stop as the only way
-// out of an active take-off.
+// ---------- Item-actions group, inside the shared #takeoff-toolbar ----------
+// #takeoff-item-actions-group's own show/hide is independent of the rest of
+// #takeoff-toolbar (axis-lock/snap/box-mode) - see updateTakeoffToolbar,
+// which is what actually decides whether the bar itself is visible at all.
 
 // isArmed distinguishes actually placing (activeTakeoffItemId) from just
 // having picked the row (selectedTakeoffItemId) - see renderTakeoffPane.
 // Only the Stop/Start button's label and click target change; Edit/Remove/
 // Delete apply to either state exactly the same way.
 function showTakeoffItemActionsBar(item, isArmed) {
-  const bar = document.getElementById('takeoff-item-actions-bar');
+  const group = document.getElementById('takeoff-item-actions-group');
   // Reset the live-quantity readout's baseline on every (re)render of this
-  // bar - a stale number from whatever was last being traced shouldn't
+  // group - a stale number from whatever was last being traced shouldn't
   // linger after switching items until the next mousemove happens to fire.
   document.getElementById('takeoff-item-actions-live-qty').textContent = '';
   const isMulti = isArmed && multiSelectExtraItemIds.size > 0;
@@ -6525,16 +6531,16 @@ function showTakeoffItemActionsBar(item, isArmed) {
   document.getElementById('takeoff-item-actions-remove').style.display = isMulti ? 'none' : '';
   document.getElementById('takeoff-item-actions-delete').style.display = isMulti ? 'none' : '';
   document.getElementById('takeoff-item-actions-stop').textContent = isArmed ? 'Stop' : 'Start';
-  bar.style.display = 'flex';
+  group.style.display = 'flex';
 }
 
-// Assemblies reuse the exact same bar DOM as an item's - just a different
+// Assemblies reuse the exact same group DOM as an item's - just a different
 // populate function, since an assembly has no color/type/sheet-removal
 // concept but otherwise fits the same "name + Stop-or-Start + Edit + Delete"
 // shape. Edit opens the links modal instead of the item-properties modal;
 // Remove doesn't apply (assemblies aren't sheet-scoped) so it's hidden.
 function showAssemblyActionsBar(assembly, isArmed) {
-  const bar = document.getElementById('takeoff-item-actions-bar');
+  const group = document.getElementById('takeoff-item-actions-group');
   document.getElementById('takeoff-item-actions-live-qty').textContent = '';
   document.getElementById('takeoff-item-actions-dot').style.background = 'var(--border)';
   const linkedCount = ['area', 'top', 'bottom', 'left', 'right'].filter((k) => assembly[`${k}_item_id`]).length;
@@ -6544,11 +6550,11 @@ function showAssemblyActionsBar(assembly, isArmed) {
   document.getElementById('takeoff-item-actions-remove').style.display = 'none';
   document.getElementById('takeoff-item-actions-delete').style.display = '';
   document.getElementById('takeoff-item-actions-stop').textContent = isArmed ? 'Stop' : 'Start';
-  bar.style.display = 'flex';
+  group.style.display = 'flex';
 }
 
 function hideTakeoffItemActionsBar() {
-  document.getElementById('takeoff-item-actions-bar').style.display = 'none';
+  document.getElementById('takeoff-item-actions-group').style.display = 'none';
 }
 
 // The item a click-to-edit shape is currently showing (see enterTakeoffEditMode) -
@@ -6896,10 +6902,16 @@ async function setupTakeoffTools() {
   renderTakeoffPane();
 }
 
-// ---------- Bottom take-off toolbar (box/point mode + axis-lock) ----------
-// Shown while a linear/perimeter/area tool is armed - count has no line/area
-// being traced so neither control applies. Box mode itself only makes sense
-// for area, so its segmented control is hidden outside that tool.
+// ---------- Bottom take-off toolbar (item actions + box/point mode + axis-lock) ----------
+// One shared bar rather than two stacked ones - #takeoff-item-actions-group
+// (name/Stop-or-Start/Edit/Remove/Delete) used to be its own separate bar
+// docked to the pane, then a separate floating bar stacked above this one;
+// both were flagged as easy to lose or visually noisy on a short iPad
+// viewport. Merged in per explicit request. Its own sub-visibility (see
+// updateTakeoffToolbar) is independent of the axis-lock controls' - an
+// armed 'count' item, or a merely-selected/being-edited item with nothing
+// armed, shows the group with axis-lock/snap/box-mode hidden, since none of
+// those apply outside active linear/perimeter/area placement.
 function setupTakeoffToolbar() {
   const modeGroup = document.getElementById('takeoff-placement-mode');
   modeGroup.querySelectorAll('button').forEach((btn) => {
@@ -6933,9 +6945,27 @@ function setupTakeoffToolbar() {
 
 function updateTakeoffToolbar() {
   const bar = document.getElementById('takeoff-toolbar');
-  const visible = takeoffTool === 'linear' || takeoffTool === 'perimeter' || takeoffTool === 'area';
-  bar.style.display = visible ? '' : 'none';
+  const placementActive = takeoffTool === 'linear' || takeoffTool === 'perimeter' || takeoffTool === 'area';
+  // Same conditions renderTakeoffPane() resolves to an actual item/assembly
+  // for showTakeoffItemActionsBar/showAssemblyActionsBar - only need "is
+  // ANY of them set" here, not which one, so this stays a cheap independent
+  // check rather than duplicating that resolution.
+  const itemActionsRelevant = !!(
+    activeTakeoffItemId ||
+    selectedTakeoffItemId ||
+    activeAssemblyId ||
+    selectedAssemblyId ||
+    (editingInstance && takeoffItems.some((i) => i.id === editingInstance.item_id))
+  );
+  bar.style.display = placementActive || itemActionsRelevant ? '' : 'none';
   document.getElementById('takeoff-placement-mode').style.display = takeoffTool === 'area' ? '' : 'none';
+  // Axis-lock/snap only ever mean something while actively tracing a
+  // line/perimeter/area - hide them (not just the whole bar) for the
+  // item-actions-only cases (a merely-selected item, an armed count item,
+  // editing an existing instance's points) so the bar doesn't show
+  // controls that don't apply to what's actually happening.
+  document.getElementById('takeoff-axis-lock-chip').style.display = placementActive ? '' : 'none';
+  document.getElementById('takeoff-snap-points-chip').style.display = placementActive ? '' : 'none';
 }
 
 // Rebuilds the <option> list and re-syncs the selected value from current
