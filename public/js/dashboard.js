@@ -1,4 +1,4 @@
-import { getProjectSyncInfo } from '/js/offline-store.js';
+import { getProjectSyncInfo, cacheProjectList, getCachedProjectList } from '/js/offline-store.js';
 import { openModal, closeModal, checkPendingJobs, renderNetworkIndicator, renderUserMenu, applyTheme } from '/js/shell.js';
 
 let me;
@@ -77,10 +77,28 @@ async function updateProjectCardSync(card, project) {
 }
 
 async function loadProjects() {
-  const { projects } = await api('GET', '/api/projects');
+  let projects;
+  let offline = false;
+  try {
+    ({ projects } = await api('GET', '/api/projects'));
+    await cacheProjectList(projects);
+  } catch (err) {
+    // No network (or the request otherwise failed) - fall back to whatever
+    // was cached the last time this succeeded online. If this device has
+    // never loaded the dashboard online at all, this is just an empty
+    // list - see the empty-msg wording below for why that's called out
+    // separately from "you genuinely have zero projects".
+    offline = true;
+    projects = await getCachedProjectList();
+  }
   const grid = document.getElementById('project-grid');
   grid.innerHTML = '';
-  document.getElementById('empty-msg').style.display = projects.length ? 'none' : '';
+  const emptyMsg = document.getElementById('empty-msg');
+  emptyMsg.style.display = projects.length ? 'none' : '';
+  emptyMsg.textContent =
+    offline && projects.length === 0
+      ? 'No projects cached for offline use yet - open the dashboard once while online first.'
+      : 'No projects yet.';
 
   for (const p of projects) {
     const a = document.createElement('a');
@@ -96,6 +114,19 @@ async function loadProjects() {
         <div class="project-meta">${metaParts}</div>
         <span class="sync-pill syncing">Checking sync…</span>
       </div>`;
+    // The thumbnail itself isn't cached (only the project list entry is -
+    // see cacheProjectList) - a broken-image icon offline is uglier than
+    // just falling back to the same placeholder an actually-empty project
+    // already shows, so swap to that instead of leaving it broken.
+    const img = a.querySelector('.thumb-wrap img');
+    if (img) {
+      img.addEventListener('error', () => {
+        const placeholder = document.createElement('span');
+        placeholder.className = 'placeholder';
+        placeholder.textContent = 'No drawings yet';
+        img.replaceWith(placeholder);
+      });
+    }
     grid.appendChild(a);
     updateProjectCardSync(a, p);
   }

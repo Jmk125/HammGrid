@@ -5,7 +5,7 @@
 // network in the path once synced.
 
 const DB_NAME = 'drawing-app';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -16,6 +16,12 @@ function openDb() {
       if (!db.objectStoreNames.contains('markups')) db.createObjectStore('markups', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
       if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'name' });
+      // v3: the dashboard's project list itself was never cached anywhere -
+      // syncProject() only ever caches sheets/thumbnails/markups WITHIN a
+      // project you've already opened, so a device that goes offline before
+      // ever loading the dashboard online has no way to discover which
+      // projects even exist. See cacheProjectList/getCachedProjectList.
+      if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -171,6 +177,29 @@ async function refreshCachedSheetMetadata(projectId, currentSheets) {
   }
 }
 
+
+// Caches the dashboard's project list (id/name/number/location/size/
+// first_thumbnail_url/current_sheet_count/latest_published_at - whatever
+// GET /api/projects returns) so the dashboard itself has something to
+// render offline, not just individual projects already opened once. A
+// straight replace, not an incremental sync like sheets/markups get - this
+// is "what does the dashboard look like right now", so a project deleted
+// or renamed server-side should disappear/update here too the next time
+// this succeeds while online, not linger as a stale duplicate.
+export async function cacheProjectList(projects) {
+  const db = await openDb();
+  const existing = await idbGetAll(db, 'projects');
+  const currentIds = new Set(projects.map((p) => p.id));
+  for (const old of existing) {
+    if (!currentIds.has(old.id)) await idbDelete(db, 'projects', old.id);
+  }
+  for (const p of projects) await idbPut(db, 'projects', p);
+}
+
+export async function getCachedProjectList() {
+  const db = await openDb();
+  return idbGetAll(db, 'projects');
+}
 
 export async function ensureProjectCacheFresh(projectId, project = {}) {
   if (!project.created_at) return;
