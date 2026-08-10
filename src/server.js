@@ -38,6 +38,8 @@ const exportsRoutes = require('./routes/exports.routes');
 const activityRoutes = require('./routes/activity.routes');
 const compositesRoutes = require('./routes/composites.routes');
 const compositeFragmentsRoutes = require('./routes/compositeFragments.routes');
+const https = require('https');
+const fs = require('fs');
 
 const app = express();
 
@@ -52,6 +54,7 @@ app.use(
       maxAge: 24 * 60 * 60 * 1000,
       httpOnly: true,
       sameSite: 'lax',
+      secure: true,
     },
   })
 );
@@ -133,6 +136,16 @@ process.on('unhandledRejection', (err) => {
   console.error('Unhandled promise rejection (server staying up):', err);
 });
 
-app.listen(config.port, () => {
-  console.log(`Drawing app server listening on port ${config.port}`);
+const httpsOptions = {
+  key: fs.readFileSync(config.tlsKeyPath),
+  cert: fs.readFileSync(config.tlsCertPath),
+};
+
+// No host passed to listen() - binds all interfaces, same as the previous
+// app.listen(config.port) did. The printed URL is just informational (uses
+// the LAN IP the current cert was actually issued for, not necessarily the
+// only address it's reachable on) - see config.js if that cert ever moves
+// to a different host/IP.
+https.createServer(httpsOptions, app).listen(config.port, () => {
+  console.log(`Drawing app server listening on https://10.0.30.50:${config.port}`);
 });

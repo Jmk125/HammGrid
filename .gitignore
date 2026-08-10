@@ -4,3 +4,9 @@ data/
 .claude/settings.local.json
 __pycache__/
 *.pyc
+
+# TLS cert/key for HTTPS (src/server.js, config.js's tlsKeyPath/tlsCertPath) -
+# the private key must never be committed. Path is configurable via
+# TLS_KEY_PATH/TLS_CERT_PATH if it's ever regenerated under a different name.
+*.pem
+mkcert*.exe
