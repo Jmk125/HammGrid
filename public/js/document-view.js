@@ -2,6 +2,7 @@ import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 import { initMarkups } from '/js/markups.js';
 import { renderUserMenu, applyTheme } from '/js/shell.js';
+import { getCachedDocumentById, getCachedDocumentAsset } from '/js/offline-store.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -267,32 +268,50 @@ function renderImage(url) {
   });
 }
 
-async function renderPdf() {
-  const statusEl = document.getElementById('pdf-status');
-  statusEl.textContent = 'Loading...';
+// Tries a URL as a PDF first, falling back to plain image (renderImage) -
+// shared by the live fetch path and the offline cached-blob path below, so
+// neither has to duplicate PDF-vs-image detection.
+async function renderFromUrl(url) {
   const canvas = document.getElementById('pdf-canvas');
-  const fileUrl = shareToken
-    ? `/api/share/${shareToken}/documents/${documentId}/pdf`
-    : stagedSheetId
-    ? `/api/staged-sheets/${stagedSheetId}/pdf`
-    : versionId ? `/api/document-versions/${versionId}/pdf` : `/api/documents/${documentId}/pdf`;
   try {
-    const loadingTask = pdfjsLib.getDocument({ url: fileUrl });
+    const loadingTask = pdfjsLib.getDocument({ url });
     currentPdf = await loadingTask.promise;
     numPages = currentPdf.numPages;
     currentPage = 1;
     await renderPage();
     fitToView(canvas.width, canvas.height);
     document.getElementById('doc-search-btn').style.display = ''; // only shown once there's a real text layer to search
+    return true;
   } catch (err) {
-    // Not a PDF (or PDF.js couldn't parse it) - try it as an image instead.
-    // Deliberately try-then-fallback rather than checking the extension up
-    // front: this page has four different fetch paths (direct, share-token,
-    // staged-sheet, specific-version) and PDF.js failing is already the one
-    // signal common to all of them, so no new metadata plumbing is needed.
-    const ok = await renderImage(fileUrl);
-    if (!ok) statusEl.textContent = `Failed to render document: ${err.message}`;
+    return renderImage(url);
   }
+}
+
+async function renderPdf() {
+  const statusEl = document.getElementById('pdf-status');
+  statusEl.textContent = 'Loading...';
+  const fileUrl = shareToken
+    ? `/api/share/${shareToken}/documents/${documentId}/pdf`
+    : stagedSheetId
+    ? `/api/staged-sheets/${stagedSheetId}/pdf`
+    : versionId ? `/api/document-versions/${versionId}/pdf` : `/api/documents/${documentId}/pdf`;
+  if (await renderFromUrl(fileUrl)) return;
+
+  // Live fetch failed (as both a PDF and an image) - try the cached blob
+  // before giving up entirely (see documents.js's cacheDocuments/
+  // offline-store.js's getCachedDocumentAsset). Only meaningful for "the
+  // current version of a real saved document" - share links and staged
+  // (not-yet-published) sheets have no offline cache at all, and only the
+  // CURRENT version's file is ever cached (same delta-sync scope sheets
+  // already use), not arbitrary historical ?versionId= ones.
+  if (!shareToken && !stagedSheetId && !versionId) {
+    const doc = await getCachedDocumentById(documentId);
+    const blob = doc && doc.current_version_id ? await getCachedDocumentAsset(doc.current_version_id) : null;
+    if (blob && (await renderFromUrl(URL.createObjectURL(blob)))) return;
+  }
+  statusEl.textContent = navigator.onLine
+    ? 'Failed to render document.'
+    : "Offline, and this document isn't cached on this device yet - open it once while online first.";
 }
 
 async function goToPage(n) {

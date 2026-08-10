@@ -1,7 +1,15 @@
 import { renderShell, openModal, closeModal, showToast, confirmModal } from '/js/shell.js';
+import { getCachedDocuments, getCachedDocumentFolders, getCachedDocumentAsset } from '/js/offline-store.js';
 
 const TRASH_ICON =
   '<svg viewBox="0 0 20 20"><path d="M4 6h12M8 6V4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v2m-7 0 .7 10.5A1 1 0 0 0 6.7 17h6.6a1 1 0 0 0 1-1.5L15 6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+// Shared by non-image documents' own icon and, below, by a photo document's
+// thumbnail when it can't load live AND isn't cached for offline either -
+// falls back to looking like any other document row rather than a blank/
+// broken image.
+const GENERIC_FILE_ICON_SVG =
+  '<svg viewBox="0 0 20 20" class="doc-icon"><path d="M5 2h7l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M12 2v4h4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
 
 const projectId = new URLSearchParams(window.location.search).get('projectId');
 let currentUser = null;
@@ -46,13 +54,27 @@ function formatDateTime(s) {
   return new Date(s.replace(' ', 'T') + 'Z').toLocaleString();
 }
 
+let loadedOffline = false;
+
 async function loadAll() {
-  const [f, d] = await Promise.all([
-    api('GET', `/api/projects/${projectId}/documents/folders`),
-    api('GET', `/api/projects/${projectId}/documents`),
-  ]);
-  folders = f.folders;
-  documents = d.documents;
+  try {
+    const [f, d] = await Promise.all([
+      api('GET', `/api/projects/${projectId}/documents/folders`),
+      api('GET', `/api/projects/${projectId}/documents`),
+    ]);
+    folders = f.folders;
+    documents = d.documents;
+    loadedOffline = false;
+  } catch (err) {
+    // Offline - fall back to whatever was cached at last sync (see
+    // offline-store.js's cacheDocuments/cacheDocumentFolders). Every other
+    // call site of loadAll() is a post-mutation reload (create/upload/
+    // delete), which can only have gotten here by having just succeeded
+    // online - this fallback only really matters for the initial page load.
+    folders = await getCachedDocumentFolders(projectId);
+    documents = await getCachedDocuments(projectId);
+    loadedOffline = true;
+  }
 }
 
 function renderBreadcrumb() {
@@ -88,7 +110,15 @@ function renderTable() {
     .filter((d) => (d.folder_id || null) === currentFolderId)
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  document.getElementById('empty-msg').style.display = childFolders.length || childDocs.length ? 'none' : '';
+  const emptyMsg = document.getElementById('empty-msg');
+  const isEmpty = childFolders.length === 0 && childDocs.length === 0;
+  emptyMsg.style.display = isEmpty ? '' : 'none';
+  if (isEmpty) {
+    emptyMsg.textContent =
+      loadedOffline && folders.length === 0 && documents.length === 0
+        ? 'No documents cached for offline use yet - open this project once while online first.'
+        : 'This folder is empty. Drag & drop PDFs anywhere in this area to upload.';
+  }
 
   for (const f of childFolders) {
     const tr = document.createElement('tr');
@@ -136,7 +166,7 @@ function renderTable() {
     // same URL the viewer itself uses.
     const icon = d.is_image
       ? `<img class="doc-icon doc-thumb" src="/api/documents/${d.id}/pdf" alt="" loading="lazy">`
-      : `<svg viewBox="0 0 20 20" class="doc-icon"><path d="M5 2h7l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M12 2v4h4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>`;
+      : GENERIC_FILE_ICON_SVG;
     tr.innerHTML = `
       <td>${icon}</td>
       <td class="doc-row-name"><a href="/document-view.html?documentId=${d.id}" target="_blank">${escapeHtml(d.name)}</a></td>
@@ -173,6 +203,20 @@ function renderTable() {
         showToast(`"${d.name}" deleted.`, 'success');
         await loadAll();
         render();
+      });
+    }
+    // Live URL fails offline - try the cached blob (see offline-store.js's
+    // cacheDocuments/getCachedDocumentAsset) before giving up to the plain
+    // file-icon placeholder every other (non-image) document already shows.
+    const thumbImg = tr.querySelector('.doc-thumb');
+    if (thumbImg) {
+      thumbImg.addEventListener('error', async () => {
+        const blob = d.current_version_id ? await getCachedDocumentAsset(d.current_version_id) : null;
+        if (blob) {
+          thumbImg.src = URL.createObjectURL(blob);
+          return;
+        }
+        thumbImg.outerHTML = GENERIC_FILE_ICON_SVG;
       });
     }
     tbody.appendChild(tr);

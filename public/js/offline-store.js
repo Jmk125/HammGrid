@@ -5,7 +5,7 @@
 // network in the path once synced.
 
 const DB_NAME = 'drawing-app';
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -33,6 +33,16 @@ function openDb() {
       if (!db.objectStoreNames.contains('takeoff_items')) db.createObjectStore('takeoff_items', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('takeoff_assemblies')) db.createObjectStore('takeoff_assemblies', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('takeoff_instances')) db.createObjectStore('takeoff_instances', { keyPath: 'id' });
+      // v5: the RFI/submittal/photo library (documents.js/document-view.js)
+      // had zero offline support at all - not even the folder/document
+      // metadata, let alone the files themselves. Document files reuse the
+      // existing 'assets'/OPFS blob store (writeAssetFile etc.) rather than
+      // a new one - see getCachedDocumentAsset for the distinct key prefix
+      // that keeps them from colliding with sheet_versions' asset keys
+      // (separate auto-increment PKs that can easily land on the same
+      // number on a small project).
+      if (!db.objectStoreNames.contains('documents')) db.createObjectStore('documents', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('document_folders')) db.createObjectStore('document_folders', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -271,6 +281,40 @@ export async function getCachedTakeoffInstancesForSheet(sheetId) {
   return all.filter((r) => r.sheet_id === Number(sheetId));
 }
 
+// Neither documents nor document_folders carry project_id on the server row
+// (both are already fetched via a project-scoped URL) - reconcileProjectScopedStore
+// attaches it synthetically at write time, same as take-off instances above.
+export async function cacheDocuments(projectId, docs) {
+  await reconcileProjectScopedStore('documents', projectId, docs);
+}
+
+export async function getCachedDocuments(projectId) {
+  const db = await openDb();
+  const all = await idbGetAll(db, 'documents');
+  return all.filter((r) => r.project_id === Number(projectId));
+}
+
+// Documents are keyed by their own (globally unique) id in the 'documents'
+// store, so a single document can be looked up directly with no project_id
+// needed - useful for document-view.js specifically, which only ever has
+// documentId from the URL and would otherwise have no way to learn the
+// project offline (its own project_id normally comes from the live
+// metadata fetch, which is exactly what's failing in this code path).
+export async function getCachedDocumentById(documentId) {
+  const db = await openDb();
+  return idbGet(db, 'documents', Number(documentId));
+}
+
+export async function cacheDocumentFolders(projectId, docFolders) {
+  await reconcileProjectScopedStore('document_folders', projectId, docFolders);
+}
+
+export async function getCachedDocumentFolders(projectId) {
+  const db = await openDb();
+  const all = await idbGetAll(db, 'document_folders');
+  return all.filter((r) => r.project_id === Number(projectId));
+}
+
 export async function ensureProjectCacheFresh(projectId, project = {}) {
   if (!project.created_at) return;
   const db = await openDb();
@@ -383,6 +427,49 @@ export async function syncProject(projectId, { onProgress } = {}) {
       // successfully is the part that must not be undermined by this.
     }
 
+    // Documents (RFI/submittal/photo library) - same "best-effort, isolated
+    // failure" treatment as take-offs above, though these endpoints don't
+    // 403 for anyone with requireAuth - isolating this is still right in
+    // case of a transient failure fetching/downloading a large photo
+    // library specifically.
+    try {
+      const previousDocs = await getCachedDocuments(projectId);
+      const previousDocVersionIds = new Set(previousDocs.map((d) => d.current_version_id).filter(Boolean));
+
+      const [foldersRes, docsRes] = await Promise.all([
+        fetch(`/api/projects/${projectId}/documents/folders`, { credentials: 'same-origin' }),
+        fetch(`/api/projects/${projectId}/documents`, { credentials: 'same-origin' }),
+      ]);
+      if (foldersRes.ok && docsRes.ok) {
+        const [{ folders: docFolders }, { documents: docs }] = await Promise.all([foldersRes.json(), docsRes.json()]);
+        await cacheDocumentFolders(projectId, docFolders);
+        await cacheDocuments(projectId, docs);
+
+        const docsToDownload = docs.filter((d) => d.current_version_id && !previousDocVersionIds.has(d.current_version_id));
+        for (const doc of docsToDownload) {
+          try {
+            const fileBlob = await fetchBlob(`/api/document-versions/${doc.current_version_id}/pdf`);
+            await writeAssetFile(documentAssetKey(doc.current_version_id), fileBlob);
+          } catch (err) {
+            // One bad document file shouldn't abort the rest of the batch -
+            // same reasoning as sheets failing loudly enough to surface in
+            // the sync-status text (fetchBlob already throws on a non-ok
+            // response) without corrupting what's already cached.
+          }
+        }
+
+        // Clean up asset blobs no longer referenced by any current document
+        // (deleted document, or a new version superseding the cached one) -
+        // same two-pass reasoning as the sheets cleanup below.
+        const currentDocVersionIds = new Set(docs.map((d) => d.current_version_id).filter(Boolean));
+        for (const oldVersionId of previousDocVersionIds) {
+          if (!currentDocVersionIds.has(oldVersionId)) await deleteAssetFile(documentAssetKey(oldVersionId));
+        }
+      }
+    } catch (err) {
+      // Document caching is best-effort - see the take-offs comment above.
+    }
+
     const currentSheetIds = new Set((data.current_sheet_ids || []).map((id) => Number(id)));
     for (const old of previousSheets) {
       if (currentSheetIds.size > 0 && !currentSheetIds.has(Number(old.sheet_id))) {
@@ -477,4 +564,19 @@ export async function getProjectSyncInfo(projectId, project = {}) {
 // kind: 'pdf' | 'thumb' | 'preview'. Returns a File (Blob) or null if not cached.
 export async function getCachedAsset(versionId, kind) {
   return readAssetFile(`v${versionId}_${kind}`);
+}
+
+// Distinct 'docv' prefix, not 'v' - sheet_versions.id and document_versions.id
+// are separate auto-increment PKs that can easily collide on a small
+// project, and both would otherwise land in the same 'assets'/OPFS store.
+// One blob per document version (unlike sheets' pdf/thumb/preview trio) -
+// the document store has no separate pre-generated thumbnail, the "thumb"
+// shown in documents.js's table for a photo document is just this same
+// file (see documents.js's is_image thumbnail rendering).
+function documentAssetKey(versionId) {
+  return `docv${versionId}`;
+}
+
+export async function getCachedDocumentAsset(versionId) {
+  return readAssetFile(documentAssetKey(versionId));
 }
