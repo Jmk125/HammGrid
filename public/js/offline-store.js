@@ -73,10 +73,27 @@ async function writeAssetFile(name, blob) {
   const root = await opfsRoot();
   if (root) {
     const handle = await root.getFileHandle(name, { create: true });
-    const writable = await handle.createWritable();
-    await writable.write(blob);
-    await writable.close();
-    return;
+    // Safari's OPFS implementation exposes getDirectory()/getFileHandle()
+    // (so opfsRoot() above succeeds) but does NOT implement
+    // createWritable() at all - only the synchronous access-handle API,
+    // which is worker-only and a much bigger redesign than this warrants.
+    // Chrome has always supported createWritable() (why this only ever
+    // showed up on the iPad, never on PC) - detect it explicitly and fall
+    // back to the IndexedDB blob store (below) rather than crash.
+    if (typeof handle.createWritable === 'function') {
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    }
+    // getFileHandle(create:true) above already created a real (empty) file
+    // as a side effect, regardless of whether createWritable exists - left
+    // in place, that empty file would poison every future read.
+    // readAssetFile tries OPFS first and only falls through to IndexedDB on
+    // an error, but an empty file IS a successful read (a valid, if
+    // pointless, zero-byte File) - it would never even look at IndexedDB,
+    // where the real blob is about to be written instead. Clean it up.
+    await root.removeEntry(name).catch(() => {});
   }
   const db = await openDb();
   await idbPut(db, 'assets', { name, blob });
