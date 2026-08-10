@@ -29,6 +29,11 @@ function syncLabel(info) {
   if (info.status === 'synced') return { status: 'synced', text: 'Synced' };
   if (info.status === 'needs-sync') return { status: 'needs-sync', text: 'Needs sync' };
   if (info.status === 'empty') return { status: 'empty', text: 'No drawings' };
+  // The pill's title attribute is a hover tooltip - invisible on iPad's
+  // touch UI, which has no hover state at all. Distinct visible text (not
+  // just a tooltip) is what actually makes this reachable on the device
+  // this whole offline story is built for.
+  if (info.status === 'error') return { status: 'error', text: `Sync error: ${(info.state && info.state.message) || 'unknown'}` };
   return { status: 'not-synced', text: 'Not synced' };
 }
 

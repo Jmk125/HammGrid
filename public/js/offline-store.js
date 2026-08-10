@@ -311,6 +311,14 @@ export async function getProjectSyncInfo(projectId, project = {}) {
   const state = stateRow ? stateRow.value : null;
   let status = 'not-synced';
   if (state && state.status === 'syncing') status = 'syncing';
+  // state is overwritten on every attempt (see syncProject's try/catch), so
+  // 'error' here always means the MOST RECENT attempt failed - regardless
+  // of whether an earlier attempt (reflected in lastSync) ever succeeded.
+  // Surfacing this distinctly (not just falling through to the generic
+  // not-synced/needs-sync text below) is what actually makes a real
+  // failure diagnosable from the UI instead of looking identical to
+  // "just hasn't synced yet".
+  else if (state && state.status === 'error') status = 'error';
   else if (currentSheetCount === 0) status = 'empty';
   else if (!lastSync || cachedSheetCount === 0) status = 'not-synced';
   else if (latestPublished && lastSync < latestPublished) status = 'needs-sync';

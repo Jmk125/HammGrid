@@ -214,6 +214,10 @@ a { color: var(--accent); }
 .sync-pill.syncing { background: #dbeafe; color: #1d4ed8; }
 .sync-pill.needs-sync, .sync-pill.not-synced { background: var(--warn-bg); color: #7a5b06; }
 .sync-pill.empty { background: #f3f4f6; color: var(--muted); }
+/* Carries the actual error message (see syncLabel in viewer.js), which can
+   run long - let it wrap instead of overflowing the pill's fixed nowrap
+   shape like every other (short, fixed-text) state uses. */
+.sync-pill.error { background: #fee2e2; color: #991b1b; white-space: normal; text-align: left; }
 .topbar .network-indicator { border: 1px solid rgba(255,255,255,0.25); }
 .project-card .sync-pill { margin-top: 8px; align-self: flex-start; }
 .project-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
