@@ -1,6 +1,13 @@
 import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { initMarkups } from '/js/markups.js';
-import { getCachedAsset, getCachedSheets, updateCachedSheetMetadata } from '/js/offline-store.js';
+import {
+  getCachedAsset,
+  getCachedSheets,
+  updateCachedSheetMetadata,
+  getCachedTakeoffItems,
+  getCachedTakeoffAssemblies,
+  getCachedTakeoffInstancesForSheet,
+} from '/js/offline-store.js';
 import { renderShell, openModal, closeModal, showToast, promptModal, confirmModal } from '/js/shell.js';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 import { setupAdvancedFields, wireNamePreview } from '/js/takeoffAdvancedFields.js';
@@ -6666,7 +6673,11 @@ async function loadTakeoffItems() {
     const { items } = await api('GET', `/api/projects/${projectId}/take-off-items`);
     takeoffItems = items;
   } catch (err) {
-    // offline or forbidden - pane keeps showing whatever it already had
+    // Offline (or genuinely forbidden, in which case this is just empty -
+    // syncProject() never caches take-off data for a non-take-off user
+    // either, see offline-store.js) - read whatever was cached at last
+    // sync instead of leaving the pane on stale in-memory state.
+    takeoffItems = await getCachedTakeoffItems(projectId);
   }
 }
 
@@ -6675,7 +6686,7 @@ async function loadTakeoffAssemblies() {
     const { assemblies } = await api('GET', `/api/projects/${projectId}/take-off-assemblies`);
     takeoffAssemblies = assemblies;
   } catch (err) {
-    // offline or forbidden - pane keeps showing whatever it already had
+    takeoffAssemblies = await getCachedTakeoffAssemblies(projectId);
   }
   renderTakeoffAssembliesList();
 }
@@ -6796,10 +6807,13 @@ async function loadSheetTakeoffInstances() {
   try {
     const { instances } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}/take-off-instances`);
     sheetTakeoffInstances = instances;
-    renderTakeoffInstances();
   } catch (err) {
-    // offline - no instances shown this session
+    // Offline (or forbidden) - fall back to what was cached at last sync
+    // (see offline-store.js's cacheTakeoffInstances/syncProject) instead of
+    // rendering nothing.
+    sheetTakeoffInstances = await getCachedTakeoffInstancesForSheet(sheetId);
   }
+  renderTakeoffInstances();
 }
 
 async function setupTakeoffTools() {

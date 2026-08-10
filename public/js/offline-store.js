@@ -5,7 +5,7 @@
 // network in the path once synced.
 
 const DB_NAME = 'drawing-app';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -22,6 +22,17 @@ function openDb() {
       // ever loading the dashboard online has no way to discover which
       // projects even exist. See cacheProjectList/getCachedProjectList.
       if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
+      // v4: take-off items/assemblies/instances were never cached either -
+      // same gap as v3's project list, one level down (the pane's tools
+      // silently showed nothing/stale data offline). Each row gets a
+      // synthetic project_id field at write time (items/assemblies already
+      // have one from the API; instances don't - sheet_id is what the
+      // server row actually has) so reads/reconciliation can scope by
+      // project without a second lookup, same trick the 'sheets' store
+      // already uses.
+      if (!db.objectStoreNames.contains('takeoff_items')) db.createObjectStore('takeoff_items', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('takeoff_assemblies')) db.createObjectStore('takeoff_assemblies', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('takeoff_instances')) db.createObjectStore('takeoff_instances', { keyPath: 'id' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -207,6 +218,59 @@ export async function getCachedProjectList() {
   return idbGetAll(db, 'projects');
 }
 
+// Shared by the three take-off stores below - all are "this project's
+// current full list", replaced (not incrementally merged) on every sync,
+// same reasoning as cacheProjectList: small lists, and a deleted/edited
+// item/assembly/instance should disappear/update here too, not linger.
+// scopeKey lets the same helper work for items/assemblies (already carry
+// project_id from the API) and instances (only carry sheet_id - the caller
+// passes a synthetic project_id per row instead, see cacheTakeoffInstances).
+async function reconcileProjectScopedStore(store, projectId, rows) {
+  const db = await openDb();
+  const existing = await idbGetAll(db, store);
+  const existingForProject = existing.filter((r) => r.project_id === Number(projectId));
+  const newIds = new Set(rows.map((r) => r.id));
+  for (const old of existingForProject) {
+    if (!newIds.has(old.id)) await idbDelete(db, store, old.id);
+  }
+  for (const row of rows) await idbPut(db, store, { ...row, project_id: Number(projectId) });
+}
+
+export async function cacheTakeoffItems(projectId, items) {
+  await reconcileProjectScopedStore('takeoff_items', projectId, items);
+}
+
+export async function getCachedTakeoffItems(projectId) {
+  const db = await openDb();
+  const all = await idbGetAll(db, 'takeoff_items');
+  return all.filter((r) => r.project_id === Number(projectId));
+}
+
+export async function cacheTakeoffAssemblies(projectId, assemblies) {
+  await reconcileProjectScopedStore('takeoff_assemblies', projectId, assemblies);
+}
+
+export async function getCachedTakeoffAssemblies(projectId) {
+  const db = await openDb();
+  const all = await idbGetAll(db, 'takeoff_assemblies');
+  return all.filter((r) => r.project_id === Number(projectId));
+}
+
+// Instances don't carry project_id on the server row (only sheet_id) -
+// reconcileProjectScopedStore still works, it just gets project_id attached
+// per-row here (rather than it already being present, like items/
+// assemblies) before being handed off, so reads can still scope by project
+// without a sheets lookup.
+export async function cacheTakeoffInstances(projectId, instances) {
+  await reconcileProjectScopedStore('takeoff_instances', projectId, instances);
+}
+
+export async function getCachedTakeoffInstancesForSheet(sheetId) {
+  const db = await openDb();
+  const all = await idbGetAll(db, 'takeoff_instances');
+  return all.filter((r) => r.sheet_id === Number(sheetId));
+}
+
 export async function ensureProjectCacheFresh(projectId, project = {}) {
   if (!project.created_at) return;
   const db = await openDb();
@@ -288,6 +352,35 @@ export async function syncProject(projectId, { onProgress } = {}) {
 
     for (const m of data.markups) {
       await idbPut(db, 'markups', { ...m, project_id: Number(projectId) });
+    }
+
+    // Take-off items/assemblies/instances - separate endpoints, not part of
+    // the main sync payload above (see takeoffProjectInstances.routes.js's
+    // comment for why instances specifically needed a new project-wide
+    // route). Wrapped in its own try/catch, deliberately isolated from the
+    // rest of this function: these endpoints 403 for any user without
+    // can_takeoff (view-only/non-takeoff viewers are common and expected),
+    // and that must not fail the whole sync - sheets/markups already
+    // succeeded above and should still count as synced.
+    try {
+      const [itemsRes, assembliesRes, instancesRes] = await Promise.all([
+        fetch(`/api/projects/${projectId}/take-off-items`, { credentials: 'same-origin' }),
+        fetch(`/api/projects/${projectId}/take-off-assemblies`, { credentials: 'same-origin' }),
+        fetch(`/api/projects/${projectId}/take-off-instances`, { credentials: 'same-origin' }),
+      ]);
+      if (itemsRes.ok && assembliesRes.ok && instancesRes.ok) {
+        const [{ items }, { assemblies }, { instances }] = await Promise.all([
+          itemsRes.json(),
+          assembliesRes.json(),
+          instancesRes.json(),
+        ]);
+        await cacheTakeoffItems(projectId, items);
+        await cacheTakeoffAssemblies(projectId, assemblies);
+        await cacheTakeoffInstances(projectId, instances);
+      }
+    } catch (err) {
+      // Take-off caching is best-effort - sheets/markups syncing
+      // successfully is the part that must not be undermined by this.
     }
 
     const currentSheetIds = new Set((data.current_sheet_ids || []).map((id) => Number(id)));
