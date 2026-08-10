@@ -51,7 +51,13 @@ async function updateProjectSyncPill(override) {
     const label = syncLabel(info);
     pill.className = `sync-pill ${label.status}`;
     pill.textContent = label.text;
-    pill.title = info.lastSync ? `Last synced ${info.lastSync}` : 'This device has not synced this project yet.';
+    // The last sync attempt's actual failure reason (syncProject() writes
+    // it to IndexedDB's sync-state on every failure) - surfaced here so
+    // it's checkable on a later page load too, not just live in
+    // #sync-status the moment it happens.
+    const lastErrorNote =
+      info.state && info.state.status === 'error' && info.state.message ? ` (last attempt failed: ${info.state.message})` : '';
+    pill.title = (info.lastSync ? `Last synced ${info.lastSync}` : 'This device has not synced this project yet.') + lastErrorNote;
   } catch (err) {
     pill.className = 'sync-pill not-synced';
     pill.textContent = 'Sync unknown';
@@ -502,7 +508,14 @@ document.getElementById('search-filter').addEventListener('input', () => {
     await renderFromCache();
     await updateProjectSyncPill();
   } catch (err) {
-    statusEl.textContent = `Offline - showing last synced data.${offlineShellNote()}`;
+    // A thrown sync isn't necessarily an offline device - syncProject()
+    // throws on a bad server response, an IndexedDB/OPFS error, etc. too,
+    // and always claiming "Offline" for all of those buries the real reason
+    // (which syncProject() already wrote to IndexedDB's sync-state, but
+    // nothing was reading it back out - see getProjectSyncInfo/syncLabel).
+    statusEl.textContent = navigator.onLine
+      ? `Sync failed: ${err.message}${offlineShellNote()}`
+      : `Offline - showing last synced data.${offlineShellNote()}`;
     await updateProjectSyncPill();
   }
 })();
