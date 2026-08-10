@@ -2162,7 +2162,12 @@ async function loadScaleZones() {
     const { zones } = await api('GET', `/api/projects/${projectId}/sheets/${sheetId}/scale-zones`);
     scaleZones = zones;
   } catch (err) {
-    scaleZones = []; // offline or forbidden - falls back to the sheet's single scale everywhere
+    // Offline (or forbidden) - fall back to whatever was cached at last
+    // sync (see sync.routes.js/offline-store.js), rather than emptying out
+    // and silently reverting a multi-scale sheet to its single scale.
+    const cachedSheets = await getCachedSheets(projectId);
+    const cached = cachedSheets.find((s) => String(s.sheet_id) === String(sheetId));
+    scaleZones = (cached && cached.scale_zones) || [];
   }
   renderScaleZoneOverlay();
 }
@@ -7077,6 +7082,9 @@ async function setupScaleSelect(sheet) {
     }
     try {
       await api('PATCH', `/api/projects/${projectId}/sheets/${sheetId}`, { scale_feet_per_inch: scaleFeetPerInch });
+      // Keeps the offline cache correct immediately rather than leaving it
+      // stale until the next full sync - see updateCachedSheetMetadata.
+      await updateCachedSheetMetadata(projectId, { id: sheetId, scale_feet_per_inch: scaleFeetPerInch });
     } catch (err) {
       // read-only role or offline - scale still usable locally this session, just won't persist
     }
@@ -7259,7 +7267,7 @@ async function loadSheetOffline() {
       sheet_number: cached.sheet_number,
       discipline: cached.discipline,
       current_version_id: cached.current_version_id,
-      scale_feet_per_inch: null,
+      scale_feet_per_inch: cached.scale_feet_per_inch ?? null,
     },
     versions: [
       {

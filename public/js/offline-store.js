@@ -157,6 +157,7 @@ export async function updateCachedSheetMetadata(projectId, sheet) {
     current_version_id: sheet.current_version_id ?? existing.current_version_id,
     current_revision_id: sheet.current_revision_id ?? existing.current_revision_id,
     current_title: sheet.current_title ?? existing.current_title,
+    scale_feet_per_inch: sheet.scale_feet_per_inch !== undefined ? sheet.scale_feet_per_inch : existing.scale_feet_per_inch,
   });
 }
 
@@ -173,6 +174,11 @@ async function refreshCachedSheetMetadata(projectId, currentSheets) {
       discipline: sheet.discipline,
       current_revision_id: sheet.current_version.revision_id,
       current_title: sheet.current_version.title,
+      // Scale/scale-zones are sheet metadata (not tied to the PDF version),
+      // so this needs refreshing even when the sheet's current version -
+      // and therefore its cached PDF - hasn't changed at all.
+      scale_feet_per_inch: sheet.scale_feet_per_inch,
+      scale_zones: sheet.scale_zones || [],
     });
   }
 }
@@ -273,6 +279,8 @@ export async function syncProject(projectId, { onProgress } = {}) {
         current_version_id: cv.id,
         current_revision_id: cv.revision_id,
         current_title: cv.title,
+        scale_feet_per_inch: sheet.scale_feet_per_inch,
+        scale_zones: sheet.scale_zones || [],
       });
       done += 1;
       if (onProgress) onProgress(done, sheetsToDownload.length);

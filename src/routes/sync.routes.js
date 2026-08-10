@@ -24,7 +24,7 @@ function handleSync(req, res) {
 
   const currentRows = db
     .prepare(
-      `SELECT s.id, s.sheet_number, s.discipline,
+      `SELECT s.id, s.sheet_number, s.discipline, s.scale_feet_per_inch,
               sv.id AS version_id, sv.revision_id, sv.title, r.published_at
        FROM sheets s
        JOIN sheet_versions sv ON sv.id = s.current_version_id
@@ -33,6 +33,25 @@ function handleSync(req, res) {
        ORDER BY r.published_at`
     )
     .all(req.params.projectId);
+
+  // Scale (and multi-scale zones) are sheet metadata, not tied to a
+  // specific version - fetched for every current sheet regardless of the
+  // since/cached_version_ids filtering below, same as sheet_number/
+  // discipline, so an offline device's cached scale stays correct even on
+  // a sync where no new PDF actually needed downloading (e.g. someone
+  // edited the scale via Project Settings without publishing a revision).
+  const zonesBySheetId = new Map();
+  const zoneRows = db
+    .prepare(
+      `SELECT sz.* FROM scale_zones sz
+       JOIN sheets s ON s.id = sz.sheet_id
+       WHERE s.project_id = ?`
+    )
+    .all(req.params.projectId);
+  for (const z of zoneRows) {
+    if (!zonesBySheetId.has(z.sheet_id)) zonesBySheetId.set(z.sheet_id, []);
+    zonesBySheetId.get(z.sheet_id).push(z);
+  }
 
   const sheets = currentRows.filter(
     (s) =>
@@ -45,6 +64,8 @@ function handleSync(req, res) {
     id: s.id,
     sheet_number: s.sheet_number,
     discipline: s.discipline,
+    scale_feet_per_inch: s.scale_feet_per_inch,
+    scale_zones: zonesBySheetId.get(s.id) || [],
     current_version: {
       id: s.version_id,
       revision_id: s.revision_id,
@@ -70,6 +91,8 @@ function handleSync(req, res) {
       id: s.id,
       sheet_number: s.sheet_number,
       discipline: s.discipline,
+      scale_feet_per_inch: s.scale_feet_per_inch,
+      scale_zones: zonesBySheetId.get(s.id) || [],
       current_version: {
         id: s.version_id,
         revision_id: s.revision_id,
