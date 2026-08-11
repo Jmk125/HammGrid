@@ -1321,7 +1321,44 @@ async function renderPdf(versionId) {
   }
 }
 
+// Paints the pre-generated preview WebP (burst.py, generated once at
+// upload/publish time) as an instant placeholder before the real PDF.js
+// vector render starts. Most sheets render fast enough that this never even
+// gets to paint before the real render supersedes it, but some sheets -
+// seen on a civil sheet with dense hatch/dash linetypes exploded into tens
+// of thousands of individual line segments by the CAD plot driver - hand
+// PDF.js an operator list so long it has to time-slice execution across
+// frames, which visibly paints in over several seconds ("prints" line by
+// line) instead of popping in at once. Only checks the LOCAL cache (never
+// fetches over the network): the point is a synchronous-ish local read that
+// beats the real render to the screen, and per CLAUDE.md's offline design
+// the sheets a field user is actually looking at are the ones already
+// synced locally anyway - a network fetch here would just add a serial
+// round trip ahead of the real PDF fetch for a sheet that has nothing to
+// show locally regardless.
+async function paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut, canvas, ctx, statusEl) {
+  const cachedPreview = await getCachedAsset(versionId, 'preview');
+  if (!cachedPreview || isTimedOut() || currentRenderTask !== renderToken) return;
+  let previewUrl;
+  try {
+    previewUrl = URL.createObjectURL(cachedPreview);
+    const img = await loadImage(previewUrl);
+    if (isTimedOut() || currentRenderTask !== renderToken) return; // superseded while the placeholder itself was decoding
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    ctx.drawImage(img, 0, 0);
+    statusEl.textContent = 'Loading full detail...';
+    userHasZoomedOrPanned = false;
+    fitToView();
+  } catch {
+    // Best-effort only - the real render below is what actually matters.
+  } finally {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }
+}
+
 async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx, statusEl) {
+  await paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut, canvas, ctx, statusEl);
   const cachedFile = await getCachedAsset(versionId, 'pdf');
   const source = cachedFile
     ? { data: await cachedFile.arrayBuffer() }
