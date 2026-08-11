@@ -10,7 +10,7 @@
 // note install() below fails closed: cache.addAll() rejects the whole
 // install if ANY url here 404s (e.g. a renamed/deleted page), so keep this
 // list in sync with public/ or the service worker stops updating entirely.
-const CACHE_NAME = 'app-shell-v23';
+const CACHE_NAME = 'app-shell-v24';
 
 const PRECACHE_URLS = [
   '/',
@@ -81,6 +81,19 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request))
+      // ignoreSearch matters a lot here: this app has no client-side
+      // router, so navigating to a *different* sheet/document/project is a
+      // real page load of e.g. /sheet.html?projectId=11&sheetId=819 - the
+      // precached entry is the bare '/sheet.html' with no query string.
+      // Cache.match()'s default (ignoreSearch: false) treats those as
+      // different cache keys, so this returned undefined for every
+      // navigation whose URL had params - i.e. every one except whichever
+      // exact page happened to already be open - and
+      // event.respondWith(undefined) is exactly what Safari surfaced as
+      // "Returned response is null." The sheet itself opening fine while
+      // online (a live fetch, unrelated to this) made it look like the
+      // drawing data just hadn't synced, when actually the app shell for
+      // that page could never even load offline in the first place.
+      .catch(() => caches.match(event.request, { ignoreSearch: true }))
   );
 });
