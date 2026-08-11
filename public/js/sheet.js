@@ -1285,38 +1285,31 @@ async function renderPdf(versionId) {
   // touching the canvas or status text.
   const renderToken = Symbol();
   currentRenderTask = renderToken;
+  // Separate from currentRenderTask (which means "a NEWER render superseded
+  // this one") - this means "we gave up waiting on THIS one specifically",
+  // via the timeout race below. Kept distinct so an abandoned attempt that
+  // does eventually resolve knows not to paint stale content over whatever
+  // the timeout's own error message put on screen, without that check ALSO
+  // suppressing the timeout error itself in the catch block.
+  let timedOut = false;
   try {
-    const cachedFile = await getCachedAsset(versionId, 'pdf');
-    const source = cachedFile
-      ? { data: await cachedFile.arrayBuffer() }
-      : { url: `/api/sheet-versions/${versionId}/pdf` };
-    const loadingTask = pdfjsLib.getDocument(source);
-    const pdf = await loadingTask.promise;
-    const page = await pdf.getPage(1);
-    if (currentRenderTask !== renderToken) return; // superseded while loading
-
-    const unitViewport = page.getViewport({ scale: 1 });
-    const longestPt = Math.max(unitViewport.width, unitViewport.height);
-    const maxRenderPx = currentSheet && currentSheet.is_composite ? MAX_RENDER_PX_COMPOSITE : MAX_RENDER_PX;
-    currentRenderScale = Math.min(RENDER_SCALE, maxRenderPx / longestPt);
-    const viewport = page.getViewport({ scale: currentRenderScale });
-    canvas.width = viewport.width;
-    canvas.height = viewport.height;
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    await page.render({ canvasContext: ctx, viewport }).promise;
-    if (currentRenderTask !== renderToken) return; // superseded while rendering
-
-    currentPdfPage = page;
-    currentViewport = viewport;
-    statusEl.textContent = cachedFile ? '(from local cache)' : '';
-    syncSheetLinkLayer();
-    loadSheetLinks(versionId);
-    drawSearchHighlights(activeSearchTerm);
-    if (canTakeoff) loadSheetTakeoffInstances();
-    if (markupsController) markupsController.resync();
-    userHasZoomedOrPanned = false;
-    fitToView();
+    await Promise.race([
+      renderPdfAttempt(versionId, renderToken, () => timedOut, canvas, ctx, statusEl),
+      new Promise((_, reject) =>
+        setTimeout(() => {
+          timedOut = true;
+          // A PDF.js load/render that neither resolves nor rejects (as
+          // opposed to throwing, which the catch below already handled)
+          // used to leave the page stuck on "Loading..." forever with no
+          // way out - seen specifically on an iOS home-screen (Add to Home
+          // Screen) launch, where a background rendering worker can fail
+          // to start without the main thread ever hearing back at all.
+          // Working theory, not confirmed - this makes the failure visible
+          // and recoverable either way instead of an invisible stall.
+          reject(new Error('Timed out loading the PDF after 30s.'));
+        }, 30000)
+      ),
+    ]);
   } catch (err) {
     if (currentRenderTask !== renderToken) return; // a newer render already took over
     // Clear rather than leave whatever partially painted before the failure -
@@ -1326,6 +1319,40 @@ async function renderPdf(versionId) {
     statusEl.innerHTML = `Failed to render PDF: ${escapeHtml(err.message)} <button type="button" id="pdf-retry-btn">Retry</button>`;
     document.getElementById('pdf-retry-btn').addEventListener('click', () => renderPdf(versionId));
   }
+}
+
+async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx, statusEl) {
+  const cachedFile = await getCachedAsset(versionId, 'pdf');
+  const source = cachedFile
+    ? { data: await cachedFile.arrayBuffer() }
+    : { url: `/api/sheet-versions/${versionId}/pdf` };
+  const loadingTask = pdfjsLib.getDocument(source);
+  const pdf = await loadingTask.promise;
+  const page = await pdf.getPage(1);
+  if (isTimedOut() || currentRenderTask !== renderToken) return; // gave up waiting, or superseded while loading
+
+  const unitViewport = page.getViewport({ scale: 1 });
+  const longestPt = Math.max(unitViewport.width, unitViewport.height);
+  const maxRenderPx = currentSheet && currentSheet.is_composite ? MAX_RENDER_PX_COMPOSITE : MAX_RENDER_PX;
+  currentRenderScale = Math.min(RENDER_SCALE, maxRenderPx / longestPt);
+  const viewport = page.getViewport({ scale: currentRenderScale });
+  canvas.width = viewport.width;
+  canvas.height = viewport.height;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  if (isTimedOut() || currentRenderTask !== renderToken) return; // gave up waiting, or superseded while rendering
+
+  currentPdfPage = page;
+  currentViewport = viewport;
+  statusEl.textContent = cachedFile ? '(from local cache)' : '';
+  syncSheetLinkLayer();
+  loadSheetLinks(versionId);
+  drawSearchHighlights(activeSearchTerm);
+  if (canTakeoff) loadSheetTakeoffInstances();
+  if (markupsController) markupsController.resync();
+  userHasZoomedOrPanned = false;
+  fitToView();
 }
 
 function escapeHtml(str) {
