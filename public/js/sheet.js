@@ -1336,29 +1336,35 @@ async function renderPdf(versionId) {
 // synced locally anyway - a network fetch here would just add a serial
 // round trip ahead of the real PDF fetch for a sheet that has nothing to
 // show locally regardless.
+// Returns true if it actually painted a placeholder (canvas now holds THIS
+// sheet's preview, at the preview's pixel dimensions) so the caller can
+// later rescale the view onto the final render instead of blindly resetting
+// it - see the comment above the rescale step in renderPdfAttempt.
 async function paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut, canvas, ctx, statusEl) {
   const cachedPreview = await getCachedAsset(versionId, 'preview');
-  if (!cachedPreview || isTimedOut() || currentRenderTask !== renderToken) return;
+  if (!cachedPreview || isTimedOut() || currentRenderTask !== renderToken) return false;
   let previewUrl;
   try {
     previewUrl = URL.createObjectURL(cachedPreview);
     const img = await loadImage(previewUrl);
-    if (isTimedOut() || currentRenderTask !== renderToken) return; // superseded while the placeholder itself was decoding
+    if (isTimedOut() || currentRenderTask !== renderToken) return false; // superseded while the placeholder itself was decoding
     canvas.width = img.naturalWidth;
     canvas.height = img.naturalHeight;
     ctx.drawImage(img, 0, 0);
     statusEl.textContent = 'Loading full detail...';
     userHasZoomedOrPanned = false;
     fitToView();
+    return true;
   } catch {
     // Best-effort only - the real render below is what actually matters.
+    return false;
   } finally {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
   }
 }
 
 async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx, statusEl) {
-  await paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut, canvas, ctx, statusEl);
+  const placeholderShown = await paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut, canvas, ctx, statusEl);
   const cachedFile = await getCachedAsset(versionId, 'pdf');
   const source = cachedFile
     ? { data: await cachedFile.arrayBuffer() }
@@ -1391,6 +1397,19 @@ async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx,
   await page.render({ canvasContext: offscreenCtx, viewport }).promise;
   if (isTimedOut() || currentRenderTask !== renderToken) return; // gave up waiting, or superseded while rendering
 
+  // Capture the placeholder's view before resizing the canvas out from
+  // under it - a canvas resize also resets its CSS layout box, and
+  // zoomPan's scale/x/y are expressed against THAT box (see zoomPan.js's
+  // fitToView), so swapping to a higher-res canvas without correcting for
+  // it would suddenly blow the view up by the resolution ratio. Only valid
+  // when a placeholder was actually painted for this sheet this pass -
+  // otherwise canvas.width still reflects the previous sheet (or nothing),
+  // and the ordinary reset-to-fit below is correct instead.
+  const priorScale = zoomPan ? zoomPan.state.scale : null;
+  const priorX = zoomPan ? zoomPan.state.x : null;
+  const priorY = zoomPan ? zoomPan.state.y : null;
+  const priorWidth = canvas.width;
+
   canvas.width = viewport.width;
   canvas.height = viewport.height;
   ctx.drawImage(offscreen, 0, 0);
@@ -1403,8 +1422,25 @@ async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx,
   drawSearchHighlights(activeSearchTerm);
   if (canTakeoff) loadSheetTakeoffInstances();
   if (markupsController) markupsController.resync();
-  userHasZoomedOrPanned = false;
-  fitToView();
+
+  if (placeholderShown && zoomPan && priorWidth) {
+    // Same page, just a higher-resolution canvas - rescale the existing
+    // transform by the resolution ratio instead of re-fitting, so whatever
+    // the user was looking at (including the default fit-to-view the
+    // placeholder itself set up) lands in the exact same screen position
+    // rather than snapping back to centered/reset.
+    const resolutionRatio = viewport.width / priorWidth;
+    zoomPan.state.scale = priorScale / resolutionRatio;
+    zoomPan.state.x = priorX;
+    zoomPan.state.y = priorY;
+    suppressInteractionFlag = true;
+    zoomPan.apply();
+    suppressInteractionFlag = false;
+    if (markupsController) markupsController.repositionPopup();
+  } else {
+    userHasZoomedOrPanned = false;
+    fitToView();
+  }
 }
 
 function escapeHtml(str) {
