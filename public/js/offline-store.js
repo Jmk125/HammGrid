@@ -366,30 +366,45 @@ export async function syncProject(projectId, { onProgress } = {}) {
     const sheetsToDownload = data.sheets.filter((sheet) => !previouslyCachedVersionIds.has(sheet.current_version.id));
 
     let done = 0;
+    let failedCount = 0;
     if (onProgress && sheetsToDownload.length > 0) onProgress(done, sheetsToDownload.length);
     for (const sheet of sheetsToDownload) {
-      const cv = sheet.current_version;
-      const [pdfBlob, thumbBlob, previewBlob] = await Promise.all([
-        fetchBlob(cv.pdf_url),
-        fetchBlob(cv.thumb_url),
-        fetchBlob(cv.preview_url),
-      ]);
-      await writeAssetFile(`v${cv.id}_pdf`, pdfBlob);
-      await writeAssetFile(`v${cv.id}_thumb`, thumbBlob);
-      await writeAssetFile(`v${cv.id}_preview`, previewBlob);
+      // Per-sheet isolation matters a lot here: this had none before, so
+      // one bad fetch (a transient network blip, a timeout on a large PDF)
+      // threw straight out of the whole loop and silently left every sheet
+      // AFTER it in the batch un-downloaded for the rest of this sync -
+      // easy to miss since opening a sheet individually still works fine
+      // while online (falls back to a live fetch), so nothing looked wrong
+      // until actually going offline. A sheet that fails here never gets an
+      // idbPut below, so it's naturally retried on the next sync (it won't
+      // be in cached_version_ids, so the server includes it again) without
+      // any special-cased retry logic needed.
+      try {
+        const cv = sheet.current_version;
+        const [pdfBlob, thumbBlob, previewBlob] = await Promise.all([
+          fetchBlob(cv.pdf_url),
+          fetchBlob(cv.thumb_url),
+          fetchBlob(cv.preview_url),
+        ]);
+        await writeAssetFile(`v${cv.id}_pdf`, pdfBlob);
+        await writeAssetFile(`v${cv.id}_thumb`, thumbBlob);
+        await writeAssetFile(`v${cv.id}_preview`, previewBlob);
 
-      await idbPut(db, 'sheets', {
-        id: `${projectId}:${sheet.id}`,
-        project_id: Number(projectId),
-        sheet_id: sheet.id,
-        sheet_number: sheet.sheet_number,
-        discipline: sheet.discipline,
-        current_version_id: cv.id,
-        current_revision_id: cv.revision_id,
-        current_title: cv.title,
-        scale_feet_per_inch: sheet.scale_feet_per_inch,
-        scale_zones: sheet.scale_zones || [],
-      });
+        await idbPut(db, 'sheets', {
+          id: `${projectId}:${sheet.id}`,
+          project_id: Number(projectId),
+          sheet_id: sheet.id,
+          sheet_number: sheet.sheet_number,
+          discipline: sheet.discipline,
+          current_version_id: cv.id,
+          current_revision_id: cv.revision_id,
+          current_title: cv.title,
+          scale_feet_per_inch: sheet.scale_feet_per_inch,
+          scale_zones: sheet.scale_zones || [],
+        });
+      } catch (err) {
+        failedCount += 1;
+      }
       done += 1;
       if (onProgress) onProgress(done, sheetsToDownload.length);
     }
@@ -486,7 +501,12 @@ export async function syncProject(projectId, { onProgress } = {}) {
 
     await putMeta(db, cursorKey, data.since);
     await putMeta(db, stateKey, { status: 'synced', last_success_at: new Date().toISOString(), since: data.since });
-    return { sheetCount: sheetsToDownload.length, markupCount: data.markups.length, since: data.since };
+    return {
+      sheetCount: sheetsToDownload.length - failedCount,
+      failedSheetCount: failedCount,
+      markupCount: data.markups.length,
+      since: data.since,
+    };
   } catch (err) {
     await putMeta(db, stateKey, { status: 'error', last_error_at: new Date().toISOString(), message: err.message });
     throw err;

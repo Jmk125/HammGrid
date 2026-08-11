@@ -507,9 +507,18 @@ document.getElementById('search-filter').addEventListener('input', () => {
     const result = await syncProject(projectId, {
       onProgress: (done, total) => updateProjectSyncPill({ status: 'syncing', text: `Syncing ${done}/${total}` }),
     });
+    // A per-sheet download failure (transient network blip, a timeout on a
+    // large PDF) no longer aborts the rest of the batch - see
+    // offline-store.js's syncProject - but it's still worth surfacing
+    // rather than silently under-caching. It self-heals on the next sync
+    // (a failed sheet is naturally retried, see that same comment), so this
+    // is informational, not a hard error.
+    const failedNote = result.failedSheetCount
+      ? ` ${result.failedSheetCount} sheet(s) failed to download and will retry next sync.`
+      : '';
     statusEl.textContent = result.sheetCount || result.markupCount
-      ? `Synced ${result.sheetCount} sheet(s) and ${result.markupCount} markup update(s) at ${result.since}.${offlineShellNote()}`
-      : `Already synced at ${result.since}.${offlineShellNote()}`;
+      ? `Synced ${result.sheetCount} sheet(s) and ${result.markupCount} markup update(s) at ${result.since}.${failedNote}${offlineShellNote()}`
+      : `Already synced at ${result.since}.${failedNote}${offlineShellNote()}`;
     await renderFromCache();
     await updateProjectSyncPill();
   } catch (err) {
