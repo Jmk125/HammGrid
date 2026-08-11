@@ -1373,12 +1373,27 @@ async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx,
   const maxRenderPx = currentSheet && currentSheet.is_composite ? MAX_RENDER_PX_COMPOSITE : MAX_RENDER_PX;
   currentRenderScale = Math.min(RENDER_SCALE, maxRenderPx / longestPt);
   const viewport = page.getViewport({ scale: currentRenderScale });
+
+  // Render into an offscreen canvas rather than the visible one. This is
+  // the same canvas paintCachedPreviewPlaceholder just painted the instant
+  // placeholder onto - resizing/drawing into it directly would wipe that
+  // placeholder the moment rendering starts (a canvas resize clears its
+  // content) and replace it with PDF.js's own slow incremental paint,
+  // which is exactly the thing the placeholder exists to hide. Keeping the
+  // work off the visible canvas means the placeholder stays up, unbroken,
+  // until the real image is fully ready to swap in in one atomic step.
+  const offscreen = document.createElement('canvas');
+  offscreen.width = viewport.width;
+  offscreen.height = viewport.height;
+  const offscreenCtx = offscreen.getContext('2d');
+  offscreenCtx.imageSmoothingEnabled = true;
+  offscreenCtx.imageSmoothingQuality = 'high';
+  await page.render({ canvasContext: offscreenCtx, viewport }).promise;
+  if (isTimedOut() || currentRenderTask !== renderToken) return; // gave up waiting, or superseded while rendering
+
   canvas.width = viewport.width;
   canvas.height = viewport.height;
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  await page.render({ canvasContext: ctx, viewport }).promise;
-  if (isTimedOut() || currentRenderTask !== renderToken) return; // gave up waiting, or superseded while rendering
+  ctx.drawImage(offscreen, 0, 0);
 
   currentPdfPage = page;
   currentViewport = viewport;
