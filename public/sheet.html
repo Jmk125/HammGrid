@@ -108,12 +108,14 @@
       </div>
     </div>
   </div>
-  <!-- Item-actions group and axis-lock/snap controls now share one bar
-       (previously a separate bar, stacked above this one before that) per
-       explicit request - each half shows/hides independently depending on
-       what's actually relevant (see updateTakeoffToolbar), but both live in
-       the same always-on-screen floating bar so there's only ever one place
-       to look, and Stop is never off-screen on a short iPad viewport. -->
+  <!-- Item-actions group, box/brush point-select controls, and axis-lock/
+       snap controls all share one bar (previously up to three separate/
+       stacked bars) per explicit request - each part shows/hides
+       independently depending on what's actually relevant (see
+       updateTakeoffToolbar), but they all live in the same always-on-screen
+       floating bar so there's only ever one place to look, nothing is ever
+       hidden underneath another same-position bar, and nothing is ever
+       off-screen on a short iPad viewport. -->
   <div id="takeoff-toolbar" class="selection-bar" style="display:none;">
     <div id="takeoff-item-actions-group" style="display:none; align-items:center; gap:6px;">
       <span class="takeoff-color-dot" id="takeoff-item-actions-dot"></span>
@@ -123,6 +125,17 @@
       <button type="button" class="icon-btn" id="takeoff-item-actions-edit" title="Edit properties &amp; formula">&#9998;</button>
       <button type="button" class="icon-btn" id="takeoff-item-actions-remove" title="Remove from this sheet">&#8722;</button>
       <button type="button" class="icon-btn" id="takeoff-item-actions-delete" title="Delete from project">&#128465;</button>
+    </div>
+    <div id="takeoff-edit-select-group" style="display:none; align-items:center; gap:6px;">
+      <div class="segmented" id="takeoff-select-mode">
+        <button type="button" data-mode="box">Box select</button>
+        <button type="button" data-mode="brush">Brush select</button>
+      </div>
+      <label class="chip-toggle" id="takeoff-brush-size-wrap" style="display:none;">
+        <span>Size</span>
+        <input type="range" id="takeoff-brush-size" min="15" max="100" value="40">
+      </label>
+      <button type="button" id="takeoff-edit-clear-selection">Clear selection</button>
     </div>
     <div class="segmented" id="takeoff-placement-mode">
       <button type="button" data-mode="points" class="active">Point-to-point</button>
@@ -134,18 +147,6 @@
     <label class="chip-toggle" id="takeoff-snap-points-chip">
       <input type="checkbox" id="takeoff-snap-points-checkbox"><span class="dot"></span>Snap to points
     </label>
-  </div>
-  <div id="takeoff-edit-toolbar" class="selection-bar" style="display:none;">
-    <button type="button" id="takeoff-edit-start-btn" title="Start adding to this item">&#9654; Start</button>
-    <div class="segmented" id="takeoff-select-mode">
-      <button type="button" data-mode="box">Box select</button>
-      <button type="button" data-mode="brush">Brush select</button>
-    </div>
-    <label class="chip-toggle" id="takeoff-brush-size-wrap" style="display:none;">
-      <span>Size</span>
-      <input type="range" id="takeoff-brush-size" min="15" max="100" value="40">
-    </label>
-    <button type="button" id="takeoff-edit-clear-selection">Clear selection</button>
   </div>
   <script src="/js/api.js"></script>
   <script type="module" src="/js/sheet.js"></script>

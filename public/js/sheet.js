@@ -2122,7 +2122,8 @@ let takeoffLastClickSegment = null; // { key, time } - manual double-click detec
 // Blender-style "C" circle-select, as an alternative to the rectangle
 // marquee above - useful when the points you want aren't conveniently
 // rectangular (e.g. scattered along a curve). 'box' | 'brush', chosen via
-// #takeoff-edit-toolbar (only shown while editingInstance is set).
+// #takeoff-edit-select-group, inside the shared #takeoff-toolbar (only shown
+// while editingInstance is set - see updateTakeoffToolbar).
 let takeoffEditSelectMode = 'box';
 let takeoffBrushRadius = 40; // screen px, not drawing-space - divided by zoom scale at use time so it feels constant regardless of zoom
 let takeoffBrushStroke = null; // { touchedAny } while the mouse button is held during a brush drag
@@ -4035,10 +4036,9 @@ function enterTakeoffEditMode(instance) {
   // that carries over and silently changes what an empty-space click does.
   takeoffEditSelectMode = null;
   syncTakeoffEditModeButtons();
-  document.getElementById('takeoff-edit-toolbar').style.display = 'flex';
   renderTakeoffInstances(); // hide this instance from the plain committed layer
   renderTakeoffEditOverlay();
-  renderTakeoffPane(); // highlight this instance's item row, whether entered from the canvas or the pane itself
+  renderTakeoffPane(); // highlight this instance's item row (and show the box/brush-select controls), whether entered from the canvas or the pane itself
 }
 
 function exitTakeoffEditMode() {
@@ -4047,7 +4047,6 @@ function exitTakeoffEditMode() {
   editSelectedPointIndices = new Set();
   takeoffBrushStroke = null;
   takeoffBrushCursorPt = null;
-  document.getElementById('takeoff-edit-toolbar').style.display = 'none';
   ensureTakeoffEditLayer().innerHTML = '';
   renderTakeoffInstances(); // show it again in the plain committed layer
   renderTakeoffPane(); // drop the pane row highlight that mirrored edit mode
@@ -4609,10 +4608,11 @@ function setupTakeoffEditInteraction() {
   });
 }
 
-// ---------- Bottom edit toolbar (box vs. brush select mode) ----------
-// Only shown while editingInstance is set (see enterTakeoffEditMode /
-// exitTakeoffEditMode) - box/brush is purely a selection-tool choice, not
-// something meaningful outside point/segment editing.
+// ---------- Box vs. brush select mode, inside the shared #takeoff-toolbar ----------
+// #takeoff-edit-select-group's own visibility (only while editingInstance is
+// set - see updateTakeoffToolbar) is independent of the rest of the bar, same
+// as #takeoff-item-actions-group's - box/brush is purely a selection-tool
+// choice, not something meaningful outside point/segment editing.
 // Keeps the Box/Brush buttons' active state and the brush-size control's
 // visibility in sync with takeoffEditSelectMode - shared by entry (both
 // buttons off) and the toggle click handler below.
@@ -4624,16 +4624,11 @@ function syncTakeoffEditModeButtons() {
 }
 
 function setupTakeoffEditToolbar() {
-  // Lets you go straight from reviewing/selecting an already-placed shape
-  // to adding another instance of the same item, without backing out to the
-  // pane first - activateTakeoffItem already calls exitTakeoffEditMode()
-  // itself, so this is a clean handoff from editing into placement.
-  document.getElementById('takeoff-edit-start-btn').addEventListener('click', () => {
-    if (!editingInstance) return;
-    const item = takeoffItems.find((i) => i.id === editingInstance.item_id);
-    if (item) activateTakeoffItem(item);
-  });
-
+  // Going straight from reviewing/selecting an already-placed shape to
+  // adding another instance of the same item is handled by the shared
+  // Start/Stop button in #takeoff-item-actions-group - currentBarItemId()
+  // falls back to editingInstance.item_id, so that one button already covers
+  // this case without a second dedicated Start button.
   const modeGroup = document.getElementById('takeoff-select-mode');
   modeGroup.querySelectorAll('button').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -7100,6 +7095,12 @@ function updateTakeoffToolbar() {
   // controls that don't apply to what's actually happening.
   document.getElementById('takeoff-axis-lock-chip').style.display = placementActive ? '' : 'none';
   document.getElementById('takeoff-snap-points-chip').style.display = placementActive ? '' : 'none';
+  // Box/brush point-select only means something while click-to-edit is
+  // active (editingInstance set) - mutually exclusive with placementActive,
+  // since the committed-instances layer that's clickable to enter edit mode
+  // is itself disabled the moment a placement tool arms (see
+  // renderTakeoffPane's edit-enabled toggle).
+  document.getElementById('takeoff-edit-select-group').style.display = editingInstance ? 'flex' : 'none';
 }
 
 // Rebuilds the <option> list and re-syncs the selected value from current

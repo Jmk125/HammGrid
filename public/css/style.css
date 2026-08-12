@@ -515,10 +515,6 @@ tr.ignored td { opacity: 0.5; }
    underneath, while every button/checkbox stays fully clickable. */
 #takeoff-toolbar { pointer-events: none; }
 #takeoff-toolbar > * { pointer-events: auto; }
-/* Same reasoning as #takeoff-toolbar above - #takeoff-edit-toolbar floats
-   over the canvas during point/segment editing. */
-#takeoff-edit-toolbar { pointer-events: none; }
-#takeoff-edit-toolbar > * { pointer-events: auto; }
 .selection-bar button { border-color: rgba(255,255,255,0.35); background: transparent; color: #fff; }
 .selection-bar button.primary { background: var(--accent); border-color: var(--accent); }
 .selection-bar button:hover:not(:disabled):not(.primary) { background: rgba(255,255,255,0.1); }
