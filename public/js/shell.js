@@ -484,8 +484,18 @@ function exportModal(projectId) {
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
 }
 
-export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, onOverlayClick, sheetHistoryEntry }) {
+export async function renderShell({
+  topbarEl,
+  sidebarEl,
+  projectId,
+  combinedProjectIds,
+  active,
+  me,
+  onOverlayClick,
+  sheetHistoryEntry,
+}) {
   const canManage = me.role === 'admin' || me.role === 'editor';
+  const isCombined = !!combinedProjectIds;
   if (sheetHistoryEntry) recordSheetVisit(projectId, sheetHistoryEntry);
   checkPendingJobs();
   applyTheme(me.settings);
@@ -511,17 +521,29 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
 
   if (!sidebarEl) return;
 
-  const items = [
-    { key: 'viewer', label: 'Sheets', href: `/viewer.html?projectId=${projectId}`, show: true },
-    { key: 'documents', label: 'Documents', href: `/documents.html?projectId=${projectId}`, show: true },
-    { key: 'flags', label: 'Flags', href: `/flags.html?projectId=${projectId}`, show: true },
-    { key: 'invite', label: 'Invite', href: `/shares.html?projectId=${projectId}`, show: canManage },
-    { key: 'activity', label: 'Activity Log', href: `/activity.html?projectId=${projectId}`, show: me.role === 'admin' },
-    { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },
-    { key: 'settings', label: 'Project Settings', href: `/project-settings.html?projectId=${projectId}`, show: canManage },
-    { key: 'takeoffs', label: 'Take-offs', href: `/takeoffs.html?projectId=${projectId}`, show: me.role === 'admin' || !!me.can_takeoff },
-    { key: 'help', label: 'Help', href: `/help.html?projectId=${projectId}`, show: true },
-  ];
+  // "View Multiple" (see dashboard.js) - only the three read-only combined
+  // views (Sheets/Documents/Flags) exist; everything else in the normal
+  // per-project nav (Revisions, Invite, Settings, Take-offs, ...) is a
+  // single-project write action that doesn't apply across several projects
+  // at once, so combined mode gets its own much shorter item list instead of
+  // filtering the single-project one down.
+  const items = isCombined
+    ? [
+        { key: 'viewer', label: 'Sheets', href: `/viewer.html?projectIds=${combinedProjectIds}`, show: true },
+        { key: 'documents', label: 'Documents', href: `/documents.html?projectIds=${combinedProjectIds}`, show: true },
+        { key: 'flags', label: 'Flags', href: `/flags.html?projectIds=${combinedProjectIds}`, show: true },
+      ]
+    : [
+        { key: 'viewer', label: 'Sheets', href: `/viewer.html?projectId=${projectId}`, show: true },
+        { key: 'documents', label: 'Documents', href: `/documents.html?projectId=${projectId}`, show: true },
+        { key: 'flags', label: 'Flags', href: `/flags.html?projectId=${projectId}`, show: true },
+        { key: 'invite', label: 'Invite', href: `/shares.html?projectId=${projectId}`, show: canManage },
+        { key: 'activity', label: 'Activity Log', href: `/activity.html?projectId=${projectId}`, show: me.role === 'admin' },
+        { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },
+        { key: 'settings', label: 'Project Settings', href: `/project-settings.html?projectId=${projectId}`, show: canManage },
+        { key: 'takeoffs', label: 'Take-offs', href: `/takeoffs.html?projectId=${projectId}`, show: me.role === 'admin' || !!me.can_takeoff },
+        { key: 'help', label: 'Help', href: `/help.html?projectId=${projectId}`, show: true },
+      ];
 
   sidebarEl.innerHTML = `
     <nav>

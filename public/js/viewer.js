@@ -557,15 +557,16 @@ document.getElementById('search-filter').addEventListener('input', () => {
 // Combined mode's init - no offline cache/sync involvement at all (see the
 // top-of-file note), no search-term persistence keyed by a single project,
 // no per-project write actions (download-selection, composite creation).
-// Just: shell without a sidebar/single-project nav, the merged filter set,
-// and a live fetch.
+// Just: the short combined sidebar (Sheets/Documents/Flags - see
+// renderShell's combinedProjectIds branch), the merged filter set, and a
+// live fetch.
 async function initCombined(me) {
-  document.getElementById('sidebar').style.display = 'none';
   document.getElementById('sync-status').style.display = 'none';
   await renderShell({
     topbarEl: document.getElementById('topbar'),
-    sidebarEl: undefined,
+    sidebarEl: document.getElementById('sidebar'),
     projectId: undefined,
+    combinedProjectIds,
     active: 'viewer',
     me,
   });

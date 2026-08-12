@@ -654,12 +654,12 @@ async function loadCombinedProjectNames() {
   if (!currentUser) return;
 
   if (combinedMode) {
-    document.getElementById('sidebar').style.display = 'none';
     document.getElementById('doc-project-col').style.display = '';
     await renderShell({
       topbarEl: document.getElementById('topbar'),
-      sidebarEl: undefined,
+      sidebarEl: document.getElementById('sidebar'),
       projectId: undefined,
+      combinedProjectIds,
       active: 'documents',
       me: currentUser,
     });

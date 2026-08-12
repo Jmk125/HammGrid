@@ -213,7 +213,6 @@ function setupControls() {
 }
 
 async function setupCombinedHeader() {
-  document.getElementById('sidebar').style.display = 'none';
   document.getElementById('flags-sort-project').style.display = '';
   const ids = new Set(combinedProjectIds.split(',').map((s) => s.trim()));
   try {
@@ -231,14 +230,14 @@ async function setupCombinedHeader() {
 (async function init() {
   const me = await requireSession();
   if (!me) return;
-  // Combined mode has no single project, so none of the shell's
-  // per-project sidebar links (Sheets/Documents/Revisions/...) apply here -
-  // this page skips the sidebar entirely (see setupCombinedHeader) rather
-  // than showing links that would 404 on a missing projectId.
+  // Combined mode gets its own short sidebar (Sheets/Documents/Flags only -
+  // see renderShell's combinedProjectIds branch) instead of the normal
+  // per-project nav, which doesn't apply across several projects at once.
   await renderShell({
     topbarEl: document.getElementById('topbar'),
-    sidebarEl: combinedMode ? undefined : document.getElementById('sidebar'),
+    sidebarEl: document.getElementById('sidebar'),
     projectId: combinedMode ? undefined : projectId,
+    combinedProjectIds: combinedMode ? combinedProjectIds : undefined,
     active: 'flags',
     me,
   });
