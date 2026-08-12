@@ -1,6 +1,14 @@
 import { renderShell, confirmModal, showToast } from '/js/shell.js';
 
-const projectId = new URLSearchParams(window.location.search).get('projectId');
+const params = new URLSearchParams(window.location.search);
+const projectId = params.get('projectId');
+// "View Multiple" (see dashboard.js) - a comma-separated set of project ids
+// instead of a single one means this is the combined-view flavor of this
+// page: flags from every listed project, merged, each still linking back
+// into its own real project (see goToUrl) rather than any of this being a
+// real merged project.
+const combinedProjectIds = params.get('projectIds');
+const combinedMode = !!combinedProjectIds;
 
 let allFlags = [];
 let searchTerm = '';
@@ -13,9 +21,14 @@ function escapeHtml(str) {
 }
 
 function goToUrl(flag) {
+  // The combined endpoint annotates every flag with its real project_id
+  // (see flagsCombined.routes.js) - the single-project endpoint doesn't
+  // bother, since there's only ever the one project this page is already
+  // scoped to, so this falls back to that.
+  const flagProjectId = flag.project_id || projectId;
   return flag.location_type === 'document'
     ? `/document-view.html?documentId=${flag.target_document_id}&flagId=${flag.id}`
-    : `/sheet.html?projectId=${projectId}&sheetId=${flag.target_sheet_id}&flagId=${flag.id}`;
+    : `/sheet.html?projectId=${flagProjectId}&sheetId=${flag.target_sheet_id}&flagId=${flag.id}`;
 }
 
 function locationLabel(flag) {
@@ -49,7 +62,9 @@ function populateTagFilter() {
 }
 
 async function loadFlags() {
-  const { flags } = await api('GET', `/api/projects/${projectId}/flags`);
+  const { flags } = combinedMode
+    ? await api('GET', `/api/flags/combined?projectIds=${combinedProjectIds}`)
+    : await api('GET', `/api/projects/${projectId}/flags`);
   allFlags = flags;
   populateTagFilter();
   ensureTagDatalist();
@@ -64,7 +79,8 @@ function visibleFlags() {
         (f.geometry.description || '').toLowerCase().includes(searchTerm) ||
         (f.geometry.comment || '').toLowerCase().includes(searchTerm) ||
         (f.geometry.tags || []).some((t) => t.toLowerCase().includes(searchTerm)) ||
-        f.location.toLowerCase().includes(searchTerm)
+        f.location.toLowerCase().includes(searchTerm) ||
+        (combinedMode && (f.project_name || '').toLowerCase().includes(searchTerm))
     );
   }
   if (tagFilter) filtered = filtered.filter((f) => (f.geometry.tags || []).includes(tagFilter));
@@ -72,6 +88,8 @@ function visibleFlags() {
     let cmp;
     if (sortState.column === 'tag') {
       cmp = (a.geometry.tags || []).join(', ').localeCompare((b.geometry.tags || []).join(', '));
+    } else if (sortState.column === 'project') {
+      cmp = (a.project_name || '').localeCompare(b.project_name || '') || a.location.localeCompare(b.location, undefined, { numeric: true });
     } else {
       cmp = a.location.localeCompare(b.location, undefined, { numeric: true });
     }
@@ -84,6 +102,10 @@ function renderSortHeaders() {
   document.getElementById('flags-sort-drawing').innerHTML =
     sortState.column === 'location' ? `Location ${sortState.dir === 'asc' ? '&#9662;' : '&#9652;'}` : 'Location';
   document.getElementById('flags-sort-tag').innerHTML = sortState.column === 'tag' ? `Tag ${sortState.dir === 'asc' ? '&#9662;' : '&#9652;'}` : 'Tag';
+  if (combinedMode) {
+    document.getElementById('flags-sort-project').innerHTML =
+      sortState.column === 'project' ? `Project ${sortState.dir === 'asc' ? '&#9662;' : '&#9652;'}` : 'Project';
+  }
 }
 
 function renderTable() {
@@ -101,6 +123,7 @@ function renderTable() {
 
     if (editing) {
       tr.innerHTML = `
+        ${combinedMode ? `<td>${escapeHtml(flag.project_name || '')}</td>` : ''}
         <td><a href="${url}">${locationLabel(flag)}</a></td>
         <td><input type="text" class="flags-desc-input" style="width:100%;" value="${escapeHtml(flag.geometry.description || '')}"></td>
         <td><textarea class="flags-comment-input" rows="2" style="width:100%;">${escapeHtml(flag.geometry.comment || '')}</textarea></td>
@@ -135,6 +158,7 @@ function renderTable() {
       });
     } else {
       tr.innerHTML = `
+        ${combinedMode ? `<td>${escapeHtml(flag.project_name || '')}</td>` : ''}
         <td><a href="${url}">${locationLabel(flag)}</a></td>
         <td>${escapeHtml(flag.geometry.description || '')}</td>
         <td>${escapeHtml(flag.geometry.comment || '')}</td>
@@ -184,19 +208,41 @@ function setupControls() {
   });
   document.getElementById('flags-sort-drawing').addEventListener('click', () => setSort('location'));
   document.getElementById('flags-sort-tag').addEventListener('click', () => setSort('tag'));
+  if (combinedMode) document.getElementById('flags-sort-project').addEventListener('click', () => setSort('project'));
   renderSortHeaders();
+}
+
+async function setupCombinedHeader() {
+  document.getElementById('sidebar').style.display = 'none';
+  document.getElementById('flags-sort-project').style.display = '';
+  const ids = new Set(combinedProjectIds.split(',').map((s) => s.trim()));
+  try {
+    const { projects } = await api('GET', '/api/projects');
+    const names = projects.filter((p) => ids.has(String(p.id))).map((p) => p.name);
+    document.getElementById('flags-title').textContent = 'Flags — Combined view';
+    document.getElementById('flags-subtitle').textContent = names.length
+      ? `Every flagged item across: ${names.join(', ')}.`
+      : "Every flagged item across the projects you're viewing.";
+  } catch (err) {
+    document.getElementById('flags-title').textContent = 'Flags — Combined view';
+  }
 }
 
 (async function init() {
   const me = await requireSession();
   if (!me) return;
+  // Combined mode has no single project, so none of the shell's
+  // per-project sidebar links (Sheets/Documents/Revisions/...) apply here -
+  // this page skips the sidebar entirely (see setupCombinedHeader) rather
+  // than showing links that would 404 on a missing projectId.
   await renderShell({
     topbarEl: document.getElementById('topbar'),
-    sidebarEl: document.getElementById('sidebar'),
-    projectId,
+    sidebarEl: combinedMode ? undefined : document.getElementById('sidebar'),
+    projectId: combinedMode ? undefined : projectId,
     active: 'flags',
     me,
   });
+  if (combinedMode) await setupCombinedHeader();
   setupControls();
   await loadFlags();
 })();

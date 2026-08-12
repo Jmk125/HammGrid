@@ -11,6 +11,11 @@
     <div id="project-grid" class="project-grid"></div>
     <p class="muted" id="empty-msg" style="display:none;">No projects yet.</p>
   </main>
+  <div id="project-selection-bar" class="selection-bar" style="display:none;">
+    <span id="project-selection-count" class="muted">0 selected</span>
+    <button type="button" class="primary" id="project-selection-view-btn" disabled>View Projects</button>
+    <button type="button" id="project-selection-cancel-btn">Cancel</button>
+  </div>
   <script src="/js/api.js"></script>
   <script type="module" src="/js/dashboard.js"></script>
   <script type="module" src="/js/pwa.js"></script>

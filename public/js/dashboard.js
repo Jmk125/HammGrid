@@ -3,12 +3,21 @@ import { openModal, closeModal, checkPendingJobs, renderNetworkIndicator, render
 
 let me;
 
+// "View Multiple" (see spawn of the combined-flags feature) - lets several
+// related-but-separate projects (e.g. four demo packages for the same school
+// district) be reviewed as one merged Flags list without actually merging
+// them as projects. Purely a client-side selection; nothing persists.
+let selectionMode = false;
+let selectedProjectIds = new Set();
+let lastProjects = [];
+
 function renderTopbar() {
   applyTheme(me.settings);
   const topbar = document.getElementById('topbar');
   topbar.innerHTML = `
     <a class="brand" href="/dashboard.html">HammGrid</a>
     <div class="row topbar-actions">
+      <button id="view-multiple-btn" type="button">View Multiple</button>
       ${me.role === 'admin' ? '<button id="new-project-btn" type="button">New Project</button>' : ''}
       <div id="user-menu-slot"></div>
     </div>
@@ -17,6 +26,7 @@ function renderTopbar() {
   renderNetworkIndicator(topbar.querySelector('.topbar-actions'));
   const newBtn = topbar.querySelector('#new-project-btn');
   if (newBtn) newBtn.addEventListener('click', openNewProjectModal);
+  topbar.querySelector('#view-multiple-btn').addEventListener('click', () => setSelectionMode(true));
 }
 
 function openNewProjectModal() {
@@ -76,36 +86,31 @@ async function updateProjectCardSync(card, project) {
   }
 }
 
-async function loadProjects() {
-  let projects;
-  let offline = false;
-  try {
-    ({ projects } = await api('GET', '/api/projects'));
-    await cacheProjectList(projects);
-  } catch (err) {
-    // No network (or the request otherwise failed) - fall back to whatever
-    // was cached the last time this succeeded online. If this device has
-    // never loaded the dashboard online at all, this is just an empty
-    // list - see the empty-msg wording below for why that's called out
-    // separately from "you genuinely have zero projects".
-    offline = true;
-    projects = await getCachedProjectList();
-  }
+let lastOffline = false;
+
+function renderProjectGrid() {
+  const projects = lastProjects;
   const grid = document.getElementById('project-grid');
   grid.innerHTML = '';
   const emptyMsg = document.getElementById('empty-msg');
   emptyMsg.style.display = projects.length ? 'none' : '';
   emptyMsg.textContent =
-    offline && projects.length === 0
+    lastOffline && projects.length === 0
       ? 'No projects cached for offline use yet - open the dashboard once while online first.'
       : 'No projects yet.';
 
   for (const p of projects) {
-    const a = document.createElement('a');
-    a.className = 'project-card';
-    a.href = `/viewer.html?projectId=${p.id}`;
+    const selected = selectedProjectIds.has(p.id);
+    // Selection mode swaps the card from a navigating <a> to a
+    // non-navigating <div>, same treatment as viewer.js's sheet cards -
+    // simpler than suppressing the <a>'s default click, and avoids any
+    // chance of a stray navigation on touch.
+    const a = document.createElement(selectionMode ? 'div' : 'a');
+    a.className = 'project-card' + (selectionMode ? ' selectable' : '') + (selected ? ' selected' : '');
+    if (!selectionMode) a.href = `/viewer.html?projectId=${p.id}`;
     const metaParts = [p.number, p.location, p.size].filter(Boolean).join(' &middot; ');
     a.innerHTML = `
+      ${selectionMode ? `<span class="card-checkbox"><input type="checkbox" tabindex="-1" ${selected ? 'checked' : ''}><span class="checkmark"></span></span>` : ''}
       <div class="thumb-wrap">
         ${p.first_thumbnail_url ? `<img src="${p.first_thumbnail_url}">` : '<span class="placeholder">No drawings yet</span>'}
       </div>
@@ -127,15 +132,67 @@ async function loadProjects() {
         img.replaceWith(placeholder);
       });
     }
+    if (selectionMode) {
+      a.addEventListener('click', () => toggleProjectSelection(p.id, a));
+    }
     grid.appendChild(a);
     updateProjectCardSync(a, p);
   }
+  if (selectionMode) updateProjectSelectionBar();
+}
+
+async function loadProjects() {
+  try {
+    ({ projects: lastProjects } = await api('GET', '/api/projects'));
+    await cacheProjectList(lastProjects);
+    lastOffline = false;
+  } catch (err) {
+    // No network (or the request otherwise failed) - fall back to whatever
+    // was cached the last time this succeeded online. If this device has
+    // never loaded the dashboard online at all, this is just an empty
+    // list - see the empty-msg wording below for why that's called out
+    // separately from "you genuinely have zero projects".
+    lastOffline = true;
+    lastProjects = await getCachedProjectList();
+  }
+  renderProjectGrid();
+}
+
+function toggleProjectSelection(projectId, cardEl) {
+  const nowSelected = !selectedProjectIds.has(projectId);
+  if (nowSelected) selectedProjectIds.add(projectId);
+  else selectedProjectIds.delete(projectId);
+  cardEl.classList.toggle('selected', nowSelected);
+  cardEl.querySelector('input[type="checkbox"]').checked = nowSelected;
+  updateProjectSelectionBar();
+}
+
+function updateProjectSelectionBar() {
+  const count = selectedProjectIds.size;
+  document.getElementById('project-selection-count').textContent = count === 1 ? '1 selected' : `${count} selected`;
+  document.getElementById('project-selection-view-btn').disabled = count === 0;
+}
+
+function setSelectionMode(on) {
+  selectionMode = on;
+  document.getElementById('project-selection-bar').style.display = on ? '' : 'none';
+  if (!on) selectedProjectIds.clear();
+  renderProjectGrid();
+}
+
+function setupProjectSelectionBar() {
+  document.getElementById('project-selection-cancel-btn').addEventListener('click', () => setSelectionMode(false));
+  document.getElementById('project-selection-view-btn').addEventListener('click', () => {
+    if (selectedProjectIds.size === 0) return;
+    window.location.href = `/flags.html?projectIds=${[...selectedProjectIds].join(',')}`;
+  });
 }
 
 (async function init() {
   me = await requireSession();
   if (!me) return;
   renderTopbar();
+  setupProjectSelectionBar();
   await loadProjects();
   checkPendingJobs();
 })();

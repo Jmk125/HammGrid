@@ -10,8 +10,8 @@
     <div class="sidebar" id="sidebar"></div>
     <div class="shell-content">
       <main class="wide">
-        <h1>Flags</h1>
-        <p class="muted">Every flagged item across this project's drawings and documents.</p>
+        <h1 id="flags-title">Flags</h1>
+        <p class="muted" id="flags-subtitle">Every flagged item across this project's drawings and documents.</p>
 
         <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
           <div class="row">
@@ -26,6 +26,7 @@
           <table id="flags-table">
             <thead>
               <tr>
+                <th id="flags-sort-project" data-sort="project" style="cursor:pointer; display:none;">Project</th>
                 <th id="flags-sort-drawing" data-sort="location" style="cursor:pointer;">Location &#9662;</th>
                 <th>Description</th>
                 <th>Comment</th>

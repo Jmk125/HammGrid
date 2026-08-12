@@ -32,6 +32,7 @@ const takeoffAssemblyTemplatesRoutes = require('./routes/takeoffAssemblyTemplate
 const takeoffAssembliesRoutes = require('./routes/takeoffAssemblies.routes');
 const markupByIdRoutes = require('./routes/markupById.routes');
 const flagsRoutes = require('./routes/flags.routes');
+const flagsCombinedRoutes = require('./routes/flagsCombined.routes');
 const syncRoutes = require('./routes/sync.routes');
 const sharesRoutes = require('./routes/shares.routes');
 const shareAccessRoutes = require('./routes/shareAccess.routes');
@@ -88,6 +89,7 @@ app.use('/api/sheets/:sheetId/markups', markupsRoutes);
 app.use('/api/documents/:documentId/markups', documentMarkupsRoutes);
 app.use('/api/markups', markupByIdRoutes);
 app.use('/api/projects/:projectId/flags', flagsRoutes);
+app.use('/api/flags/combined', flagsCombinedRoutes);
 app.use('/api/projects/:projectId/sync', syncRoutes);
 app.use('/api/projects/:projectId/shares', sharesRoutes);
 app.use('/api/share', shareAccessRoutes);
