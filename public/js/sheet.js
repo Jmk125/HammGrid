@@ -135,7 +135,7 @@ let currentPdfPage = null;
 let currentViewport = null;
 let activeSearchTerm = localStorage.getItem(searchStorageKey()) || '';
 
-// ---------- Frozen reference panes ("press F") ----------
+// ---------- Frozen reference panes ("press P") ----------
 // Session-only scratch space - never persisted, never sent to the server.
 // A pane is a screen-anchored (not sheet-anchored) snapshot of the PDF
 // render, so panning/zooming the main drawing never moves it.
@@ -2547,7 +2547,7 @@ function getMeasureSvgPoint(evt) {
   };
 }
 
-// ---------- Frozen reference panes ("press F") ----------
+// ---------- Frozen reference panes ("press P") ----------
 // Disarms whatever's currently active first (same convention as
 // armScaleZoneDraw) so a stray click doesn't also drop a take-off point or
 // measure vertex on the same canvas.
@@ -2972,7 +2972,7 @@ function setupFreezePaneTool() {
       disarmFreezePane();
       return;
     }
-    if (e.key.toLowerCase() !== 'f' || freezeArmed) return;
+    if (e.key.toLowerCase() !== 'p' || freezeArmed) return;
     const tag = document.activeElement && document.activeElement.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (markupsController && markupsController.isToolActive()) return;

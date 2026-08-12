@@ -790,7 +790,7 @@ export function initMarkups({
     { tool: 'cloud-small', icon: TOOL_ICONS.cloud, badge: 'S', title: 'Cloud (small)' },
     { tool: 'cloud-large', icon: TOOL_ICONS.cloud, badge: 'L', title: 'Cloud (large)' },
     { tool: 'text', icon: TOOL_ICONS.text, title: 'Text' },
-    { tool: 'flag', icon: TOOL_ICONS.flag, title: 'Flag' },
+    { tool: 'flag', icon: TOOL_ICONS.flag, title: 'Flag (F)' },
   ];
   const toolGrid = document.getElementById('tool-grid');
   for (const def of TOOL_DEFS) {
@@ -807,6 +807,16 @@ export function initMarkups({
   }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') activateTool('select');
+    // One-shot shortcut for the Flag tool, same toggle-off-if-already-active
+    // behavior as clicking its icon (see the tool-grid click handler above).
+    // Frozen reference panes used to own "F" (see sheet.js's
+    // setupFreezePaneTool) - moved to "P" so F could mean Flag instead,
+    // since flagging is the more frequent action.
+    if (e.key.toLowerCase() === 'f') {
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      activateTool(activeTool === 'flag' ? 'select' : 'flag');
+    }
   });
   activateTool('select');
 
