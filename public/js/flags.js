@@ -26,9 +26,12 @@ function goToUrl(flag) {
   // bother, since there's only ever the one project this page is already
   // scoped to, so this falls back to that.
   const flagProjectId = flag.project_id || projectId;
-  return flag.location_type === 'document'
-    ? `/document-view.html?documentId=${flag.target_document_id}&flagId=${flag.id}`
-    : `/sheet.html?projectId=${flagProjectId}&sheetId=${flag.target_sheet_id}&flagId=${flag.id}`;
+  if (flag.location_type === 'document') return `/document-view.html?documentId=${flag.target_document_id}&flagId=${flag.id}`;
+  // In combined mode, carry the origin project set along so sheet.html's own
+  // "Sheets" sidebar link (see shell.js) returns to this combined flags list
+  // instead of just the one project this particular flag's sheet is in.
+  const combinedSuffix = combinedMode ? `&combinedProjectIds=${combinedProjectIds}` : '';
+  return `/sheet.html?projectId=${flagProjectId}&sheetId=${flag.target_sheet_id}&flagId=${flag.id}${combinedSuffix}`;
 }
 
 function locationLabel(flag) {

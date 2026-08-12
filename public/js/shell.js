@@ -284,11 +284,12 @@ function rotateSheetHistoryTo(projectId, sheetId) {
   return rotated;
 }
 
-function sheetHref(projectId, sheetId) {
-  return `/sheet.html?projectId=${encodeURIComponent(projectId)}&sheetId=${encodeURIComponent(sheetId)}`;
+function sheetHref(projectId, sheetId, combinedProjectIds) {
+  const url = `/sheet.html?projectId=${encodeURIComponent(projectId)}&sheetId=${encodeURIComponent(sheetId)}`;
+  return combinedProjectIds ? `${url}&combinedProjectIds=${encodeURIComponent(combinedProjectIds)}` : url;
 }
 
-function renderSheetHistoryControls(topbarEl, projectId) {
+function renderSheetHistoryControls(topbarEl, projectId, combinedProjectIds) {
   if (!projectId) return;
   const history = getSheetHistory(projectId);
   const rightRow = topbarEl.querySelector('.topbar-actions');
@@ -305,7 +306,7 @@ function renderSheetHistoryControls(topbarEl, projectId) {
     if (latest.length < 2) return;
     const target = latest[1];
     saveSheetHistory(projectId, [...latest.slice(1), latest[0]].slice(0, SHEET_HISTORY_LIMIT));
-    window.location.href = sheetHref(projectId, target.sheetId);
+    window.location.href = sheetHref(projectId, target.sheetId, combinedProjectIds);
   });
 
   const wrap = document.createElement('div');
@@ -325,7 +326,7 @@ function renderSheetHistoryControls(topbarEl, projectId) {
   } else {
     for (const [idx, item] of history.entries()) {
       const a = document.createElement('a');
-      a.href = sheetHref(projectId, item.sheetId);
+      a.href = sheetHref(projectId, item.sheetId, combinedProjectIds);
       a.innerHTML = `<b>${escapeHtml(item.sheetNumber)}</b>${item.title ? `<span>${escapeHtml(item.title)}</span>` : ''}`;
       a.addEventListener('click', (e) => {
         e.preventDefault();
@@ -513,7 +514,7 @@ export async function renderShell({
   `;
   renderUserMenu(topbarEl.querySelector('#user-menu-slot'), me);
   renderNetworkIndicator(topbarEl.querySelector('.topbar-actions'));
-  if (active === 'viewer' && projectId) renderSheetHistoryControls(topbarEl, projectId);
+  if (active === 'viewer' && projectId) renderSheetHistoryControls(topbarEl, projectId, combinedProjectIds);
   const newRevBtn = topbarEl.querySelector('#new-revision-btn');
   if (newRevBtn) newRevBtn.addEventListener('click', () => newRevisionModal(projectId));
   const overlayBtn = topbarEl.querySelector('#overlay-btn');
@@ -521,29 +522,42 @@ export async function renderShell({
 
   if (!sidebarEl) return;
 
-  // "View Multiple" (see dashboard.js) - only the three read-only combined
-  // views (Sheets/Documents/Flags) exist; everything else in the normal
-  // per-project nav (Revisions, Invite, Settings, Take-offs, ...) is a
-  // single-project write action that doesn't apply across several projects
-  // at once, so combined mode gets its own much shorter item list instead of
-  // filtering the single-project one down.
-  const items = isCombined
-    ? [
-        { key: 'viewer', label: 'Sheets', href: `/viewer.html?projectIds=${combinedProjectIds}`, show: true },
-        { key: 'documents', label: 'Documents', href: `/documents.html?projectIds=${combinedProjectIds}`, show: true },
-        { key: 'flags', label: 'Flags', href: `/flags.html?projectIds=${combinedProjectIds}`, show: true },
-      ]
-    : [
-        { key: 'viewer', label: 'Sheets', href: `/viewer.html?projectId=${projectId}`, show: true },
-        { key: 'documents', label: 'Documents', href: `/documents.html?projectId=${projectId}`, show: true },
-        { key: 'flags', label: 'Flags', href: `/flags.html?projectId=${projectId}`, show: true },
-        { key: 'invite', label: 'Invite', href: `/shares.html?projectId=${projectId}`, show: canManage },
-        { key: 'activity', label: 'Activity Log', href: `/activity.html?projectId=${projectId}`, show: me.role === 'admin' },
-        { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },
-        { key: 'settings', label: 'Project Settings', href: `/project-settings.html?projectId=${projectId}`, show: canManage },
-        { key: 'takeoffs', label: 'Take-offs', href: `/takeoffs.html?projectId=${projectId}`, show: me.role === 'admin' || !!me.can_takeoff },
-        { key: 'help', label: 'Help', href: `/help.html?projectId=${projectId}`, show: true },
-      ];
+  // "View Multiple" (see dashboard.js) - Sheets/Documents/Flags have combined
+  // flavors, so their links point back to the combined URL whenever there's
+  // a combined origin (either this page IS one of the three combined views,
+  // or it's a real single-project page - e.g. sheet.html - reached BY
+  // clicking into it FROM a combined view; see sheet.js threading
+  // combinedProjectIds through its own links for that second case). Without
+  // that second case, following "Sheets" from a sheet you reached via
+  // combined browsing would silently drop you back into a single-project
+  // grid instead of returning to the combined one you came from.
+  const viewerHref = isCombined ? `/viewer.html?projectIds=${combinedProjectIds}` : `/viewer.html?projectId=${projectId}`;
+  const documentsHref = isCombined ? `/documents.html?projectIds=${combinedProjectIds}` : `/documents.html?projectId=${projectId}`;
+  const flagsHref = isCombined ? `/flags.html?projectIds=${combinedProjectIds}` : `/flags.html?projectId=${projectId}`;
+
+  // Genuinely on one of the three combined views themselves (no real single
+  // project at all) gets just those three - Revisions/Invite/Settings/
+  // Take-offs/etc. are single-project write actions that don't apply across
+  // several projects at once. A real single-project page (projectId set)
+  // keeps the full list regardless of how it was reached.
+  const items =
+    isCombined && !projectId
+      ? [
+          { key: 'viewer', label: 'Sheets', href: viewerHref, show: true },
+          { key: 'documents', label: 'Documents', href: documentsHref, show: true },
+          { key: 'flags', label: 'Flags', href: flagsHref, show: true },
+        ]
+      : [
+          { key: 'viewer', label: 'Sheets', href: viewerHref, show: true },
+          { key: 'documents', label: 'Documents', href: documentsHref, show: true },
+          { key: 'flags', label: 'Flags', href: flagsHref, show: true },
+          { key: 'invite', label: 'Invite', href: `/shares.html?projectId=${projectId}`, show: canManage },
+          { key: 'activity', label: 'Activity Log', href: `/activity.html?projectId=${projectId}`, show: me.role === 'admin' },
+          { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },
+          { key: 'settings', label: 'Project Settings', href: `/project-settings.html?projectId=${projectId}`, show: canManage },
+          { key: 'takeoffs', label: 'Take-offs', href: `/takeoffs.html?projectId=${projectId}`, show: me.role === 'admin' || !!me.can_takeoff },
+          { key: 'help', label: 'Help', href: `/help.html?projectId=${projectId}`, show: true },
+        ];
 
   sidebarEl.innerHTML = `
     <nav>

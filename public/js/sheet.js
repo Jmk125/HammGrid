@@ -50,6 +50,21 @@ const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
 const sheetId = params.get('sheetId');
 const flagIdParam = params.get('flagId');
+// Set only when this sheet was opened FROM a "View Multiple" combined view
+// (see viewer.js/flags.js appending it to their sheet.html links) - passed
+// through to renderShell so the sidebar's Sheets/Documents/Flags links
+// return to that combined view instead of this sheet's own single project.
+const combinedProjectIds = params.get('combinedProjectIds');
+
+// Every same-tab sheet.html -> sheet.html jump within this file (tab strip,
+// prev/next, sheet-links, composite fragment jump) stays within this same
+// project, so it just needs combinedProjectIds carried along unchanged -
+// otherwise the very first "next sheet" click after arriving from a
+// combined view would silently drop back to single-project mode.
+function sheetUrl(targetSheetId) {
+  const url = `/sheet.html?projectId=${encodeURIComponent(projectId)}&sheetId=${encodeURIComponent(targetSheetId)}`;
+  return combinedProjectIds ? `${url}&combinedProjectIds=${encodeURIComponent(combinedProjectIds)}` : url;
+}
 
 let markupsController = null;
 let currentSheet = null;
@@ -194,7 +209,7 @@ function renderTabStrip() {
     }
     btn.addEventListener('click', () => {
       if (String(tab.sheetId) === String(sheetId)) return;
-      window.location.href = `/sheet.html?projectId=${projectId}&sheetId=${tab.sheetId}`;
+      window.location.href = sheetUrl(tab.sheetId);
     });
     strip.appendChild(btn);
   });
@@ -207,7 +222,7 @@ function closeTab(index) {
   saveOpenTabs(tabs);
   if (wasActive) {
     const prev = tabs[Math.max(0, index - 1)];
-    window.location.href = `/sheet.html?projectId=${projectId}&sheetId=${prev.sheetId}`;
+    window.location.href = sheetUrl(prev.sheetId);
   } else {
     renderTabStrip();
   }
@@ -1505,7 +1520,7 @@ function renderSheetLinks(links, token) {
     hotspot.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      window.location.href = `/sheet.html?projectId=${projectId}&sheetId=${link.target_sheet_id}`;
+      window.location.href = sheetUrl(link.target_sheet_id);
     });
     // Right-click opens the linked sheet in a new tab instead of navigating
     // away - same window.open(sheet.html, '_blank') pattern documents.js
@@ -1607,10 +1622,10 @@ function setupSheetNavButtons() {
   backBtn.disabled = idx <= 0;
   forwardBtn.disabled = idx >= order.length - 1;
   backBtn.addEventListener('click', () => {
-    if (idx > 0) window.location.href = `/sheet.html?projectId=${encodeURIComponent(projectId)}&sheetId=${encodeURIComponent(order[idx - 1])}`;
+    if (idx > 0) window.location.href = sheetUrl(order[idx - 1]);
   });
   forwardBtn.addEventListener('click', () => {
-    if (idx < order.length - 1) window.location.href = `/sheet.html?projectId=${encodeURIComponent(projectId)}&sheetId=${encodeURIComponent(order[idx + 1])}`;
+    if (idx < order.length - 1) window.location.href = sheetUrl(order[idx + 1]);
   });
 }
 
@@ -3882,7 +3897,7 @@ function showSheetLinkContextMenu(x, y, targetSheetId) {
   menu.id = 'takeoff-context-menu';
   menu.style.left = `${x}px`;
   menu.style.top = `${y}px`;
-  const url = `/sheet.html?projectId=${projectId}&sheetId=${targetSheetId}`;
+  const url = sheetUrl(targetSheetId);
   menu.innerHTML = `
     <button type="button" data-action="tab">Open in new tab</button>
     <button type="button" data-action="window">Open in new window</button>
@@ -7430,6 +7445,7 @@ async function loadSheetOffline() {
       topbarEl: document.getElementById('topbar'),
       sidebarEl: document.getElementById('sidebar'),
       projectId,
+      combinedProjectIds,
       active: 'viewer',
       me,
     });
@@ -7454,6 +7470,7 @@ async function loadSheetOffline() {
       topbarEl: document.getElementById('topbar'),
       sidebarEl: document.getElementById('sidebar'),
       projectId,
+      combinedProjectIds,
       active: 'viewer',
       me,
       onOverlayClick: openOverlayPicker,

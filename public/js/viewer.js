@@ -206,7 +206,14 @@ function renderGrid(items) {
     // behavior - simpler and avoids any chance of a stray navigation on touch.
     const card = document.createElement(selectionMode ? 'div' : 'a');
     card.className = 'sheet-card' + (selectionMode ? ' selectable' : '') + (selected ? ' selected' : '');
-    if (!selectionMode) card.href = `/sheet.html?projectId=${combinedMode ? s.project_id : projectId}&sheetId=${s.sheet_id}`;
+    if (!selectionMode) {
+      // In combined mode, carry the origin project set along so sheet.html's
+      // own "Sheets" sidebar link (see shell.js) returns to this combined
+      // grid instead of just the one project this particular sheet is in.
+      card.href = combinedMode
+        ? `/sheet.html?projectId=${s.project_id}&sheetId=${s.sheet_id}&combinedProjectIds=${combinedProjectIds}`
+        : `/sheet.html?projectId=${projectId}&sheetId=${s.sheet_id}`;
+    }
     card.innerHTML = `
       ${selectionMode ? `<span class="card-checkbox"><input type="checkbox" tabindex="-1" ${selected ? 'checked' : ''}><span class="checkmark"></span></span>` : ''}
       <div class="thumb-wrap"><img src="${s.thumbSrc}" loading="lazy"></div>

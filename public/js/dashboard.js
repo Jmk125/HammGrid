@@ -184,7 +184,7 @@ function setupProjectSelectionBar() {
   document.getElementById('project-selection-cancel-btn').addEventListener('click', () => setSelectionMode(false));
   document.getElementById('project-selection-view-btn').addEventListener('click', () => {
     if (selectedProjectIds.size === 0) return;
-    window.location.href = `/flags.html?projectIds=${[...selectedProjectIds].join(',')}`;
+    window.location.href = `/viewer.html?projectIds=${[...selectedProjectIds].join(',')}`;
   });
 }
 
