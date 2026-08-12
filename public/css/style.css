@@ -664,6 +664,7 @@ tr.ignored td { opacity: 0.5; }
 .flags-tag-chip {
   background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
   padding: 3px 10px; font-size: 12px; color: var(--text); white-space: nowrap;
+  display: inline-block; margin: 2px 4px 2px 0;
 }
 .takeoff-name-preview { font-size: 12px; margin-top: 2px; }
 

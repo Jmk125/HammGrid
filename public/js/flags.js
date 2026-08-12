@@ -24,7 +24,7 @@ function locationLabel(flag) {
 }
 
 function allTags() {
-  return [...new Set(allFlags.map((f) => f.geometry.tag).filter(Boolean))].sort();
+  return [...new Set(allFlags.flatMap((f) => f.geometry.tags || []))].sort();
 }
 
 function ensureTagDatalist() {
@@ -63,15 +63,15 @@ function visibleFlags() {
       (f) =>
         (f.geometry.description || '').toLowerCase().includes(searchTerm) ||
         (f.geometry.comment || '').toLowerCase().includes(searchTerm) ||
-        (f.geometry.tag || '').toLowerCase().includes(searchTerm) ||
+        (f.geometry.tags || []).some((t) => t.toLowerCase().includes(searchTerm)) ||
         f.location.toLowerCase().includes(searchTerm)
     );
   }
-  if (tagFilter) filtered = filtered.filter((f) => f.geometry.tag === tagFilter);
+  if (tagFilter) filtered = filtered.filter((f) => (f.geometry.tags || []).includes(tagFilter));
   filtered.sort((a, b) => {
     let cmp;
     if (sortState.column === 'tag') {
-      cmp = (a.geometry.tag || '').localeCompare(b.geometry.tag || '');
+      cmp = (a.geometry.tags || []).join(', ').localeCompare((b.geometry.tags || []).join(', '));
     } else {
       cmp = a.location.localeCompare(b.location, undefined, { numeric: true });
     }
@@ -104,7 +104,7 @@ function renderTable() {
         <td><a href="${url}">${locationLabel(flag)}</a></td>
         <td><input type="text" class="flags-desc-input" style="width:100%;" value="${escapeHtml(flag.geometry.description || '')}"></td>
         <td><textarea class="flags-comment-input" rows="2" style="width:100%;">${escapeHtml(flag.geometry.comment || '')}</textarea></td>
-        <td><input type="text" class="flags-tag-input" list="flags-tag-options" style="width:100%;" value="${escapeHtml(flag.geometry.tag || '')}"></td>
+        <td><input type="text" class="flags-tag-input" list="flags-tag-options" placeholder="Tags (comma-separated)" style="width:100%;" value="${escapeHtml((flag.geometry.tags || []).join(', '))}"></td>
         <td>${escapeHtml(flag.author_name)}</td>
         <td>${created}</td>
         <td class="row" style="gap:6px;">
@@ -118,9 +118,9 @@ function renderTable() {
       const commentInput = tr.querySelector('.flags-comment-input');
       const tagInput = tr.querySelector('.flags-tag-input');
       tr.querySelector('.flags-save-btn').addEventListener('click', async () => {
-        const tag = tagInput.value.trim() || null;
+        const tags = [...new Set(tagInput.value.split(',').map((t) => t.trim()).filter(Boolean))];
         const { markup } = await api('PATCH', `/api/markups/${flag.id}`, {
-          geometry: { ...flag.geometry, description: descInput.value, comment: commentInput.value, tag },
+          geometry: { ...flag.geometry, description: descInput.value, comment: commentInput.value, tags },
         });
         flag.geometry = markup.geometry;
         editingFlagId = null;
@@ -138,7 +138,7 @@ function renderTable() {
         <td><a href="${url}">${locationLabel(flag)}</a></td>
         <td>${escapeHtml(flag.geometry.description || '')}</td>
         <td>${escapeHtml(flag.geometry.comment || '')}</td>
-        <td>${flag.geometry.tag ? `<span class="flags-tag-chip">${escapeHtml(flag.geometry.tag)}</span>` : ''}</td>
+        <td>${(flag.geometry.tags || []).map((t) => `<span class="flags-tag-chip">${escapeHtml(t)}</span>`).join(' ')}</td>
         <td>${escapeHtml(flag.author_name)}</td>
         <td>${created}</td>
         <td class="row" style="gap:6px;">

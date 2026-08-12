@@ -153,7 +153,7 @@ export function initMarkups({
       if (!projectId) return [];
       try {
         const { flags } = await api('GET', `/api/projects/${projectId}/flags`);
-        flagTagsCache = [...new Set(flags.map((f) => f.geometry.tag).filter(Boolean))].sort();
+        flagTagsCache = [...new Set(flags.flatMap((f) => f.geometry.tags || []))].sort();
       } catch (err) {
         flagTagsCache = [];
       }
@@ -609,8 +609,8 @@ export function initMarkups({
       const tagInput = document.createElement('input');
       tagInput.type = 'text';
       tagInput.className = 'markup-popup-flag-tag';
-      tagInput.placeholder = 'Tag';
-      tagInput.value = m.geometry.tag || '';
+      tagInput.placeholder = 'Tags (comma-separated)';
+      tagInput.value = (m.geometry.tags || []).join(', ');
       tagInput.setAttribute('list', 'flag-tag-options');
       tagInput.readOnly = !perm.canEdit;
       popupEl.appendChild(tagInput);
@@ -622,13 +622,14 @@ export function initMarkups({
         saveBtn.textContent = 'Save';
         saveBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
-          const tag = tagInput.value.trim() || null;
+          const tags = [...new Set(tagInput.value.split(',').map((t) => t.trim()).filter(Boolean))];
           const { markup } = await api('PATCH', `/api/markups/${m.id}`, {
-            geometry: { ...m.geometry, description: descInput.value, comment: commentInput.value, tag },
+            geometry: { ...m.geometry, description: descInput.value, comment: commentInput.value, tags },
           });
           Object.assign(m, markup);
-          if (tag && !(flagTagsCache || []).includes(tag)) {
-            flagTagsCache = [...(flagTagsCache || []), tag].sort();
+          const newTags = tags.filter((t) => !(flagTagsCache || []).includes(t));
+          if (newTags.length) {
+            flagTagsCache = [...(flagTagsCache || []), ...newTags].sort();
             renderFlagTagOptions();
           }
           showToast('Flag saved.', 'success');
@@ -913,7 +914,7 @@ export function initMarkups({
     if (type === 'flag') {
       geometry.description = '';
       geometry.comment = '';
-      geometry.tag = null;
+      geometry.tags = [];
       const markup = await createMarkup('flag', geometry, { color: '#f97316', strokeWidth: 2 });
       activateTool('select');
       selectMarkup(markup.id);
