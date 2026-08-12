@@ -11,7 +11,20 @@ const TRASH_ICON =
 const GENERIC_FILE_ICON_SVG =
   '<svg viewBox="0 0 20 20" class="doc-icon"><path d="M5 2h7l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M12 2v4h4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
 
-const projectId = new URLSearchParams(window.location.search).get('projectId');
+const params = new URLSearchParams(window.location.search);
+const projectId = params.get('projectId');
+// "View Multiple" (see dashboard.js) - a comma-separated set of project ids
+// instead of a single one means this is the combined-view flavor of this
+// page: documents from every listed project, merged and view-only (no
+// upload/new-folder/edit-mode/issue-revision/delete). Folders don't
+// translate across projects - each project has its own folder tree, so
+// combined mode skips folders entirely and just shows a flat, project-
+// tagged list. Online-only, same as the combined Sheets grid (see viewer.js).
+const combinedProjectIds = params.get('projectIds');
+const combinedMode = !!combinedProjectIds;
+const combinedIds = combinedMode ? combinedProjectIds.split(',').map((s) => s.trim()) : [];
+let combinedProjectNames = new Map(); // id (string) -> name
+
 let currentUser = null;
 let folders = [];
 let documents = [];
@@ -55,8 +68,26 @@ function formatDateTime(s) {
 }
 
 let loadedOffline = false;
+let combinedLoadFailed = false;
 
 async function loadAll() {
+  if (combinedMode) {
+    folders = [];
+    try {
+      const results = await Promise.all(
+        combinedIds.map((id) => api('GET', `/api/projects/${id}/documents`).then((r) => ({ id, documents: r.documents })))
+      );
+      documents = results.flatMap(({ id, documents: docs }) =>
+        docs.map((d) => ({ ...d, project_id: id, project_name: combinedProjectNames.get(id) || '' }))
+      );
+      combinedLoadFailed = false;
+    } catch (err) {
+      // Online-only mode (see top-of-file note) - no cache to fall back to.
+      documents = [];
+      combinedLoadFailed = true;
+    }
+    return;
+  }
   try {
     const [f, d] = await Promise.all([
       api('GET', `/api/projects/${projectId}/documents/folders`),
@@ -78,6 +109,12 @@ async function loadAll() {
 }
 
 function renderBreadcrumb() {
+  const el = document.getElementById('breadcrumb');
+  if (combinedMode) {
+    const names = [...combinedProjectNames.values()];
+    el.textContent = names.length ? `Documents — Combined view: ${names.join(', ')}` : 'Documents — Combined view';
+    return;
+  }
   const path = [];
   let f = currentFolderId;
   while (f) {
@@ -86,7 +123,6 @@ function renderBreadcrumb() {
     path.unshift(folder);
     f = folder.parent_folder_id;
   }
-  const el = document.getElementById('breadcrumb');
   el.innerHTML =
     `<a href="#" data-folder="">Documents</a>` +
     path.map((p) => `<span class="sep">/</span><a href="#" data-folder="${p.id}">${escapeHtml(p.name)}</a>`).join('');
@@ -99,25 +135,32 @@ function renderBreadcrumb() {
 }
 
 function renderTable() {
-  const canManage = currentUser.role === 'admin' || currentUser.role === 'editor';
+  // Combined mode is view-only regardless of role - see the top-of-file note.
+  const canManage = !combinedMode && (currentUser.role === 'admin' || currentUser.role === 'editor');
   const tbody = document.querySelector('#doc-table tbody');
   tbody.innerHTML = '';
 
-  const childFolders = folders
-    .filter((f) => (f.parent_folder_id || null) === currentFolderId)
-    .sort((a, b) => a.name.localeCompare(b.name));
-  const childDocs = documents
-    .filter((d) => (d.folder_id || null) === currentFolderId)
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // Folders are a per-project tree that can't meaningfully merge across
+  // several projects, so combined mode skips them entirely and shows every
+  // document flat, sorted by project then name (see loadAll).
+  const childFolders = combinedMode
+    ? []
+    : folders.filter((f) => (f.parent_folder_id || null) === currentFolderId).sort((a, b) => a.name.localeCompare(b.name));
+  const childDocs = combinedMode
+    ? documents.slice().sort((a, b) => (a.project_name || '').localeCompare(b.project_name || '') || a.name.localeCompare(b.name))
+    : documents.filter((d) => (d.folder_id || null) === currentFolderId).sort((a, b) => a.name.localeCompare(b.name));
 
   const emptyMsg = document.getElementById('empty-msg');
   const isEmpty = childFolders.length === 0 && childDocs.length === 0;
   emptyMsg.style.display = isEmpty ? '' : 'none';
   if (isEmpty) {
-    emptyMsg.textContent =
-      loadedOffline && folders.length === 0 && documents.length === 0
-        ? 'No documents cached for offline use yet - open this project once while online first.'
-        : 'This folder is empty. Drag & drop PDFs anywhere in this area to upload.';
+    emptyMsg.textContent = combinedMode
+      ? combinedLoadFailed
+        ? "Couldn't load documents for one or more of these projects."
+        : 'No documents in these projects yet.'
+      : loadedOffline && folders.length === 0 && documents.length === 0
+      ? 'No documents cached for offline use yet - open this project once while online first.'
+      : 'This folder is empty. Drag & drop PDFs anywhere in this area to upload.';
   }
 
   for (const f of childFolders) {
@@ -169,6 +212,7 @@ function renderTable() {
       : GENERIC_FILE_ICON_SVG;
     tr.innerHTML = `
       <td>${icon}</td>
+      ${combinedMode ? `<td>${escapeHtml(d.project_name || '')}</td>` : ''}
       <td class="doc-row-name"><a href="/document-view.html?documentId=${d.id}" target="_blank">${escapeHtml(d.name)}</a></td>
       <td>${escapeHtml(d.revision_name) || '<span class="muted">Original</span>'}</td>
       <td>${escapeHtml(d.issue_date) || ''}</td>
@@ -599,9 +643,32 @@ async function uploadFilesBulk(files, folderId) {
   }, 4000);
 }
 
+async function loadCombinedProjectNames() {
+  const { projects } = await api('GET', '/api/projects');
+  const idSet = new Set(combinedIds);
+  combinedProjectNames = new Map(projects.filter((p) => idSet.has(String(p.id))).map((p) => [String(p.id), p.name]));
+}
+
 (async function init() {
   currentUser = await requireSession();
   if (!currentUser) return;
+
+  if (combinedMode) {
+    document.getElementById('sidebar').style.display = 'none';
+    document.getElementById('doc-project-col').style.display = '';
+    await renderShell({
+      topbarEl: document.getElementById('topbar'),
+      sidebarEl: undefined,
+      projectId: undefined,
+      active: 'documents',
+      me: currentUser,
+    });
+    await loadCombinedProjectNames();
+    await loadAll();
+    render();
+    return;
+  }
+
   await renderShell({
     topbarEl: document.getElementById('topbar'),
     sidebarEl: document.getElementById('sidebar'),

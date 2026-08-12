@@ -1,12 +1,25 @@
 import { syncProject, getCachedSheets, getCachedAsset, getProjectSyncInfo, ensureProjectCacheFresh } from '/js/offline-store.js';
 import { renderShell, openModal, closeModal } from '/js/shell.js';
 
-const projectId = new URLSearchParams(window.location.search).get('projectId');
+const params = new URLSearchParams(window.location.search);
+const projectId = params.get('projectId');
+// "View Multiple" (see dashboard.js) - a comma-separated set of project ids
+// instead of a single one means this is the combined-view flavor: sheets
+// from every listed project, merged and view-only. Deliberately online-only
+// (no offline-store caching/sync for this mode) - this is a desk/office
+// review workflow across several related projects, not the field-iPad case
+// the offline story exists for; each individual project's own page keeps
+// full offline support unchanged.
+const combinedProjectIds = params.get('projectIds');
+const combinedMode = !!combinedProjectIds;
+const combinedIds = combinedMode ? combinedProjectIds.split(',').map((s) => s.trim()) : [];
+let combinedProjectNames = new Map(); // id (string) -> name, populated in loadCombinedFilters
 
 let selectionMode = false;
 let selectedIds = new Set();
 let lastFiltered = [];
 let currentProject = null;
+let projectFilterValue = '';
 
 // sheet_ids that matched the last content-search (drawing body text, not
 // metadata) response, or null if no content search has resolved yet for the
@@ -94,6 +107,35 @@ async function loadFilters() {
   }
 }
 
+// Combined mode's equivalent of loadFilters() - no single project name/sync
+// pill, no revision filter (revisions don't merge across projects - every
+// project just always shows its own current published set, same as single
+// mode's default "All (current set)"), and the discipline list comes from
+// whatever renderGrid() discovers in the merged sheets (see
+// addMissingDisciplineOptions) rather than any one project's own
+// discipline_prefix_map, since that can legitimately differ per project.
+async function loadCombinedFilters() {
+  document.getElementById('project-sync-pill').style.display = 'none';
+  document.getElementById('revision-filter-wrap').style.display = 'none';
+  document.getElementById('project-filter-wrap').style.display = '';
+
+  const { projects } = await api('GET', '/api/projects');
+  const idSet = new Set(combinedIds);
+  const selected = projects.filter((p) => idSet.has(String(p.id)));
+  combinedProjectNames = new Map(selected.map((p) => [String(p.id), p.name]));
+  document.getElementById('project-name').textContent = selected.length
+    ? `Combined view — ${selected.map((p) => p.name).join(', ')}`
+    : 'Combined view';
+
+  const projectSelect = document.getElementById('project-filter');
+  for (const p of selected) {
+    const opt = document.createElement('option');
+    opt.value = String(p.id);
+    opt.textContent = p.name;
+    projectSelect.appendChild(opt);
+  }
+}
+
 let lastItems = [];
 
 // discipline_prefix_map only covers the disciplines a project's admin has
@@ -126,8 +168,11 @@ function renderGrid(items) {
   let filtered = items;
   if (discipline) filtered = filtered.filter((s) => s.discipline === discipline);
   if (revisionId) filtered = filtered.filter((s) => String(s.revision_id) === revisionId);
+  if (combinedMode && projectFilterValue) filtered = filtered.filter((s) => String(s.project_id) === projectFilterValue);
   const isMetadataMatch = (s) =>
-    s.sheet_number.toLowerCase().includes(search) || (s.title || '').toLowerCase().includes(search);
+    s.sheet_number.toLowerCase().includes(search) ||
+    (s.title || '').toLowerCase().includes(search) ||
+    (combinedMode && (s.project_name || '').toLowerCase().includes(search));
   if (search) {
     filtered = filtered.filter((s) => isMetadataMatch(s) || (contentMatchIds && contentMatchIds.has(s.sheet_id)));
   }
@@ -145,9 +190,10 @@ function renderGrid(items) {
   });
   lastFiltered = filtered;
   // Read by sheet.js to power the forward/back "cycle through the filtered
-  // set" buttons next to the version dropdown - kept current here since every
-  // discipline/revision/search change already funnels through renderGrid().
-  localStorage.setItem(filteredOrderKey(), JSON.stringify(filtered.map((s) => s.sheet_id)));
+  // set" buttons next to the version dropdown - single-project concept only
+  // (the key itself is scoped by projectId, which combined mode doesn't
+  // have), so skipped there rather than writing a key nothing reads.
+  if (!combinedMode) localStorage.setItem(filteredOrderKey(), JSON.stringify(filtered.map((s) => s.sheet_id)));
 
   const grid = document.getElementById('grid');
   grid.innerHTML = '';
@@ -160,13 +206,14 @@ function renderGrid(items) {
     // behavior - simpler and avoids any chance of a stray navigation on touch.
     const card = document.createElement(selectionMode ? 'div' : 'a');
     card.className = 'sheet-card' + (selectionMode ? ' selectable' : '') + (selected ? ' selected' : '');
-    if (!selectionMode) card.href = `/sheet.html?projectId=${projectId}&sheetId=${s.sheet_id}`;
+    if (!selectionMode) card.href = `/sheet.html?projectId=${combinedMode ? s.project_id : projectId}&sheetId=${s.sheet_id}`;
     card.innerHTML = `
       ${selectionMode ? `<span class="card-checkbox"><input type="checkbox" tabindex="-1" ${selected ? 'checked' : ''}><span class="checkmark"></span></span>` : ''}
       <div class="thumb-wrap"><img src="${s.thumbSrc}" loading="lazy"></div>
       <div class="meta">
         <div class="sheet-number">${s.sheet_number}</div>
         <div class="sheet-title">${s.title || ''}</div>
+        ${combinedMode ? `<div class="sheet-project-badge">${s.project_name || ''}</div>` : ''}
       </div>`;
     if (selectionMode) {
       card.addEventListener('click', () => toggleSheetSelection(s.sheet_id, card));
@@ -432,8 +479,43 @@ async function renderFromLiveApi() {
   );
 }
 
-document.getElementById('discipline-filter').addEventListener('change', renderFromCache);
-document.getElementById('revision-filter').addEventListener('change', renderFromCache);
+// Combined mode's data source - always live (no offline-store involvement,
+// see the top-of-file note on why), one request per selected project fired
+// in parallel and flattened into a single merged list, each sheet tagged
+// with the project it actually belongs to.
+async function renderFromCombinedLiveApi() {
+  const results = await Promise.all(
+    combinedIds.map((id) =>
+      api('GET', `/api/projects/${id}/sheets`).then(({ sheets }) => ({ id, sheets }))
+    )
+  );
+  const items = results.flatMap(({ id, sheets }) =>
+    sheets.map((s) => ({
+      sheet_id: s.id,
+      sheet_number: s.sheet_number,
+      discipline: s.discipline,
+      revision_id: s.current_revision_id,
+      title: s.current_title,
+      thumbSrc: `/api/sheet-versions/${s.current_version_id}/thumb`,
+      project_id: id,
+      project_name: combinedProjectNames.get(id) || '',
+    }))
+  );
+  renderGrid(items);
+}
+
+document.getElementById('project-filter').addEventListener('change', (e) => {
+  projectFilterValue = e.target.value;
+  renderGrid(lastItems);
+});
+document.getElementById('discipline-filter').addEventListener('change', () => {
+  if (combinedMode) renderGrid(lastItems);
+  else renderFromCache();
+});
+document.getElementById('revision-filter').addEventListener('change', () => {
+  if (combinedMode) renderGrid(lastItems); // unreachable in practice - the control is hidden in combined mode, see loadCombinedFilters
+  else renderFromCache();
+});
 // Metadata (sheet number/title) filtering is client-side and instant - no
 // need to re-hit cache/API on every keystroke like the dropdowns do. Drawing
 // *content* search needs a server round-trip (full-text index), so it's
@@ -452,10 +534,18 @@ document.getElementById('search-filter').addEventListener('input', () => {
   localStorage.setItem(searchStorageKey(), term);
   searchDebounceTimer = setTimeout(async () => {
     try {
-      const { sheet_ids } = await api('GET', `/api/projects/${projectId}/sheets/search?q=${encodeURIComponent(term)}`);
+      // Sheet ids are a global PK (not per-project), so the merged Set below
+      // is safe without tagging which project each id came from.
+      const idLists = combinedMode
+        ? await Promise.all(
+            combinedIds.map((id) =>
+              api('GET', `/api/projects/${id}/sheets/search?q=${encodeURIComponent(term)}`).then((r) => r.sheet_ids)
+            )
+          )
+        : [(await api('GET', `/api/projects/${projectId}/sheets/search?q=${encodeURIComponent(term)}`)).sheet_ids];
       // A stale response for an older keystroke shouldn't clobber a newer one.
       if (document.getElementById('search-filter').value.trim() !== term) return;
-      contentMatchIds = new Set(sheet_ids);
+      contentMatchIds = new Set(idLists.flat());
       renderGrid(lastItems);
     } catch (err) {
       // Offline or search endpoint unavailable - the metadata-only pass
@@ -464,9 +554,34 @@ document.getElementById('search-filter').addEventListener('input', () => {
   }, 280);
 });
 
+// Combined mode's init - no offline cache/sync involvement at all (see the
+// top-of-file note), no search-term persistence keyed by a single project,
+// no per-project write actions (download-selection, composite creation).
+// Just: shell without a sidebar/single-project nav, the merged filter set,
+// and a live fetch.
+async function initCombined(me) {
+  document.getElementById('sidebar').style.display = 'none';
+  document.getElementById('sync-status').style.display = 'none';
+  await renderShell({
+    topbarEl: document.getElementById('topbar'),
+    sidebarEl: undefined,
+    projectId: undefined,
+    active: 'viewer',
+    me,
+  });
+  await loadCombinedFilters();
+  await renderFromCombinedLiveApi();
+}
+
 (async function init() {
   const me = await requireSession();
   if (!me) return;
+
+  if (combinedMode) {
+    await initCombined(me);
+    return;
+  }
+
   await renderShell({
     topbarEl: document.getElementById('topbar'),
     sidebarEl: document.getElementById('sidebar'),

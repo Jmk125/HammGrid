@@ -14,10 +14,13 @@
           <div class="project-title-row"><h1 id="project-name" style="margin:0;"></h1><span id="project-sync-pill" class="sync-pill syncing">Checking sync…</span></div>
           <div class="row">
             <input type="text" id="search-filter" placeholder="Search sheet number, title, or drawing text..." style="width:320px;">
+            <label id="project-filter-wrap" style="display:none;">Project:
+              <select id="project-filter"><option value="">All</option></select>
+            </label>
             <label>Discipline:
               <select id="discipline-filter"><option value="">All</option></select>
             </label>
-            <label>Revision:
+            <label id="revision-filter-wrap">Revision:
               <select id="revision-filter"><option value="">All (current set)</option></select>
             </label>
           </div>

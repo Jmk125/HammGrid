@@ -462,6 +462,13 @@ tr.ignored td { opacity: 0.5; }
 .sheet-card .meta { padding: 6px 8px; }
 .sheet-card .sheet-number { font-weight: 700; font-size: 13px; }
 .sheet-card .sheet-title { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Combined view only (see viewer.js) - which of the several merged projects
+   this sheet actually belongs to, since sheet numbers can collide across
+   separate projects for the same district. */
+.sheet-card .sheet-project-badge {
+  font-size: 10px; color: var(--accent); font-weight: 600; margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 .sheet-card.selectable { cursor: pointer; }
 .sheet-card.selectable:hover { transform: none; box-shadow: 0 4px 14px rgba(15,43,70,0.15); }
