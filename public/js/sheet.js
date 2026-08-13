@@ -655,11 +655,12 @@ async function enterEditLayoutMode() {
   clearMeasure();
   stopMeasureTool();
   if (markupsController) markupsController.forceSelectTool();
+  if (freezeArmed) disarmFreezePane();
 
   editLayoutMode = true;
   document.getElementById('edit-layout-btn').classList.add('active');
   document.getElementById('edit-layout-btn').textContent = 'Done Editing Layout';
-  for (const id of ['section-markup', 'section-measure', 'section-takeoffs']) {
+  for (const id of ['section-markup', 'section-measure', 'section-takeoffs', 'section-reference']) {
     const el = document.getElementById(id);
     if (el) el.style.display = 'none';
   }
@@ -729,7 +730,7 @@ async function exitEditLayoutMode() {
     btn.classList.remove('active');
     btn.textContent = 'Edit Layout';
   }
-  for (const id of ['section-markup', 'section-measure', 'section-takeoffs']) {
+  for (const id of ['section-markup', 'section-measure', 'section-takeoffs', 'section-reference']) {
     const el = document.getElementById(id);
     if (el) el.style.display = '';
   }
@@ -2559,6 +2560,17 @@ function armFreezePane() {
   if (markupsController) markupsController.forceSelectTool();
   freezeArmed = true;
   document.getElementById('zoom-wrap').classList.add('freeze-armed');
+  // #markup-svg sits on top of #zoom-wrap and covers the whole canvas, and
+  // markups.js sets its own inline cursor style on it - same reasoning as
+  // renderTakeoffPane's cursor handling. An inline style always wins over
+  // .zoom-wrap.freeze-armed's CSS cursor rule for that element, so the CSS
+  // alone never actually changed the visible cursor - set it directly here
+  // instead, for the visual feedback that P was pressed (or the button was
+  // clicked) whether or not the user is currently hovering the canvas.
+  document.getElementById('markup-svg').style.cursor = 'crosshair';
+  const btn = document.getElementById('freeze-pane-tool-btn');
+  if (btn) btn.classList.add('active');
+  document.getElementById('freeze-pane-toolbar').style.display = 'flex';
 }
 
 function disarmFreezePane() {
@@ -2566,6 +2578,13 @@ function disarmFreezePane() {
   freezeDragStart = null;
   document.getElementById('zoom-wrap').classList.remove('freeze-armed');
   ensureFreezeDraftLayer().innerHTML = '';
+  // Clear (rather than force 'default') so markups.js's own cursor
+  // management resumes normal control - same convention as
+  // renderTakeoffPane's cursor handling.
+  document.getElementById('markup-svg').style.cursor = '';
+  const btn = document.getElementById('freeze-pane-tool-btn');
+  if (btn) btn.classList.remove('active');
+  document.getElementById('freeze-pane-toolbar').style.display = 'none';
 }
 
 function ensureFreezeDraftLayer() {
@@ -2964,6 +2983,13 @@ function restorePersistedFreezePanes() {
   }
 }
 
+// Single-finger only, same convention as isPrimaryTakeoffTouch elsewhere in
+// this file - a two-finger touch is zoomPan.js's pinch/pan gesture, not a
+// freeze-pane drag.
+function isPrimaryFreezeTouch(e) {
+  return !e.touches || e.touches.length === 1;
+}
+
 function setupFreezePaneTool() {
   const svg = document.getElementById('markup-svg');
 
@@ -2979,6 +3005,18 @@ function setupFreezePaneTool() {
     if (measureTool || takeoffTool || editingInstance) return;
     armFreezePane();
   });
+
+  // iPad has no keyboard, so P alone isn't a way in - a button in the
+  // Reference pane section (see sheet.html) is the touch equivalent, same
+  // arm/disarm toggle either way gets to. A deliberate tap is allowed to
+  // interrupt an in-progress measure/take-off (armFreezePane disarms them
+  // itself) unlike the P shortcut above, which stays silent through those to
+  // avoid an accidental keystroke nuking work in progress.
+  document.getElementById('freeze-pane-tool-btn').addEventListener('click', () => {
+    if (freezeArmed) disarmFreezePane();
+    else armFreezePane();
+  });
+  document.getElementById('freeze-pane-cancel-btn').addEventListener('click', disarmFreezePane);
 
   svg.addEventListener(
     'mousedown',
@@ -2999,6 +3037,36 @@ function setupFreezePaneTool() {
 
   window.addEventListener('mouseup', (e) => {
     if (!freezeArmed || !freezeDragStart) return;
+    const r = rectFromCorners(freezeDragStart, getMeasureSvgPoint(e));
+    disarmFreezePane();
+    if (r.width > 4 && r.height > 4) createFreezePane(r);
+  });
+
+  // Touch equivalents of the three mouse handlers above - iOS never fires
+  // mousedown/mousemove/mouseup for a touch drag, only a synthesized click
+  // ~300ms after touchend (too late, and no drag at all), same reasoning as
+  // the take-off edit tools' touch handling elsewhere in this file.
+  svg.addEventListener(
+    'touchstart',
+    (e) => {
+      if (!freezeArmed || !isPrimaryFreezeTouch(e)) return;
+      e.preventDefault(); // claim the gesture immediately, same as takeoff edit's touchstart
+      freezeDragStart = getMeasureSvgPoint(e);
+      redrawFreezeDraft(freezeDragStart);
+    },
+    { passive: false }
+  );
+  svg.addEventListener(
+    'touchmove',
+    (e) => {
+      if (!freezeArmed || !freezeDragStart || !isPrimaryFreezeTouch(e)) return;
+      e.preventDefault();
+      redrawFreezeDraft(getMeasureSvgPoint(e));
+    },
+    { passive: false }
+  );
+  window.addEventListener('touchend', (e) => {
+    if (!freezeArmed || !freezeDragStart || e.touches.length > 0) return;
     const r = rectFromCorners(freezeDragStart, getMeasureSvgPoint(e));
     disarmFreezePane();
     if (r.width > 4 && r.height > 4) createFreezePane(r);

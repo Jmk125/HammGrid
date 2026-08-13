@@ -54,6 +54,20 @@
               </div>
             </div>
 
+            <div class="pane-section" id="section-reference">
+              <button class="pane-section-header" type="button" data-section="reference">
+                <span>Reference</span>
+                <span class="chevron">&#9662;</span>
+              </button>
+              <div class="pane-section-body">
+                <div class="icon-tool-grid">
+                  <button type="button" class="tool-btn tool-icon-btn" id="freeze-pane-tool-btn" title="Pin an area on screen (shortcut: P) - click, then drag a box around anything to keep visible while you pan/zoom">
+                    <svg viewBox="0 0 20 20"><path d="M10 2a4 4 0 0 0-4 4c0 2.7 4 8.5 4 8.5s4-5.8 4-8.5a4 4 0 0 0-4-4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="10" cy="6" r="1.5" fill="currentColor"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div class="pane-section" id="section-measure">
               <button class="pane-section-header" type="button" data-section="measure">
                 <span>Measure</span>
@@ -147,6 +161,10 @@
     <label class="chip-toggle" id="takeoff-snap-points-chip">
       <input type="checkbox" id="takeoff-snap-points-checkbox"><span class="dot"></span>Snap to points
     </label>
+  </div>
+  <div id="freeze-pane-toolbar" class="selection-bar" style="display:none;">
+    <span>Drag a box around what you want to pin on screen</span>
+    <button type="button" id="freeze-pane-cancel-btn">Cancel</button>
   </div>
   <script src="/js/api.js"></script>
   <script type="module" src="/js/sheet.js"></script>
