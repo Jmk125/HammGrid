@@ -26,7 +26,7 @@ vector fidelity. Trade-off: no selectable text inside a composite's own PDF
 
 Usage:
     python compose.py <manifest_json_path> <output_pdf> <output_thumb> <output_preview>
-        [--thumb-size 300] [--preview-size 1800]
+        [--thumb-size 300] [--preview-size 2200]
 
 Manifest shape (canvas + fragments in PDF-point space, 72pt/in):
     {"canvas": {"width_pt": 2400.0, "height_pt": 1400.0},
@@ -147,7 +147,10 @@ def main():
     parser.add_argument("output_thumb")
     parser.add_argument("output_preview")
     parser.add_argument("--thumb-size", type=int, default=300)
-    parser.add_argument("--preview-size", type=int, default=1800)
+    # Matches burst.py's own preview-size/quality bump - a composite's
+    # preview needs to stay indistinguishable from an ordinary sheet's to
+    # every downstream consumer, per this file's own docstring.
+    parser.add_argument("--preview-size", type=int, default=2200)
     args = parser.parse_args()
 
     with open(args.manifest_json_path, "r", encoding="utf-8") as f:
@@ -216,7 +219,7 @@ def main():
     doc.save(args.output_pdf, garbage=4, deflate=True, clean=True)
     doc.close()
 
-    save_webp(preview_img, args.output_preview, args.preview_size, quality=85)
+    save_webp(preview_img, args.output_preview, args.preview_size, quality=92)
     save_webp(preview_img, args.output_thumb, args.thumb_size, quality=78)
 
     json.dump({"ok": True, "page_width_pt": canvas_width_pt, "page_height_pt": canvas_height_pt}, sys.stdout)

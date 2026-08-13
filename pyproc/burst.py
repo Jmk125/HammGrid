@@ -4,7 +4,7 @@ WebP image for each page. Renders each page once and derives the thumbnail
 from the preview raster (avoids a second, expensive re-render per page).
 
 Usage:
-    python burst.py <input_pdf> <output_dir> [--thumb-size 300] [--preview-size 1800]
+    python burst.py <input_pdf> <output_dir> [--thumb-size 300] [--preview-size 2200]
 
 Prints a JSON array to stdout, one entry per page, in page order:
     [{"page_number": 1, "pdf_path": "...", "thumb_path": "...",
@@ -47,7 +47,12 @@ def main():
     parser.add_argument("input_pdf")
     parser.add_argument("output_dir")
     parser.add_argument("--thumb-size", type=int, default=300)
-    parser.add_argument("--preview-size", type=int, default=1800)
+    # Preview feeds the version-overlay comparison (sheet.js's computeOverlay
+    # composites two of these client-side) as well as the staged-sheet
+    # review screen - bumped modestly from 1800/q85 so overlay comparisons
+    # read a bit crisper, without ballooning storage/burst time the way a
+    # much larger jump would.
+    parser.add_argument("--preview-size", type=int, default=2200)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -88,7 +93,7 @@ def main():
         single_page.save(pdf_path, garbage=4, deflate=True, clean=True)
         single_page.close()
 
-        save_webp(img, preview_path, args.preview_size, quality=85)
+        save_webp(img, preview_path, args.preview_size, quality=92)
         save_webp(img, thumb_path, args.thumb_size, quality=78)
 
         # These paths get stored verbatim in the DB and may later be read on
