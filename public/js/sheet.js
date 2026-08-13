@@ -2665,6 +2665,15 @@ const FREEZE_PANE_MIN_WIDTH = 80;
 const FREEZE_PANE_MIN_HEIGHT = 50;
 const FREEZE_PANE_RESIZE_DIRS = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
+// clientX/clientY reader that works for both a mouse event and a touch one -
+// used by the header drag and resize-handle drags below, neither of which
+// had any touch handling at all (mousedown/mousemove/mouseup only), unlike
+// the box-drag gesture that arms/places the pane itself.
+function freezePaneEventPoint(e) {
+  const p = e.changedTouches ? e.changedTouches[0] : e;
+  return { x: p.clientX, y: p.clientY };
+}
+
 // Builds the floating panel shell (drag handle, label, "keep across
 // drawings" checkbox, close button, resize handles) around an already-built
 // content element - a live capture <canvas> for a freshly-drawn box, or an
@@ -2837,35 +2846,43 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
   });
 
   const header = el.querySelector('.freeze-pane-header');
-  header.addEventListener('mousedown', (e) => {
+  function startPaneDrag(e) {
     if (e.target.closest('.freeze-pane-close') || e.target.closest('.freeze-pane-pin') || e.target.closest('.freeze-pane-collapse') || e.target.closest('.freeze-pane-label'))
       return;
     e.preventDefault();
     e.stopPropagation();
-    const startX = e.clientX;
-    const startY = e.clientY;
+    const start = freezePaneEventPoint(e);
     const origLeft = el.offsetLeft;
     const origTop = el.offsetTop;
     function onMove(ev) {
-      el.style.left = `${origLeft + (ev.clientX - startX)}px`;
-      el.style.top = `${origTop + (ev.clientY - startY)}px`;
+      ev.preventDefault();
+      const p = freezePaneEventPoint(ev);
+      el.style.left = `${origLeft + (p.x - start.x)}px`;
+      el.style.top = `${origTop + (p.y - start.y)}px`;
     }
     function onUp() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
       if (persistCheckbox.checked) updatePersistedFreezePane(id, { left: el.offsetLeft, top: el.offsetTop });
     }
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
-  });
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
+  }
+  header.addEventListener('mousedown', startPaneDrag);
+  header.addEventListener('touchstart', startPaneDrag, { passive: false });
 
   el.querySelectorAll('.freeze-pane-resize-handle').forEach((handle) => {
     const dir = FREEZE_PANE_RESIZE_DIRS.find((d) => handle.classList.contains(`freeze-pane-resize-${d}`));
-    handle.addEventListener('mousedown', (e) => {
+    function startResize(e) {
       e.preventDefault();
       e.stopPropagation();
-      const startX = e.clientX;
-      const startY = e.clientY;
+      const start = freezePaneEventPoint(e);
+      const startX = start.x;
+      const startY = start.y;
       const startWidth = el.offsetWidth;
       const startHeight = el.offsetHeight;
       const startLeft = el.offsetLeft;
@@ -2880,8 +2897,10 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
       const ratio = !collapsed && startHeight > headerHeight ? startWidth / (startHeight - headerHeight) : null;
 
       function onMove(ev) {
-        const dx = ev.clientX - startX;
-        const dy = ev.clientY - startY;
+        ev.preventDefault();
+        const p = freezePaneEventPoint(ev);
+        const dx = p.x - startX;
+        const dy = p.y - startY;
 
         if (ratio) {
           const widthDelta = dir.includes('e') ? dx : dir.includes('w') ? -dx : 0;
@@ -2923,6 +2942,8 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
       function onUp() {
         window.removeEventListener('mousemove', onMove);
         window.removeEventListener('mouseup', onUp);
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', onUp);
         if (!persistCheckbox.checked) return;
         const patch = { left: el.offsetLeft, top: el.offsetTop, boxWidth: el.offsetWidth };
         if (!el.classList.contains('freeze-pane-collapsed')) patch.boxHeight = el.offsetHeight;
@@ -2930,7 +2951,11 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
       }
       window.addEventListener('mousemove', onMove);
       window.addEventListener('mouseup', onUp);
-    });
+      window.addEventListener('touchmove', onMove, { passive: false });
+      window.addEventListener('touchend', onUp);
+    }
+    handle.addEventListener('mousedown', startResize);
+    handle.addEventListener('touchstart', startResize, { passive: false });
   });
 }
 
