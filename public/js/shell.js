@@ -494,6 +494,7 @@ export async function renderShell({
   me,
   onOverlayClick,
   sheetHistoryEntry,
+  viewingSheet,
 }) {
   const canManage = me.role === 'admin' || me.role === 'editor';
   const isCombined = !!combinedProjectIds;
@@ -540,15 +541,22 @@ export async function renderShell({
   // Take-offs/etc. are single-project write actions that don't apply across
   // several projects at once. A real single-project page (projectId set)
   // keeps the full list regardless of how it was reached.
+  // On sheet.html specifically, "Sheets" doubles as the way back to the grid
+  // one level up - labeled like a back button, and the plain "Back to
+  // projects" link below is dropped, since it sits right next to "Sheets"
+  // at exactly the nesting depth where muscle memory means to go up one
+  // level (the grid), not skip past it and leave the project entirely.
+  const viewerLabel = viewingSheet ? '← Back to Sheets' : 'Sheets';
+
   const items =
     isCombined && !projectId
       ? [
-          { key: 'viewer', label: 'Sheets', href: viewerHref, show: true },
+          { key: 'viewer', label: viewerLabel, href: viewerHref, show: true },
           { key: 'documents', label: 'Documents', href: documentsHref, show: true },
           { key: 'flags', label: 'Flags', href: flagsHref, show: true },
         ]
       : [
-          { key: 'viewer', label: 'Sheets', href: viewerHref, show: true },
+          { key: 'viewer', label: viewerLabel, href: viewerHref, show: true },
           { key: 'documents', label: 'Documents', href: documentsHref, show: true },
           { key: 'flags', label: 'Flags', href: flagsHref, show: true },
           { key: 'invite', label: 'Invite', href: `/shares.html?projectId=${projectId}`, show: canManage },
@@ -561,7 +569,7 @@ export async function renderShell({
 
   sidebarEl.innerHTML = `
     <nav>
-      <a href="/dashboard.html">&larr; Back to projects</a>
+      ${viewingSheet ? '' : '<a href="/dashboard.html">&larr; Back to projects</a>'}
       ${items
         .filter((i) => i.show)
         .map((i) => `<a href="${i.href}" data-key="${i.key}" class="${i.key === active ? 'active' : ''}">${i.label}</a>`)

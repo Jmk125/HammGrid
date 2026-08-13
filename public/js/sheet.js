@@ -7447,6 +7447,7 @@ async function loadSheetOffline() {
       projectId,
       combinedProjectIds,
       active: 'viewer',
+      viewingSheet: true,
       me,
     });
     if (!offline) {
@@ -7472,6 +7473,7 @@ async function loadSheetOffline() {
       projectId,
       combinedProjectIds,
       active: 'viewer',
+      viewingSheet: true,
       me,
       onOverlayClick: openOverlayPicker,
       sheetHistoryEntry: {
