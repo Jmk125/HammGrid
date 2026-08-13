@@ -1731,23 +1731,44 @@ function scheduleOverlayRecompute() {
 
 function setupOverlayAlignDrag() {
   const wrapEl = document.getElementById('zoom-wrap');
-  wrapEl.addEventListener('mousedown', (e) => {
+  function startAlignDrag(e) {
     if (!overlayActive || !overlayAlignActive) return;
+    // Single-finger only, same convention as every other touch-drag in this
+    // file - a second finger resting down mid-drag shouldn't jump the
+    // tracked point to a different touch.
+    if (e.touches && e.touches.length > 1) return;
     e.preventDefault();
+    const p = clientPointFromEvent(e);
     const t = overlayTransform[overlayAlignTarget];
-    overlayDrag = { startX: e.clientX, startY: e.clientY, origTx: t.tx, origTy: t.ty };
-  });
-  window.addEventListener('mousemove', (e) => {
+    overlayDrag = { startX: p.x, startY: p.y, origTx: t.tx, origTy: t.ty };
+  }
+  function moveAlignDrag(e) {
     if (!overlayDrag) return;
+    if (e.touches && e.touches.length > 1) return;
     e.preventDefault();
+    const p = clientPointFromEvent(e);
     const scale = zoomPan ? zoomPan.state.scale : 1;
     const t = overlayTransform[overlayAlignTarget];
-    t.tx = overlayDrag.origTx + (e.clientX - overlayDrag.startX) / scale;
-    t.ty = overlayDrag.origTy + (e.clientY - overlayDrag.startY) / scale;
+    t.tx = overlayDrag.origTx + (p.x - overlayDrag.startX) / scale;
+    t.ty = overlayDrag.origTy + (p.y - overlayDrag.startY) / scale;
     scheduleOverlayRecompute();
-  });
-  window.addEventListener('mouseup', () => {
+  }
+  function endAlignDrag() {
     overlayDrag = null;
+  }
+  wrapEl.addEventListener('mousedown', startAlignDrag);
+  window.addEventListener('mousemove', moveAlignDrag);
+  window.addEventListener('mouseup', endAlignDrag);
+  // Touch equivalents - zoomPan.js's own touch pan/pinch already checks
+  // isPanBlocked() (see setupZoomPan's isPanBlocked, which returns true
+  // whenever overlayAlignActive is set) and bails out entirely while align
+  // mode is on, so a one-finger touch here is free to mean "drag to align"
+  // instead of competing with panning the whole sheet.
+  wrapEl.addEventListener('touchstart', startAlignDrag, { passive: false });
+  window.addEventListener('touchmove', moveAlignDrag, { passive: false });
+  window.addEventListener('touchend', (e) => {
+    if (e.touches.length > 0) return; // wait for every finger to lift, same as the take-off edit tools' touchend handling
+    endAlignDrag();
   });
 }
 
@@ -2666,10 +2687,12 @@ const FREEZE_PANE_MIN_HEIGHT = 50;
 const FREEZE_PANE_RESIZE_DIRS = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 
 // clientX/clientY reader that works for both a mouse event and a touch one -
-// used by the header drag and resize-handle drags below, neither of which
-// had any touch handling at all (mousedown/mousemove/mouseup only), unlike
-// the box-drag gesture that arms/places the pane itself.
-function freezePaneEventPoint(e) {
+// shared by every plain screen-space drag in this file that isn't already
+// going through getMeasureSvgPoint's sheet-space conversion: the freeze-pane
+// header/resize drags below, and setupOverlayAlignDrag's align-drag above.
+// Declared as a function (not const) so it's hoisted and usable from
+// setupOverlayAlignDrag despite that being defined earlier in the file.
+function clientPointFromEvent(e) {
   const p = e.changedTouches ? e.changedTouches[0] : e;
   return { x: p.clientX, y: p.clientY };
 }
@@ -2851,12 +2874,12 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
       return;
     e.preventDefault();
     e.stopPropagation();
-    const start = freezePaneEventPoint(e);
+    const start = clientPointFromEvent(e);
     const origLeft = el.offsetLeft;
     const origTop = el.offsetTop;
     function onMove(ev) {
       ev.preventDefault();
-      const p = freezePaneEventPoint(ev);
+      const p = clientPointFromEvent(ev);
       el.style.left = `${origLeft + (p.x - start.x)}px`;
       el.style.top = `${origTop + (p.y - start.y)}px`;
     }
@@ -2880,7 +2903,7 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
     function startResize(e) {
       e.preventDefault();
       e.stopPropagation();
-      const start = freezePaneEventPoint(e);
+      const start = clientPointFromEvent(e);
       const startX = start.x;
       const startY = start.y;
       const startWidth = el.offsetWidth;
@@ -2898,7 +2921,7 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
 
       function onMove(ev) {
         ev.preventDefault();
-        const p = freezePaneEventPoint(ev);
+        const p = clientPointFromEvent(ev);
         const dx = p.x - startX;
         const dy = p.y - startY;
 
