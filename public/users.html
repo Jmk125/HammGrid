@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<title>HammGrid</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f2b46">
+<script src="/js/theme-boot.js"></script>
+<body>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+        <div class="row" style="justify-content:space-between; align-items:center;">
+          <h1>Users</h1>
+          <button class="primary" type="button" id="add-user-btn">+ Add user</button>
+        </div>
+        <p class="muted">Internal team accounts. Contractors and consultants should get a share link instead - see Invite.</p>
+        <p class="error" id="error" style="display:none;"></p>
+        <div class="card">
+          <table id="users-table">
+            <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Take-offs</th><th>Created</th><th>Actions</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/js/api.js"></script>
+  <script type="module" src="/js/users.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
+</body>

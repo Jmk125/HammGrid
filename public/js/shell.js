@@ -561,6 +561,7 @@ export async function renderShell({
           { key: 'flags', label: 'Flags', href: flagsHref, show: true },
           { key: 'invite', label: 'Invite', href: `/shares.html?projectId=${projectId}`, show: canManage },
           { key: 'activity', label: 'Activity Log', href: `/activity.html?projectId=${projectId}`, show: me.role === 'admin' },
+          { key: 'users', label: 'Users', href: `/users.html?projectId=${projectId}`, show: me.role === 'admin' },
           { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },
           { key: 'settings', label: 'Project Settings', href: `/project-settings.html?projectId=${projectId}`, show: canManage },
           { key: 'takeoffs', label: 'Take-offs', href: `/takeoffs.html?projectId=${projectId}`, show: me.role === 'admin' || !!me.can_takeoff },
