@@ -1825,6 +1825,36 @@ function wireOverlayControls() {
   });
 
   document.getElementById('overlay-exit-btn').addEventListener('click', () => exitOverlay(true));
+
+  document.getElementById('overlay-export-btn').addEventListener('click', exportOverlayImage);
+}
+
+// Downloads exactly what's on screen - the same canvas computeOverlay just
+// composited into, at whatever alignment/rotation is currently dialed in -
+// as a flat PNG. Lossless rather than WebP: this is meant to be dropped
+// into a submittal/RFI or printed, not stored, so file size matters less
+// than avoiding another lossy generation on top of the preview it's already
+// composited from.
+function exportOverlayImage() {
+  const canvas = document.getElementById('pdf-canvas');
+  if (!overlayActive || !canvas.width) return;
+  const versionLabel = (id) => {
+    const v = allVersions.find((ver) => ver.id === id);
+    return v ? v.revision_title : String(id);
+  };
+  const safe = (s) => String(s).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
+  const filename = `overlay-${safe(currentSheet.sheet_number)}-${safe(versionLabel(overlayLayers.a))}-vs-${safe(versionLabel(overlayLayers.b))}.png`;
+  canvas.toBlob((blob) => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 'image/png');
 }
 
 async function enterOverlay(aVersionId, bVersionId) {
@@ -1866,6 +1896,9 @@ async function enterOverlay(aVersionId, bVersionId) {
           <button type="button" data-rotation="270">270&deg;</button>
         </div>
         <button type="button" id="overlay-reset-btn">Reset</button>
+      </div>
+      <div class="overlay-controls-group">
+        <button type="button" id="overlay-export-btn" title="Download the current overlay as an image">Export</button>
       </div>
       <button type="button" id="overlay-exit-btn">Exit overlay</button>
     </div>
