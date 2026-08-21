@@ -126,6 +126,14 @@ let overlayAlignActive = false;
 let overlayAlignTarget = 'b';
 let overlayDrag = null;
 let overlayRecomputeQueued = false;
+// Live-drag compositing budget - see computeOverlay's `draft` param. Preview
+// images are now up to 4000px on the long edge (project memory: preview
+// resolution), and a full-resolution composite is several getImageData/
+// putImageData passes over that many pixels - fine once, but re-running it
+// on every mousemove during align-drag can't keep up. Capping the drag-time
+// render to this many pixels keeps recompute cheap while dragging; the
+// instant the drag ends, one full-resolution pass renders the real thing.
+const OVERLAY_DRAFT_MAX_SIDE = 1000;
 let currentRenderTask = null;
 let userHasZoomedOrPanned = false;
 // Set at the end of every successful render, so the search-highlight step
@@ -1658,15 +1666,23 @@ async function loadOverlayImages() {
 // entering overlay or toggling A/B visibility, NOT during align-drag or
 // rotate, which must preserve whatever zoom/pan the user has dialed in while
 // lining things up.
-function computeOverlay({ fit = false } = {}) {
+function computeOverlay({ fit = false, draft = false } = {}) {
   const { showA, showB } = overlayLayers;
   const canvas = document.getElementById('pdf-canvas');
   const imgA = overlayImages.a;
   const imgB = overlayImages.b;
   if (!imgA || !imgB) return;
 
-  const width = Math.max(imgA.naturalWidth, imgB.naturalWidth);
-  const height = Math.max(imgA.naturalHeight, imgB.naturalHeight);
+  const fullWidth = Math.max(imgA.naturalWidth, imgB.naturalWidth);
+  const fullHeight = Math.max(imgA.naturalHeight, imgB.naturalHeight);
+  // See OVERLAY_DRAFT_MAX_SIDE - while actively dragging, composite at a
+  // fraction of the full preview resolution for a smooth drag. tx/ty and
+  // every other transform value stay expressed in full-resolution units
+  // regardless (see toGray's cx.scale below), so draft and final renders
+  // agree exactly on alignment - only the pixel budget differs.
+  const draftScale = draft ? Math.min(1, OVERLAY_DRAFT_MAX_SIDE / Math.max(fullWidth, fullHeight)) : 1;
+  const width = Math.max(1, Math.round(fullWidth * draftScale));
+  const height = Math.max(1, Math.round(fullHeight * draftScale));
   canvas.width = width;
   canvas.height = height;
 
@@ -1682,7 +1698,8 @@ function computeOverlay({ fit = false } = {}) {
     cx.fillStyle = 'white';
     cx.fillRect(0, 0, width, height);
     cx.save();
-    cx.translate(width / 2 + transform.tx, height / 2 + transform.ty);
+    cx.scale(draftScale, draftScale);
+    cx.translate(fullWidth / 2 + transform.tx, fullHeight / 2 + transform.ty);
     cx.rotate((transform.rotation * Math.PI) / 180);
     cx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
     cx.restore();
@@ -1719,13 +1736,16 @@ function computeOverlay({ fit = false } = {}) {
 // Drag-align and rotate can fire many times a second (mousemove, or a user
 // rapid-clicking rotation angles) - a full-resolution pixel composite on
 // every single event would visibly lag, so recomputes are coalesced to at
-// most one per animation frame.
+// most one per animation frame. While an align-drag is in progress
+// (overlayDrag set), each of those coalesced recomputes also renders at
+// draft resolution rather than full - see computeOverlay's `draft` param
+// and endAlignDrag's own final full-resolution call once the drag lets go.
 function scheduleOverlayRecompute() {
   if (overlayRecomputeQueued) return;
   overlayRecomputeQueued = true;
   requestAnimationFrame(() => {
     overlayRecomputeQueued = false;
-    computeOverlay();
+    computeOverlay({ draft: !!overlayDrag });
   });
 }
 
@@ -1754,7 +1774,12 @@ function setupOverlayAlignDrag() {
     scheduleOverlayRecompute();
   }
   function endAlignDrag() {
+    if (!overlayDrag) return; // this listener is global (window mouseup/touchend) - ignore mouseups unrelated to an actual drag
     overlayDrag = null;
+    // The last few in-drag recomputes rendered at draft resolution (see
+    // scheduleOverlayRecompute) - now that the drag has actually stopped,
+    // one full-resolution pass shows the real, crisp result.
+    computeOverlay();
   }
   wrapEl.addEventListener('mousedown', startAlignDrag);
   window.addEventListener('mousemove', moveAlignDrag);
