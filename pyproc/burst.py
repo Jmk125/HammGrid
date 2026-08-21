@@ -4,7 +4,7 @@ WebP image for each page. Renders each page once and derives the thumbnail
 from the preview raster (avoids a second, expensive re-render per page).
 
 Usage:
-    python burst.py <input_pdf> <output_dir> [--thumb-size 300] [--preview-size 2200]
+    python burst.py <input_pdf> <output_dir> [--thumb-size 300] [--preview-size 4000]
 
 Prints a JSON array to stdout, one entry per page, in page order:
     [{"page_number": 1, "pdf_path": "...", "thumb_path": "...",
@@ -49,10 +49,14 @@ def main():
     parser.add_argument("--thumb-size", type=int, default=300)
     # Preview feeds the version-overlay comparison (sheet.js's computeOverlay
     # composites two of these client-side) as well as the staged-sheet
-    # review screen - bumped modestly from 1800/q85 so overlay comparisons
-    # read a bit crisper, without ballooning storage/burst time the way a
-    # much larger jump would.
-    parser.add_argument("--preview-size", type=int, default=2200)
+    # review screen. A full-size architectural sheet (e.g. 48"x36" ARCH E1)
+    # is long enough that even 2200px works out to under 50 DPI - visibly
+    # soft the moment you zoom into the overlay at all. 4000px gets a 48"
+    # sheet to ~83 DPI, a real improvement, without the file-size/composite
+    # cost of chasing print-grade DPI. The earlier, more conservative 1800/
+    # 2200 values were sized for RAM-constrained Pi deployment; the target
+    # deploy is a Windows box now; see CLAUDE.md/project memory.
+    parser.add_argument("--preview-size", type=int, default=4000)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
