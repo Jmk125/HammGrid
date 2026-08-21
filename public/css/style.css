@@ -1248,6 +1248,42 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   overflow-y: auto;
   z-index: 11;
 }
+/* Click-or-drag jump-to-page rail, left edge of the canvas - see
+   setupPageScrubber() in document-view.js. Sits clear of page-nav-badge's
+   top-left corner (top offset below) and is itself floating chrome inside
+   .zoom-wrap, same as that badge - see isPanBlocked in document-view.js's
+   setupZoomPan for why that placement needs its tag excluded from panning. */
+.page-scrubber {
+  position: absolute;
+  top: 52px; bottom: 10px; left: 10px;
+  width: 16px;
+  z-index: 10;
+}
+.page-scrubber-track {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: rgba(15,43,70,0.35);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.page-scrubber-handle {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 34px;
+  margin-top: -17px;
+  background: rgba(15,43,70,0.9);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  pointer-events: none; /* the track's own listener drives both click-to-jump and drag - see setupPageScrubber */
+}
+
 .version-dropdown a {
   display: block;
   padding: 8px 12px;

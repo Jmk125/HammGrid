@@ -96,7 +96,19 @@ function setupZoomPan() {
   zoomPan = setupSharedZoomPan({
     wrapEl,
     innerEl: document.getElementById('zoom-pan-inner'),
-    isPanBlocked: () => !!(markupsController && markupsController.isToolActive()),
+    isPanBlocked: (e) => {
+      if (markupsController && markupsController.isToolActive()) return true;
+      // The page/gallery nav badges and the search bar are floating chrome
+      // that sit on top of the canvas inside this same wrapEl, not the
+      // drawing surface itself - without this, a touchstart landing on one
+      // of their buttons still reaches this handler and (not being blocked)
+      // calls preventDefault() to start a pan, which on iOS Safari also
+      // silently suppresses the synthetic click the button needed to fire
+      // at all. Same convention as sheet.js's isPanBlocked (its
+      // "floating UI chrome" branch).
+      const tag = (e.target.tagName || '').toLowerCase();
+      return tag !== 'svg' && tag !== 'canvas' && e.target !== wrapEl;
+    },
     wheelZoomRequiresCtrl: true,
     onChange: (state) => {
       if (!suppressInteractionFlag) userHasZoomedOrPanned = true;
@@ -204,14 +216,105 @@ async function setupGalleryNav(doc) {
 
 function updatePageNavBadge() {
   const badge = document.getElementById('page-nav-badge');
+  const scrubber = document.getElementById('page-scrubber');
   if (numPages <= 1) {
     badge.style.display = 'none';
+    scrubber.style.display = 'none';
     return;
   }
   badge.style.display = '';
+  scrubber.style.display = '';
   document.getElementById('doc-page-label').textContent = `Page ${currentPage} / ${numPages}`;
   document.getElementById('doc-page-prev-btn').disabled = currentPage <= 1;
   document.getElementById('doc-page-next-btn').disabled = currentPage >= numPages;
+  if (!pageScrubDrag) updateScrubberHandle(currentPage);
+}
+
+// Click-anywhere-to-jump / drag-to-scrub rail for a long document, an
+// alternative to repeatedly clicking the prev/next page arrows above.
+// pageScrubDrag is non-null for the duration of a physical drag - gates
+// updatePageNavBadge's own handle repositioning above so a slow in-flight
+// render doesn't visually snap the handle back under the user's still-moving
+// finger/cursor before they've let go.
+let pageScrubDrag = null; // { pointerId | null } - null pointerId means mouse
+// Only one goToPage() render is ever in flight - see scrubToPage below for
+// why (mid-drag, mousemove fires far faster than a full-res PDF page can
+// render).
+let scrubTargetPage = null;
+let scrubRenderInFlight = false;
+
+function updateScrubberHandle(page) {
+  const track = document.getElementById('page-scrubber-track');
+  const handle = document.getElementById('page-scrubber-handle');
+  const frac = numPages > 1 ? (page - 1) / (numPages - 1) : 0;
+  handle.style.top = `${frac * track.clientHeight}px`;
+  handle.textContent = String(page);
+}
+
+function pageFromClientY(clientY) {
+  const track = document.getElementById('page-scrubber-track');
+  const rect = track.getBoundingClientRect();
+  if (!rect.height) return currentPage;
+  const frac = Math.min(1, Math.max(0, (clientY - rect.top) / rect.height));
+  return Math.round(frac * (numPages - 1)) + 1;
+}
+
+// Coalesces to whatever page was most recently requested rather than
+// rendering every page the cursor crosses - a fast drag from page 1 to 40
+// fires far more mousemoves than a full-resolution PDF render can keep up
+// with, and queuing each one in order would make the view lag noticeably
+// behind the handle instead of catching up to where the user actually is.
+async function scrubToPage(n) {
+  scrubTargetPage = Math.min(numPages, Math.max(1, n));
+  if (scrubRenderInFlight) return;
+  scrubRenderInFlight = true;
+  try {
+    while (scrubTargetPage !== null && scrubTargetPage !== currentPage) {
+      const target = scrubTargetPage;
+      scrubTargetPage = null;
+      await goToPage(target);
+    }
+  } finally {
+    scrubRenderInFlight = false;
+  }
+}
+
+function setupPageScrubber() {
+  const track = document.getElementById('page-scrubber-track');
+
+  function pointFromEvent(e) {
+    return e.touches && e.touches.length ? e.touches[0] : e;
+  }
+
+  function start(e) {
+    if (e.touches && e.touches.length > 1) return;
+    e.preventDefault();
+    pageScrubDrag = {};
+    const page = pageFromClientY(pointFromEvent(e).clientY);
+    updateScrubberHandle(page);
+    scrubToPage(page);
+  }
+  function move(e) {
+    if (!pageScrubDrag) return;
+    if (e.touches && e.touches.length > 1) return;
+    e.preventDefault();
+    const page = pageFromClientY(pointFromEvent(e).clientY);
+    updateScrubberHandle(page);
+    scrubToPage(page);
+  }
+  function end() {
+    if (!pageScrubDrag) return;
+    pageScrubDrag = null;
+    updateScrubberHandle(currentPage);
+  }
+
+  track.addEventListener('mousedown', start);
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  track.addEventListener('touchstart', start, { passive: false });
+  window.addEventListener('touchmove', move, { passive: false });
+  window.addEventListener('touchend', end);
+  window.addEventListener('touchcancel', end);
 }
 
 async function renderPage() {
@@ -600,6 +703,7 @@ document.getElementById('download-doc-btn').addEventListener('click', () => {
   }
 
   setupZoomPan();
+  setupPageScrubber();
   await renderPdf();
 
   if (markupsEnabled && markupsController) {
