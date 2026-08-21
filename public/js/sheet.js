@@ -2155,6 +2155,7 @@ let takeoffEditDrag = null; // { startPt, moved }
 let takeoffMarquee = null; // { startPt, currentPt }
 let takeoffLastClickPoint = null; // { index, time } - manual double-click detection for point delete
 let takeoffLastClickSegment = null; // { key, time } - manual double-click detection for inserting a point on a line
+let takeoffLastPointClickTime = 0; // timestamp of the last point placed while tracing - see the finish-on-double-click check below
 
 // Blender-style "C" circle-select, as an alternative to the rectangle
 // marquee above - useful when the points you want aren't conveniently
@@ -5653,11 +5654,20 @@ function setupTakeoffInteraction() {
       if (takeoffPoints.length > 2 && takeoffPoints.length > continuingSeedPointCount) {
         const last = takeoffPoints[takeoffPoints.length - 1];
         const scale = zoomPan ? zoomPan.state.scale : 1;
-        if (Math.hypot(pt.x - last.x, pt.y - last.y) < 6 / scale) {
+        const dist = Math.hypot(pt.x - last.x, pt.y - last.y);
+        // A real double-click (two clicks fired in quick succession, roughly
+        // the same spot) should also close the shape, even when the second
+        // click drifts past the tight pixel radius above - mouse/trackpad
+        // jitter between the two clicks of a fast double-click routinely
+        // exceeds a few screen pixels, which was making "double-click to
+        // stop" unreliable.
+        const isDoubleClickFinish = Date.now() - takeoffLastPointClickTime < 400 && dist < 40 / scale;
+        if (dist < 6 / scale || isDoubleClickFinish) {
           finishTakeoffInstance();
           return;
         }
       }
+      takeoffLastPointClickTime = Date.now();
       takeoffPoints.push(pt);
       redrawTakeoff();
     },
