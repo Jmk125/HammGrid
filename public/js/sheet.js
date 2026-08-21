@@ -1685,6 +1685,16 @@ function computeOverlay({ fit = false, draft = false } = {}) {
   const height = Math.max(1, Math.round(fullHeight * draftScale));
   canvas.width = width;
   canvas.height = height;
+  // zoomPan's pan/zoom transform (see zoomPan.js's apply()) is a CSS
+  // scale()/translate() calibrated against the canvas's on-screen CSS box,
+  // which defaults to its raster buffer size (canvas.width/height) unless
+  // overridden. Pin the box to the FULL resolution always, regardless of
+  // draft's smaller buffer - the browser just stretches the smaller raster
+  // to fill it (the "blurry while dragging" effect wanted), instead of the
+  // whole element shrinking and drifting out of sync with zoomPan's
+  // transform, which stays calibrated against the full size the whole time.
+  canvas.style.width = `${fullWidth}px`;
+  canvas.style.height = `${fullHeight}px`;
 
   // Draws the image centered on the composite canvas, offset by the layer's
   // drag (tx,ty) and rotated about its own center - identical to the old
@@ -1912,6 +1922,14 @@ function exitOverlay(rerender) {
   document.getElementById('markup-svg').style.display = '';
   const bar = document.getElementById('overlay-controls-bar');
   if (bar) bar.remove();
+  // computeOverlay pins an explicit CSS box size on the canvas (see its own
+  // comment) - normal PDF.js rendering relies on the canvas's default
+  // intrinsic sizing instead and never sets this itself, so a leftover
+  // inline size from overlay mode would keep stretching/squashing the next
+  // sheet render to whatever the last overlay's dimensions happened to be.
+  const canvas = document.getElementById('pdf-canvas');
+  canvas.style.width = '';
+  canvas.style.height = '';
   if (rerender) renderPdf(displayedVersionId);
 }
 
