@@ -126,14 +126,6 @@ let overlayAlignActive = false;
 let overlayAlignTarget = 'b';
 let overlayDrag = null;
 let overlayRecomputeQueued = false;
-// Live-drag compositing budget - see computeOverlay's `draft` param. Preview
-// images are now up to 4000px on the long edge (project memory: preview
-// resolution), and a full-resolution composite is several getImageData/
-// putImageData passes over that many pixels - fine once, but re-running it
-// on every mousemove during align-drag can't keep up. Capping the drag-time
-// render to this many pixels keeps recompute cheap while dragging; the
-// instant the drag ends, one full-resolution pass renders the real thing.
-const OVERLAY_DRAFT_MAX_SIDE = 1000;
 let currentRenderTask = null;
 let userHasZoomedOrPanned = false;
 // Set at the end of every successful render, so the search-highlight step
@@ -1666,35 +1658,17 @@ async function loadOverlayImages() {
 // entering overlay or toggling A/B visibility, NOT during align-drag or
 // rotate, which must preserve whatever zoom/pan the user has dialed in while
 // lining things up.
-function computeOverlay({ fit = false, draft = false } = {}) {
+function computeOverlay({ fit = false } = {}) {
   const { showA, showB } = overlayLayers;
   const canvas = document.getElementById('pdf-canvas');
   const imgA = overlayImages.a;
   const imgB = overlayImages.b;
   if (!imgA || !imgB) return;
 
-  const fullWidth = Math.max(imgA.naturalWidth, imgB.naturalWidth);
-  const fullHeight = Math.max(imgA.naturalHeight, imgB.naturalHeight);
-  // See OVERLAY_DRAFT_MAX_SIDE - while actively dragging, composite at a
-  // fraction of the full preview resolution for a smooth drag. tx/ty and
-  // every other transform value stay expressed in full-resolution units
-  // regardless (see toGray's cx.scale below), so draft and final renders
-  // agree exactly on alignment - only the pixel budget differs.
-  const draftScale = draft ? Math.min(1, OVERLAY_DRAFT_MAX_SIDE / Math.max(fullWidth, fullHeight)) : 1;
-  const width = Math.max(1, Math.round(fullWidth * draftScale));
-  const height = Math.max(1, Math.round(fullHeight * draftScale));
+  const width = Math.max(imgA.naturalWidth, imgB.naturalWidth);
+  const height = Math.max(imgA.naturalHeight, imgB.naturalHeight);
   canvas.width = width;
   canvas.height = height;
-  // zoomPan's pan/zoom transform (see zoomPan.js's apply()) is a CSS
-  // scale()/translate() calibrated against the canvas's on-screen CSS box,
-  // which defaults to its raster buffer size (canvas.width/height) unless
-  // overridden. Pin the box to the FULL resolution always, regardless of
-  // draft's smaller buffer - the browser just stretches the smaller raster
-  // to fill it (the "blurry while dragging" effect wanted), instead of the
-  // whole element shrinking and drifting out of sync with zoomPan's
-  // transform, which stays calibrated against the full size the whole time.
-  canvas.style.width = `${fullWidth}px`;
-  canvas.style.height = `${fullHeight}px`;
 
   // Draws the image centered on the composite canvas, offset by the layer's
   // drag (tx,ty) and rotated about its own center - identical to the old
@@ -1708,8 +1682,7 @@ function computeOverlay({ fit = false, draft = false } = {}) {
     cx.fillStyle = 'white';
     cx.fillRect(0, 0, width, height);
     cx.save();
-    cx.scale(draftScale, draftScale);
-    cx.translate(fullWidth / 2 + transform.tx, fullHeight / 2 + transform.ty);
+    cx.translate(width / 2 + transform.tx, height / 2 + transform.ty);
     cx.rotate((transform.rotation * Math.PI) / 180);
     cx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
     cx.restore();
@@ -1746,16 +1719,13 @@ function computeOverlay({ fit = false, draft = false } = {}) {
 // Drag-align and rotate can fire many times a second (mousemove, or a user
 // rapid-clicking rotation angles) - a full-resolution pixel composite on
 // every single event would visibly lag, so recomputes are coalesced to at
-// most one per animation frame. While an align-drag is in progress
-// (overlayDrag set), each of those coalesced recomputes also renders at
-// draft resolution rather than full - see computeOverlay's `draft` param
-// and endAlignDrag's own final full-resolution call once the drag lets go.
+// most one per animation frame.
 function scheduleOverlayRecompute() {
   if (overlayRecomputeQueued) return;
   overlayRecomputeQueued = true;
   requestAnimationFrame(() => {
     overlayRecomputeQueued = false;
-    computeOverlay({ draft: !!overlayDrag });
+    computeOverlay();
   });
 }
 
@@ -1784,12 +1754,7 @@ function setupOverlayAlignDrag() {
     scheduleOverlayRecompute();
   }
   function endAlignDrag() {
-    if (!overlayDrag) return; // this listener is global (window mouseup/touchend) - ignore mouseups unrelated to an actual drag
     overlayDrag = null;
-    // The last few in-drag recomputes rendered at draft resolution (see
-    // scheduleOverlayRecompute) - now that the drag has actually stopped,
-    // one full-resolution pass shows the real, crisp result.
-    computeOverlay();
   }
   wrapEl.addEventListener('mousedown', startAlignDrag);
   window.addEventListener('mousemove', moveAlignDrag);
@@ -1922,14 +1887,6 @@ function exitOverlay(rerender) {
   document.getElementById('markup-svg').style.display = '';
   const bar = document.getElementById('overlay-controls-bar');
   if (bar) bar.remove();
-  // computeOverlay pins an explicit CSS box size on the canvas (see its own
-  // comment) - normal PDF.js rendering relies on the canvas's default
-  // intrinsic sizing instead and never sets this itself, so a leftover
-  // inline size from overlay mode would keep stretching/squashing the next
-  // sheet render to whatever the last overlay's dimensions happened to be.
-  const canvas = document.getElementById('pdf-canvas');
-  canvas.style.width = '';
-  canvas.style.height = '';
   if (rerender) renderPdf(displayedVersionId);
 }
 
