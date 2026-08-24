@@ -1896,6 +1896,10 @@ async function enterOverlay(aVersionId, bVersionId) {
   overlayAlignTarget = 'b';
   overlayAlignActive = false;
   document.getElementById('markup-svg').style.display = 'none';
+  // Re-show immediately if a take-off tool/edit was already armed coming
+  // into overlay - unlike freeze pane (disarmed above), take-off should
+  // survive the transition since its geometry isn't version-specific.
+  syncTakeoffOverlaySvgVisibility();
   clearMeasure();
   // Any already-pinned pane whose captured version happens to be one side of
   // THIS pairing should light up immediately, not just ones captured while
@@ -1949,11 +1953,17 @@ async function enterOverlay(aVersionId, bVersionId) {
 
 function exitOverlay(rerender) {
   if (!overlayActive) return;
+  if (freezeArmed) disarmFreezePane();
   overlayActive = false;
   overlayAlignActive = false;
   overlayDrag = null;
   document.getElementById('zoom-wrap').classList.remove('align-active');
-  document.getElementById('markup-svg').style.display = '';
+  const svg = document.getElementById('markup-svg');
+  svg.style.display = '';
+  // .overlay-takeoff-active has no JS-side overlayActive guard in its CSS
+  // rule (see style.css) - strip it here so a stuck class can never
+  // wrongly hide non-take-off layers once overlay is gone.
+  svg.classList.remove('overlay-takeoff-active');
   const bar = document.getElementById('overlay-controls-bar');
   if (bar) bar.remove();
   // Outside overlay there's no A/B pairing for a pane's versionId to be
@@ -3622,6 +3632,27 @@ function ensureTakeoffInstancesLayer() {
   return g;
 }
 
+// Take-off geometry has no version concept (see loadSheetTakeoffInstances) -
+// unlike markups/measurements, it's safe to keep interactive during overlay
+// compare. #markup-svg is force-hidden during overlay by default (see
+// enterOverlay); this re-shows it, scoped via .overlay-takeoff-active (see
+// style.css) to just the take-off layers, whenever a take-off tool is armed
+// or an instance is being edited. Mirrors armFreezePane/disarmFreezePane's
+// own display toggling for the pin tool, which uses the same #markup-svg.
+function syncTakeoffOverlaySvgVisibility() {
+  const svg = document.getElementById('markup-svg');
+  if (!svg || !overlayActive) return;
+  const takeoffNeedsSvg = !!(takeoffTool || editingInstance);
+  svg.classList.toggle('overlay-takeoff-active', takeoffNeedsSvg);
+  if (takeoffNeedsSvg) {
+    svg.style.display = '';
+  } else if (!freezeArmed) {
+    // Don't fight freeze pane if it still needs the svg visible - same guard
+    // disarmFreezePane() uses for the same reason.
+    svg.style.display = 'none';
+  }
+}
+
 function clearTakeoffDraft() {
   takeoffPoints = [];
   awaitingArcThrough = false;
@@ -4297,6 +4328,7 @@ function ensureTakeoffEditLayer() {
 
 function enterTakeoffEditMode(instance) {
   if (editingInstance && editingInstance.id === instance.id) return;
+  if (freezeArmed) disarmFreezePane();
   // Deep-ish copy of geometry so live drag edits don't mutate the shared
   // sheetTakeoffInstances array until they're actually persisted.
   editingInstance = {
@@ -5202,6 +5234,7 @@ function activateTakeoffItem(item) {
   // multi-select is in effect - it drops back down to just this one item.
   if (item.id === activeTakeoffItemId && !continuingInstanceId && multiSelectExtraItemIds.size === 0) return;
   exitTakeoffEditMode();
+  if (freezeArmed) disarmFreezePane();
   clearMeasure();
   stopMeasureTool();
   if (markupsController) markupsController.forceSelectTool();
@@ -5246,6 +5279,7 @@ function activateAssembly(assembly) {
   if (assembly.id === activeAssemblyId) return;
   deactivateTakeoff();
   exitTakeoffEditMode();
+  if (freezeArmed) disarmFreezePane();
   clearMeasure();
   stopMeasureTool();
   if (markupsController) markupsController.forceSelectTool();
@@ -5483,6 +5517,7 @@ function continueTakeoffInstance(instance) {
     return;
   }
   exitTakeoffEditMode();
+  if (freezeArmed) disarmFreezePane();
   clearMeasure();
   stopMeasureTool();
   if (markupsController) markupsController.forceSelectTool();
@@ -5509,6 +5544,7 @@ function continueTakeoffInstance(instance) {
 // extending an outer boundary.
 function subtractFromTakeoffInstance(instance) {
   exitTakeoffEditMode();
+  if (freezeArmed) disarmFreezePane();
   clearMeasure();
   stopMeasureTool();
   if (markupsController) markupsController.forceSelectTool();
@@ -5801,7 +5837,8 @@ function setupTakeoffInteraction() {
       // ones, or the very first extension click (naturally right next to
       // the original endpoint) would silently finish the draft instead of
       // extending it.
-      if (takeoffPoints.length > 2 && takeoffPoints.length > continuingSeedPointCount) {
+      const minTracePoints = takeoffTool === 'area' ? 3 : 2;
+      if (takeoffPoints.length >= minTracePoints && takeoffPoints.length > continuingSeedPointCount) {
         const last = takeoffPoints[takeoffPoints.length - 1];
         const scale = zoomPan ? zoomPan.state.scale : 1;
         const dist = Math.hypot(pt.x - last.x, pt.y - last.y);
@@ -6220,6 +6257,7 @@ function openTakeoffEditModal(item) {
 // with a freshly-POSTed item that should immediately arm for placement.
 function armNewlyCreatedTakeoffItem(item, type) {
   if (!item) return; // cancelled - nothing armed
+  if (freezeArmed) disarmFreezePane();
   takeoffItems.push({ ...item, total_quantity: 0, instance_count: 0 });
   takeoffTool = type;
   activeTakeoffItemId = item.id;
@@ -6746,6 +6784,7 @@ function renderTakeoffPane() {
   // management resumes normal control.
   const markupSvg = document.getElementById('markup-svg');
   if (markupSvg) markupSvg.style.cursor = takeoffTool ? 'crosshair' : '';
+  syncTakeoffOverlaySvgVisibility();
 
   document.querySelectorAll('#takeoff-tool-grid .tool-btn').forEach((b) => {
     b.classList.toggle('active', b.dataset.tool === takeoffTool);
@@ -7235,7 +7274,6 @@ async function setupTakeoffTools() {
     btn.title = def.title;
     btn.innerHTML = def.tool === 'count' ? TAKEOFF_COUNT_ICON : MEASURE_ICONS[def.tool === 'linear' ? 'line' : def.tool];
     btn.addEventListener('click', () => {
-      if (overlayActive) return;
       if (btn.disabled) return;
       if (!scaleFeetPerInch) {
         showToast('Set a scale first.', 'error');

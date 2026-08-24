@@ -1052,6 +1052,18 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
    everything else in it should stay hidden - only the in-progress capture
    draft rect (#freeze-draft-layer) is meant to be seen. */
 #markup-svg.overlay-freeze-active > *:not(#freeze-draft-layer) { display: none; }
+
+/* Take-off geometry has no version concept (identical regardless of which
+   version(s) are composited - see loadSheetTakeoffInstances), unlike markups/
+   measurements. So instead of keeping #markup-svg fully hidden during
+   overlay, arming a take-off tool or entering take-off edit mode re-shows it
+   scoped to just the take-off layers - everything else (markup layers,
+   measure layers, the freeze draft layer) stays hidden. Mirrors
+   .overlay-freeze-active above, but exempts take-off's three layers instead
+   of just #freeze-draft-layer. */
+#markup-svg.overlay-takeoff-active > *:not(#takeoff-draft-layer):not(#takeoff-instances-layer):not(#takeoff-edit-layer) {
+  display: none;
+}
 .freeze-pane-header {
   display: flex;
   align-items: center;
