@@ -142,6 +142,11 @@ let activeSearchTerm = localStorage.getItem(searchStorageKey()) || '';
 let freezeArmed = false;
 let freezeDragStart = null;
 let freezePanes = [];
+// Which overlay layer ('a' or 'b') the pin tool is capturing from - only set
+// while armed during overlay compare (see armFreezePane's overlay gate
+// below), null otherwise. Captured at arm time rather than re-derived at
+// drag-release so it can't change mid-drag if the A/B chips get clicked.
+let freezeOverlaySourceLayer = null;
 
 function searchStorageKey() {
   return `hammgrid-sheet-search:${projectId}`;
@@ -1783,11 +1788,16 @@ function wireOverlayControls() {
   const aChip = document.getElementById('overlay-toggle-a-chip');
   const bChip = document.getElementById('overlay-toggle-b-chip');
   document.getElementById('overlay-toggle-a').addEventListener('change', (e) => {
+    // A stray toggle mid-arm would leave freezeOverlaySourceLayer pointing
+    // at a layer that's no longer the single visible one - disarm rather
+    // than let a capture get mislabeled/ambiguous.
+    if (freezeArmed) disarmFreezePane();
     overlayLayers.showA = e.target.checked;
     aChip.classList.toggle('checked', e.target.checked);
     computeOverlay({ fit: true });
   });
   document.getElementById('overlay-toggle-b').addEventListener('change', (e) => {
+    if (freezeArmed) disarmFreezePane();
     overlayLayers.showB = e.target.checked;
     bChip.classList.toggle('checked', e.target.checked);
     computeOverlay({ fit: true });
@@ -1858,6 +1868,7 @@ function exportOverlayImage() {
 }
 
 async function enterOverlay(aVersionId, bVersionId) {
+  if (freezeArmed) disarmFreezePane();
   overlayActive = true;
   overlayLayers = { a: aVersionId, b: bVersionId, showA: true, showB: true };
   overlayTransform = { a: { tx: 0, ty: 0, rotation: 0 }, b: { tx: 0, ty: 0, rotation: 0 } };
@@ -2604,10 +2615,33 @@ function getMeasureSvgPoint(evt) {
 }
 
 // ---------- Frozen reference panes ("press P") ----------
+// While overlaying two drawings, #pdf-canvas holds a red/blue composite of
+// BOTH - capturing it directly would bake in whichever composite tint (or
+// both) happened to be showing, not a single drawing's true appearance. So
+// the pin tool requires exactly one of A/B to be toggled on first (that's
+// what a single-layer overlay view already renders in plain grayscale - see
+// computeOverlay's showA-only/showB-only branches), which unambiguously
+// identifies which drawing is being pinned from. Returns 'a'/'b' or null.
+function overlaySingleShownLayer() {
+  if (overlayLayers.showA && !overlayLayers.showB) return 'a';
+  if (overlayLayers.showB && !overlayLayers.showA) return 'b';
+  return null;
+}
+
 // Disarms whatever's currently active first (same convention as
 // armScaleZoneDraw) so a stray click doesn't also drop a take-off point or
 // measure vertex on the same canvas.
 function armFreezePane() {
+  if (overlayActive) {
+    const layer = overlaySingleShownLayer();
+    if (!layer) {
+      showToast('Show only drawing A or only drawing B to pin from it.', 'error');
+      return;
+    }
+    freezeOverlaySourceLayer = layer;
+  } else {
+    freezeOverlaySourceLayer = null;
+  }
   deactivateTakeoff();
   exitTakeoffEditMode();
   clearMeasure();
@@ -2615,6 +2649,17 @@ function armFreezePane() {
   if (markupsController) markupsController.forceSelectTool();
   freezeArmed = true;
   document.getElementById('zoom-wrap').classList.add('freeze-armed');
+  if (overlayActive) {
+    // Normally hidden entirely during overlay (see enterOverlay) so stale
+    // markups/measurements/take-offs from the currently-displayed version
+    // don't float over an arbitrary version pairing. overlay-freeze-active
+    // (see style.css) keeps everything except #freeze-draft-layer hidden
+    // while still making the svg hit-testable, so the drag-to-capture
+    // gesture below has something to draw its draft rect into.
+    const svg = document.getElementById('markup-svg');
+    svg.classList.add('overlay-freeze-active');
+    svg.style.display = '';
+  }
   // #markup-svg sits on top of #zoom-wrap and covers the whole canvas, and
   // markups.js sets its own inline cursor style on it - same reasoning as
   // renderTakeoffPane's cursor handling. An inline style always wins over
@@ -2640,6 +2685,13 @@ function disarmFreezePane() {
   const btn = document.getElementById('freeze-pane-tool-btn');
   if (btn) btn.classList.remove('active');
   document.getElementById('freeze-pane-toolbar').style.display = 'none';
+  const svg = document.getElementById('markup-svg');
+  svg.classList.remove('overlay-freeze-active');
+  // Only re-hide if overlay is still active - if disarm is happening because
+  // exitOverlay() already ran (which sets overlayActive false before its own
+  // display reset), don't fight that reset by forcing display back to none.
+  if (overlayActive) svg.style.display = 'none';
+  freezeOverlaySourceLayer = null;
 }
 
 function ensureFreezeDraftLayer() {
@@ -2677,11 +2729,12 @@ let freezePaneIdCounter = 0;
 // across drawings" on one sheet makes it reappear - same screen position,
 // same captured image, same label/collapsed state - on every other sheet in
 // this project, until explicitly closed. Stored as a plain array of {id,
-// dataUrl, width, height, left, top, boxWidth, boxHeight, collapsed, label}
-// in localStorage; nothing server-side, matching the rest of this feature's
-// session-scratch nature (just longer-lived scratch). boxWidth/boxHeight are
-// only present once the user has manually resized the pane (undefined means
-// "stay shrink-to-fit around the image").
+// dataUrl, width, height, left, top, boxWidth, boxHeight, collapsed, label,
+// sourceLayer} in localStorage; nothing server-side, matching the rest of
+// this feature's session-scratch nature (just longer-lived scratch).
+// boxWidth/boxHeight are only present once the user has manually resized the
+// pane (undefined means "stay shrink-to-fit around the image"). sourceLayer
+// ('a'/'b') is only present when the pane was captured mid-overlay.
 function freezePanesStorageKey() {
   return `hammgrid-frozen-panes:${projectId}`;
 }
@@ -2737,9 +2790,15 @@ function clientPointFromEvent(e) {
 // <img> when rehydrating a persisted pane on a different sheet. The two
 // creation paths below share everything except how the image content is
 // produced.
-function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collapsed, boxWidth, boxHeight }) {
+function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collapsed, boxWidth, boxHeight, sourceLayer }) {
   const el = document.createElement('div');
   el.className = 'freeze-pane';
+  // Captured from a single overlay layer (A/B toggled off before pinning -
+  // see armFreezePane's overlay gate) - a colored top border matching that
+  // layer's overlay tint (A=blue, B=red) so the pane still reads as "which
+  // drawing was this from" once both layers are back on and the composite
+  // no longer visually distinguishes them.
+  if (sourceLayer === 'a' || sourceLayer === 'b') el.classList.add(`freeze-pane-source-${sourceLayer}`);
   el.style.left = `${left}px`;
   el.style.top = `${top}px`;
   if (boxWidth) el.style.width = `${boxWidth}px`;
@@ -2865,6 +2924,7 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
         boxHeight: el.style.height ? el.offsetHeight : undefined,
         collapsed: el.classList.contains('freeze-pane-collapsed'),
         label: labelInput.value,
+        sourceLayer: sourceLayer === 'a' || sourceLayer === 'b' ? sourceLayer : undefined,
       });
     } else {
       removePersistedFreezePane(id);
@@ -3042,6 +3102,7 @@ function createFreezePane(rect) {
     left: screenX,
     top: screenY,
     persisted: false,
+    sourceLayer: freezeOverlaySourceLayer,
   });
 }
 
@@ -3061,6 +3122,7 @@ function restorePersistedFreezePanes() {
       collapsed: entry.collapsed,
       boxWidth: entry.boxWidth,
       boxHeight: entry.boxHeight,
+      sourceLayer: entry.sourceLayer,
     });
   }
 }
