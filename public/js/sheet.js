@@ -5801,7 +5801,8 @@ function setupTakeoffInteraction() {
       // ones, or the very first extension click (naturally right next to
       // the original endpoint) would silently finish the draft instead of
       // extending it.
-      if (takeoffPoints.length > 2 && takeoffPoints.length > continuingSeedPointCount) {
+      const minTracePoints = takeoffTool === 'area' ? 3 : 2;
+      if (takeoffPoints.length >= minTracePoints && takeoffPoints.length > continuingSeedPointCount) {
         const last = takeoffPoints[takeoffPoints.length - 1];
         const scale = zoomPan ? zoomPan.state.scale : 1;
         const dist = Math.hypot(pt.x - last.x, pt.y - last.y);
