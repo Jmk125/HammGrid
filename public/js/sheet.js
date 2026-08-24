@@ -1674,6 +1674,17 @@ function computeOverlay({ fit = false } = {}) {
   const height = Math.max(imgA.naturalHeight, imgB.naturalHeight);
   canvas.width = width;
   canvas.height = height;
+  // #markup-svg's viewBox is otherwise only synced from the last normal
+  // renderPdf() call (see syncSheetLinkLayer), which used the single-sheet
+  // RENDER_SCALE/MAX_RENDER_PX pixel size - almost never the same as these
+  // preview images' dimensions. Left stale, every #markup-svg-based
+  // coordinate conversion (getMeasureSvgPoint - the pin tool's drag-to-
+  // capture math) would map screen positions to the wrong pixel rect on
+  // this canvas, sampling blank space instead of the drawing. Harmless to
+  // call on every recompute (align-drag, rotate, A/B toggle) since it's a
+  // cheap attribute set and width/height are already unchanged between
+  // calls for the same A/B pair.
+  document.getElementById('markup-svg').setAttribute('viewBox', `0 0 ${width} ${height}`);
 
   // Draws the image centered on the composite canvas, offset by the layer's
   // drag (tx,ty) and rotated about its own center - identical to the old
@@ -1694,8 +1705,18 @@ function computeOverlay({ fit = false } = {}) {
     return cx.getImageData(0, 0, width, height).data;
   }
 
-  const aPixels = showA ? toGray(imgA, overlayTransform.a) : null;
-  const bPixels = showB ? toGray(imgB, overlayTransform.b) : null;
+  // A manual align-drag/rotate offset only means something as a comparison
+  // aid between the two layers - viewed alone (the other toggled off), that
+  // offset just shifts the drawing off-center and can clip content past the
+  // composite canvas's edges. So a single-layer view always renders at the
+  // untouched identity transform ("original position, whole drawing
+  // visible"), regardless of what alignment is currently dialed in; only the
+  // full A+B composite honors the manual alignment, since that's the only
+  // place it's meant to be seen.
+  const bothShown = showA && showB;
+  const IDENTITY_TRANSFORM = { tx: 0, ty: 0, rotation: 0 };
+  const aPixels = showA ? toGray(imgA, bothShown ? overlayTransform.a : IDENTITY_TRANSFORM) : null;
+  const bPixels = showB ? toGray(imgB, bothShown ? overlayTransform.b : IDENTITY_TRANSFORM) : null;
 
   const ctx = canvas.getContext('2d');
   const out = ctx.createImageData(width, height);
@@ -1876,6 +1897,10 @@ async function enterOverlay(aVersionId, bVersionId) {
   overlayAlignActive = false;
   document.getElementById('markup-svg').style.display = 'none';
   clearMeasure();
+  // Any already-pinned pane whose captured version happens to be one side of
+  // THIS pairing should light up immediately, not just ones captured while
+  // already overlaying.
+  refreshFreezePaneOverlayColors();
 
   let bar = document.getElementById('overlay-controls-bar');
   if (!bar) {
@@ -1931,6 +1956,10 @@ function exitOverlay(rerender) {
   document.getElementById('markup-svg').style.display = '';
   const bar = document.getElementById('overlay-controls-bar');
   if (bar) bar.remove();
+  // Outside overlay there's no A/B pairing for a pane's versionId to be
+  // "one side of" - clear the color-coding rather than leave a stale
+  // blue/red border hanging around with no overlay context to explain it.
+  refreshFreezePaneOverlayColors();
   if (rerender) renderPdf(displayedVersionId);
 }
 
@@ -2628,6 +2657,25 @@ function overlaySingleShownLayer() {
   return null;
 }
 
+// Color-codes a pane by comparing the sheet_versions id it was captured from
+// against whichever two versions the CURRENT overlay session is comparing -
+// not baked in permanently at capture time, since a pane persists across
+// sheets/sessions (see freezePanesStorageKey) and the same version could be
+// "A" in one overlay pairing and "B" (or neither) in the next. Applies to
+// every pane, not just ones captured mid-overlay - a pane pinned during
+// ordinary single-sheet viewing still has a real versionId, so it lights up
+// the moment its version happens to be one side of a later overlay compare.
+function applyFreezePaneOverlayColor(el, versionId) {
+  el.classList.remove('freeze-pane-source-a', 'freeze-pane-source-b');
+  if (!overlayActive || versionId == null) return;
+  if (versionId === overlayLayers.a) el.classList.add('freeze-pane-source-a');
+  else if (versionId === overlayLayers.b) el.classList.add('freeze-pane-source-b');
+}
+
+function refreshFreezePaneOverlayColors() {
+  for (const p of freezePanes) applyFreezePaneOverlayColor(p.el, p.versionId);
+}
+
 // Disarms whatever's currently active first (same convention as
 // armScaleZoneDraw) so a stray click doesn't also drop a take-off point or
 // measure vertex on the same canvas.
@@ -2730,11 +2778,15 @@ let freezePaneIdCounter = 0;
 // same captured image, same label/collapsed state - on every other sheet in
 // this project, until explicitly closed. Stored as a plain array of {id,
 // dataUrl, width, height, left, top, boxWidth, boxHeight, collapsed, label,
-// sourceLayer} in localStorage; nothing server-side, matching the rest of
-// this feature's session-scratch nature (just longer-lived scratch).
-// boxWidth/boxHeight are only present once the user has manually resized the
-// pane (undefined means "stay shrink-to-fit around the image"). sourceLayer
-// ('a'/'b') is only present when the pane was captured mid-overlay.
+// versionId} in localStorage; nothing server-side, matching the rest of this
+// feature's session-scratch nature (just longer-lived scratch). boxWidth/
+// boxHeight are only present once the user has manually resized the pane
+// (undefined means "stay shrink-to-fit around the image"). versionId is
+// whichever sheet_versions id was on screen when the pane was captured
+// (the single visible overlay layer's version if captured mid-overlay,
+// otherwise displayedVersionId) - see applyFreezePaneOverlayColor, which
+// uses it to color-code the pane whenever overlay compare is later entered
+// against that same version, whether or not the pane was captured there.
 function freezePanesStorageKey() {
   return `hammgrid-frozen-panes:${projectId}`;
 }
@@ -2790,15 +2842,9 @@ function clientPointFromEvent(e) {
 // <img> when rehydrating a persisted pane on a different sheet. The two
 // creation paths below share everything except how the image content is
 // produced.
-function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collapsed, boxWidth, boxHeight, sourceLayer }) {
+function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collapsed, boxWidth, boxHeight, versionId }) {
   const el = document.createElement('div');
   el.className = 'freeze-pane';
-  // Captured from a single overlay layer (A/B toggled off before pinning -
-  // see armFreezePane's overlay gate) - a colored top border matching that
-  // layer's overlay tint (A=blue, B=red) so the pane still reads as "which
-  // drawing was this from" once both layers are back on and the composite
-  // no longer visually distinguishes them.
-  if (sourceLayer === 'a' || sourceLayer === 'b') el.classList.add(`freeze-pane-source-${sourceLayer}`);
   el.style.left = `${left}px`;
   el.style.top = `${top}px`;
   if (boxWidth) el.style.width = `${boxWidth}px`;
@@ -2903,7 +2949,8 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
   });
 
   document.getElementById('zoom-wrap').appendChild(el);
-  freezePanes.push({ id, el });
+  freezePanes.push({ id, el, versionId });
+  applyFreezePaneOverlayColor(el, versionId);
 
   const persistCheckbox = el.querySelector('.freeze-pane-persist-checkbox');
   const labelInput = el.querySelector('.freeze-pane-label');
@@ -2924,7 +2971,7 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
         boxHeight: el.style.height ? el.offsetHeight : undefined,
         collapsed: el.classList.contains('freeze-pane-collapsed'),
         label: labelInput.value,
-        sourceLayer: sourceLayer === 'a' || sourceLayer === 'b' ? sourceLayer : undefined,
+        versionId,
       });
     } else {
       removePersistedFreezePane(id);
@@ -3096,13 +3143,21 @@ function createFreezePane(rect) {
   const screenX = svgRect.left + (rect.x / vb.width) * svgRect.width;
   const screenY = svgRect.top + (rect.y / vb.height) * svgRect.height;
 
+  // Which sheet_versions id was actually on screen for this capture - the
+  // single visible overlay layer's real version id (not just 'a'/'b', which
+  // only means something for the current overlay session) if captured
+  // mid-overlay, otherwise whatever version the normal single-sheet view was
+  // showing. See applyFreezePaneOverlayColor for how this drives color-
+  // coding whenever overlay compare is (re)entered later.
+  const versionId = overlayActive ? overlayLayers[freezeOverlaySourceLayer] : displayedVersionId;
+
   buildFreezePaneEl({
     id: `${Date.now()}-${++freezePaneIdCounter}`,
     contentEl: captureCanvas,
     left: screenX,
     top: screenY,
     persisted: false,
-    sourceLayer: freezeOverlaySourceLayer,
+    versionId,
   });
 }
 
@@ -3122,7 +3177,7 @@ function restorePersistedFreezePanes() {
       collapsed: entry.collapsed,
       boxWidth: entry.boxWidth,
       boxHeight: entry.boxHeight,
-      sourceLayer: entry.sourceLayer,
+      versionId: entry.versionId,
     });
   }
 }
