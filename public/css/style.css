@@ -1036,6 +1036,21 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   display: flex;
   flex-direction: column;
 }
+/* Pinned while overlay-comparing with only one drawing shown (see
+   armFreezePane's overlay gate in sheet.js) - a colored top border matching
+   that drawing's overlay tint (A=blue, B=red) so the pane still shows which
+   drawing it came from once both layers are toggled back on. */
+.freeze-pane.freeze-pane-source-a { border-top: 3px solid #3b82f6; }
+.freeze-pane.freeze-pane-source-b { border-top: 3px solid #ef4444; }
+
+/* Normally #markup-svg is hidden outright during overlay compare (see
+   enterOverlay/exitOverlay in sheet.js) so stale markups/measurements/
+   take-offs from the currently-displayed version don't float over an
+   arbitrary version pairing. Arming the pin tool during overlay needs the
+   svg visible/hit-testable again for its drag-to-capture gesture, but
+   everything else in it should stay hidden - only the in-progress capture
+   draft rect (#freeze-draft-layer) is meant to be seen. */
+#markup-svg.overlay-freeze-active > *:not(#freeze-draft-layer) { display: none; }
 .freeze-pane-header {
   display: flex;
   align-items: center;
