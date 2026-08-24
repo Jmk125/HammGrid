@@ -1036,10 +1036,11 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   display: flex;
   flex-direction: column;
 }
-/* Pinned while overlay-comparing with only one drawing shown (see
-   armFreezePane's overlay gate in sheet.js) - a colored top border matching
-   that drawing's overlay tint (A=blue, B=red) so the pane still shows which
-   drawing it came from once both layers are toggled back on. */
+/* Applied/removed dynamically by applyFreezePaneOverlayColor (sheet.js)
+   whenever overlay compare is entered/exited - not fixed at capture time,
+   since the same pane can be re-shown against a different version pairing
+   later. Colored top border matches whichever side (A=blue, B=red) of the
+   CURRENT overlay session the pane's captured version happens to be. */
 .freeze-pane.freeze-pane-source-a { border-top: 3px solid #3b82f6; }
 .freeze-pane.freeze-pane-source-b { border-top: 3px solid #ef4444; }
 
