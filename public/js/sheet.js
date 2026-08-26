@@ -3277,8 +3277,11 @@ function setupFreezePaneTool() {
   window.addEventListener('mouseup', (e) => {
     if (!freezeArmed || !freezeDragStart) return;
     const r = rectFromCorners(freezeDragStart, getMeasureSvgPoint(e));
-    disarmFreezePane();
+    // Capture BEFORE disarming - disarmFreezePane() clears
+    // freezeOverlaySourceLayer, which createFreezePane still needs to know
+    // which overlay side this capture came from (see its own comment).
     if (r.width > 4 && r.height > 4) createFreezePane(r);
+    disarmFreezePane();
   });
 
   // Touch equivalents of the three mouse handlers above - iOS never fires
@@ -3307,8 +3310,9 @@ function setupFreezePaneTool() {
   window.addEventListener('touchend', (e) => {
     if (!freezeArmed || !freezeDragStart || e.touches.length > 0) return;
     const r = rectFromCorners(freezeDragStart, getMeasureSvgPoint(e));
-    disarmFreezePane();
+    // Capture BEFORE disarming - see the mouseup handler's comment above.
     if (r.width > 4 && r.height > 4) createFreezePane(r);
+    disarmFreezePane();
   });
 }
 
