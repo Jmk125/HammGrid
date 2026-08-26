@@ -1044,6 +1044,19 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .freeze-pane.freeze-pane-source-a { border-top: 3px solid #3b82f6; }
 .freeze-pane.freeze-pane-source-b { border-top: 3px solid #ef4444; }
 
+/* Tints the captured drawing itself to match, not just the header border.
+   The capture is black ink on a solid white background (see toGray/
+   createFreezePane), so blending it with `lighten` against a solid A/B
+   backdrop color leaves white untouched (max(255,x)=255) while pushing pure
+   black ink to the backdrop color (max(0,x)=x) - i.e. white stays white,
+   ink turns blue or red. This is the same math computeOverlay uses to color
+   each layer's ink in the live A+B composite, just applied to a single
+   already-captured image instead of two live layers. */
+.freeze-pane.freeze-pane-source-a .freeze-pane-viewport { background: #3b82f6; }
+.freeze-pane.freeze-pane-source-b .freeze-pane-viewport { background: #ef4444; }
+.freeze-pane.freeze-pane-source-a .freeze-pane-canvas,
+.freeze-pane.freeze-pane-source-b .freeze-pane-canvas { mix-blend-mode: lighten; }
+
 /* Normally #markup-svg is hidden outright during overlay compare (see
    enterOverlay/exitOverlay in sheet.js) so stale markups/measurements/
    take-offs from the currently-displayed version don't float over an
