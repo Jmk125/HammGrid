@@ -126,6 +126,18 @@ let overlayAlignActive = false;
 let overlayAlignTarget = 'b';
 let overlayDrag = null;
 let overlayRecomputeQueued = false;
+// Snapshotted from #pdf-canvas at enterOverlay() time - the canonical
+// RENDER_SCALE/MAX_RENDER_PX-derived pixel size normal single-sheet viewing
+// uses (see renderPdfAttempt/syncSheetLinkLayer), which #markup-svg's
+// viewBox stays pinned to at all times (including during overlay - see
+// computeOverlay). Take-off/markup/measurement geometry is stored in that
+// same space, so keeping it constant across the overlay transition is what
+// makes traced points land in the same spot whether or not overlay is
+// active. The overlay preview images almost never share this resolution
+// (see computeOverlay's imgScale), which is exactly the mismatch this exists
+// to paper over.
+let overlayCanonicalWidth = 0;
+let overlayCanonicalHeight = 0;
 let currentRenderTask = null;
 let userHasZoomedOrPanned = false;
 // Set at the end of every successful render, so the search-highlight step
@@ -1670,21 +1682,21 @@ function computeOverlay({ fit = false } = {}) {
   const imgB = overlayImages.b;
   if (!imgA || !imgB) return;
 
-  const width = Math.max(imgA.naturalWidth, imgB.naturalWidth);
-  const height = Math.max(imgA.naturalHeight, imgB.naturalHeight);
+  // Composite into the SAME pixel space normal single-sheet viewing uses
+  // (snapshotted at enterOverlay() time - see overlayCanonicalWidth's own
+  // comment), not the overlay preview images' own native resolution. Falls
+  // back to the old images-native sizing only defensively, in case this ever
+  // runs before enterOverlay() has snapshotted anything.
+  const width = overlayCanonicalWidth || Math.max(imgA.naturalWidth, imgB.naturalWidth);
+  const height = overlayCanonicalHeight || Math.max(imgA.naturalHeight, imgB.naturalHeight);
   canvas.width = width;
   canvas.height = height;
-  // #markup-svg's viewBox is otherwise only synced from the last normal
-  // renderPdf() call (see syncSheetLinkLayer), which used the single-sheet
-  // RENDER_SCALE/MAX_RENDER_PX pixel size - almost never the same as these
-  // preview images' dimensions. Left stale, every #markup-svg-based
-  // coordinate conversion (getMeasureSvgPoint - the pin tool's drag-to-
-  // capture math) would map screen positions to the wrong pixel rect on
-  // this canvas, sampling blank space instead of the drawing. Harmless to
-  // call on every recompute (align-drag, rotate, A/B toggle) since it's a
-  // cheap attribute set and width/height are already unchanged between
-  // calls for the same A/B pair.
-  document.getElementById('markup-svg').setAttribute('viewBox', `0 0 ${width} ${height}`);
+  // #markup-svg's viewBox is intentionally left untouched here - it should
+  // already equal these same canonical dimensions from the last normal
+  // renderPdf()/syncSheetLinkLayer() call, and every #markup-svg-based
+  // coordinate conversion (getMeasureSvgPoint - take-off tracing, the pin
+  // tool's drag-to-capture math) depends on it staying that way so geometry
+  // placed during overlay lands in the same spot once overlay exits.
 
   // Draws the image centered on the composite canvas, offset by the layer's
   // drag (tx,ty) and rotated about its own center - identical to the old
@@ -1700,6 +1712,13 @@ function computeOverlay({ fit = false } = {}) {
     cx.save();
     cx.translate(width / 2 + transform.tx, height / 2 + transform.ty);
     cx.rotate((transform.rotation * Math.PI) / 180);
+    // The preview image is generated at its own fixed resolution, independent
+    // of this sheet's RENDER_SCALE-derived canonical size - scale into
+    // canonical units so alignment offsets (tx/ty, already expressed in
+    // canonical units - see setupOverlayAlignDrag, which derives them from
+    // the canvas's own live pixel size) land in the right place.
+    const imgScale = width / img.naturalWidth;
+    cx.scale(imgScale, imgScale);
     cx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
     cx.restore();
     return cx.getImageData(0, 0, width, height).data;
@@ -1891,6 +1910,14 @@ function exportOverlayImage() {
 async function enterOverlay(aVersionId, bVersionId) {
   if (freezeArmed) disarmFreezePane();
   overlayActive = true;
+  // #pdf-canvas still holds whatever normal renderPdf() last rendered here
+  // (showVersion always calls renderPdf() right after exitOverlay(), so this
+  // is never stale overlay-session state) - snapshot it as this session's
+  // canonical coordinate space before computeOverlay() ever touches the
+  // canvas. See overlayCanonicalWidth's own comment for why this matters.
+  const canonicalCanvas = document.getElementById('pdf-canvas');
+  overlayCanonicalWidth = canonicalCanvas.width;
+  overlayCanonicalHeight = canonicalCanvas.height;
   overlayLayers = { a: aVersionId, b: bVersionId, showA: true, showB: true };
   overlayTransform = { a: { tx: 0, ty: 0, rotation: 0 }, b: { tx: 0, ty: 0, rotation: 0 } };
   overlayAlignTarget = 'b';
@@ -2745,10 +2772,13 @@ function disarmFreezePane() {
   document.getElementById('freeze-pane-toolbar').style.display = 'none';
   const svg = document.getElementById('markup-svg');
   svg.classList.remove('overlay-freeze-active');
-  // Only re-hide if overlay is still active - if disarm is happening because
-  // exitOverlay() already ran (which sets overlayActive false before its own
-  // display reset), don't fight that reset by forcing display back to none.
-  if (overlayActive) svg.style.display = 'none';
+  // Hand display/class ownership back to take-off (existing take-offs stay
+  // visible throughout overlay - see its own comment) rather than
+  // unconditionally hiding. If disarm is happening because exitOverlay()
+  // already ran (which sets overlayActive false before its own display
+  // reset), syncTakeoffOverlaySvgVisibility() is a no-op and exitOverlay()'s
+  // own reset is left alone, same as before.
+  syncTakeoffOverlaySvgVisibility();
   freezeOverlaySourceLayer = null;
 }
 
@@ -3633,24 +3663,20 @@ function ensureTakeoffInstancesLayer() {
 }
 
 // Take-off geometry has no version concept (see loadSheetTakeoffInstances) -
-// unlike markups/measurements, it's safe to keep interactive during overlay
-// compare. #markup-svg is force-hidden during overlay by default (see
-// enterOverlay); this re-shows it, scoped via .overlay-takeoff-active (see
-// style.css) to just the take-off layers, whenever a take-off tool is armed
-// or an instance is being edited. Mirrors armFreezePane/disarmFreezePane's
-// own display toggling for the pin tool, which uses the same #markup-svg.
+// unlike markups/measurements, existing take-offs stay visible throughout
+// overlay compare, the same as normal viewing, not just while a tool/edit
+// happens to be armed. #markup-svg is force-hidden during overlay by default
+// (see enterOverlay); this re-shows it, scoped via .overlay-takeoff-active
+// (see style.css) to just the take-off layers. Freeze pane wants an
+// unobstructed capture, so it takes exclusive ownership of the svg's
+// display/class while armed (see armFreezePane) - this bails out rather than
+// fight that, and disarmFreezePane() calls back in here once it lets go.
 function syncTakeoffOverlaySvgVisibility() {
   const svg = document.getElementById('markup-svg');
-  if (!svg || !overlayActive) return;
-  const takeoffNeedsSvg = !!(takeoffTool || editingInstance);
-  svg.classList.toggle('overlay-takeoff-active', takeoffNeedsSvg);
-  if (takeoffNeedsSvg) {
-    svg.style.display = '';
-  } else if (!freezeArmed) {
-    // Don't fight freeze pane if it still needs the svg visible - same guard
-    // disarmFreezePane() uses for the same reason.
-    svg.style.display = 'none';
-  }
+  if (!svg || !overlayActive || freezeArmed) return;
+  const takeoffVisible = !!canTakeoff;
+  svg.classList.toggle('overlay-takeoff-active', takeoffVisible);
+  svg.style.display = takeoffVisible ? '' : 'none';
 }
 
 function clearTakeoffDraft() {
