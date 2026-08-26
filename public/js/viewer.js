@@ -31,6 +31,10 @@ function searchStorageKey() {
   return `hammgrid-sheet-search:${projectId}`;
 }
 
+function disciplineStorageKey() {
+  return `hammgrid-discipline-filter:${projectId}`;
+}
+
 function filteredOrderKey() {
   return `hammgrid-filtered-order:${projectId}`;
 }
@@ -516,6 +520,14 @@ document.getElementById('project-filter').addEventListener('change', (e) => {
   renderGrid(lastItems);
 });
 document.getElementById('discipline-filter').addEventListener('change', () => {
+  // Persisted per-project (not for combinedMode, where projectId is null) so
+  // returning from a sheet - or any fresh page load - keeps the filter until
+  // it's explicitly cleared back to "All", instead of resetting every visit.
+  if (!combinedMode) {
+    const value = document.getElementById('discipline-filter').value;
+    if (value) localStorage.setItem(disciplineStorageKey(), value);
+    else localStorage.removeItem(disciplineStorageKey());
+  }
   if (combinedMode) renderGrid(lastItems);
   else renderFromCache();
 });
@@ -609,6 +621,10 @@ async function initCombined(me) {
 
   try {
     await loadFilters();
+    // Restore after loadFilters() has populated <option>s - setting .value
+    // to something not yet in the list is silently ignored by the browser.
+    const savedDiscipline = localStorage.getItem(disciplineStorageKey());
+    if (savedDiscipline) document.getElementById('discipline-filter').value = savedDiscipline;
     await ensureProjectCacheFresh(projectId, currentProject || {});
   } catch (err) {
     // offline on first-ever load with no cached project metadata - filters just stay empty
