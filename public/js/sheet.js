@@ -1698,11 +1698,12 @@ function computeOverlay({ fit = false } = {}) {
   // tool's drag-to-capture math) depends on it staying that way so geometry
   // placed during overlay lands in the same spot once overlay exits.
 
-  // Draws the image centered on the composite canvas, offset by the layer's
-  // drag (tx,ty) and rotated about its own center - identical to the old
-  // draw-at-(0,0) behavior when both previews are the same size (the common
-  // case), since centering then coincides with top-left anchoring.
-  function toGray(img, transform) {
+  // Draws the image centered on a same-size layer canvas, grayscaled via the
+  // native canvas filter (GPU-accelerated, no per-pixel JS), offset by the
+  // layer's drag (tx,ty) and rotated about its own center - identical to the
+  // old draw-at-(0,0) behavior when both previews are the same size (the
+  // common case), since centering then coincides with top-left anchoring.
+  function grayLayer(img, transform) {
     const c = document.createElement('canvas');
     c.width = width;
     c.height = height;
@@ -1719,9 +1720,24 @@ function computeOverlay({ fit = false } = {}) {
     // the canvas's own live pixel size) land in the right place.
     const imgScale = width / img.naturalWidth;
     cx.scale(imgScale, imgScale);
+    cx.filter = 'grayscale(1)';
     cx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
     cx.restore();
-    return cx.getImageData(0, 0, width, height).data;
+    return c;
+  }
+
+  // Tints a grayscale layer by flooding one or two channels to full via a
+  // 'lighten' (per-channel max) blend - e.g. rgb(0,0,255) turns (gray,gray,gray)
+  // into (gray,gray,255), matching pyproc/overlay.py's R=gA,G=min(gA,gB),B=gB
+  // formula channel-for-channel (see the darken step below) without ever
+  // touching pixels from JS.
+  function tint(layerCanvas, rgb) {
+    const cx = layerCanvas.getContext('2d');
+    cx.globalCompositeOperation = 'lighten';
+    cx.fillStyle = rgb;
+    cx.fillRect(0, 0, width, height);
+    cx.globalCompositeOperation = 'source-over';
+    return layerCanvas;
   }
 
   // A manual align-drag/rotate offset only means something as a comparison
@@ -1734,29 +1750,29 @@ function computeOverlay({ fit = false } = {}) {
   // place it's meant to be seen.
   const bothShown = showA && showB;
   const IDENTITY_TRANSFORM = { tx: 0, ty: 0, rotation: 0 };
-  const aPixels = showA ? toGray(imgA, bothShown ? overlayTransform.a : IDENTITY_TRANSFORM) : null;
-  const bPixels = showB ? toGray(imgB, bothShown ? overlayTransform.b : IDENTITY_TRANSFORM) : null;
 
   const ctx = canvas.getContext('2d');
-  const out = ctx.createImageData(width, height);
-  const outPixels = out.data;
-  for (let i = 0; i < outPixels.length; i += 4) {
-    const gA = aPixels ? 0.299 * aPixels[i] + 0.587 * aPixels[i + 1] + 0.114 * aPixels[i + 2] : 255;
-    const gB = bPixels ? 0.299 * bPixels[i] + 0.587 * bPixels[i + 1] + 0.114 * bPixels[i + 2] : 255;
-    if (showA && showB) {
-      outPixels[i] = gA;
-      outPixels[i + 1] = Math.min(gA, gB);
-      outPixels[i + 2] = gB;
-    } else if (showA) {
-      outPixels[i] = outPixels[i + 1] = outPixels[i + 2] = gA;
-    } else if (showB) {
-      outPixels[i] = outPixels[i + 1] = outPixels[i + 2] = gB;
-    } else {
-      outPixels[i] = outPixels[i + 1] = outPixels[i + 2] = 255;
-    }
-    outPixels[i + 3] = 255;
+  ctx.filter = 'none';
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 0, width, height);
+
+  if (bothShown) {
+    // layerA = (gA, gA, 255), layerB = (255, gB, gB) - drawing layerA then
+    // darken-blending (per-channel min) layerB on top yields exactly
+    // (min(gA,255), min(gA,gB), min(255,gB)) = (gA, min(gA,gB), gB), the same
+    // result the old per-pixel loop computed, entirely via native ops.
+    const layerA = tint(grayLayer(imgA, overlayTransform.a), 'rgb(0,0,255)');
+    const layerB = tint(grayLayer(imgB, overlayTransform.b), 'rgb(255,0,0)');
+    ctx.drawImage(layerA, 0, 0);
+    ctx.globalCompositeOperation = 'darken';
+    ctx.drawImage(layerB, 0, 0);
+    ctx.globalCompositeOperation = 'source-over';
+  } else if (showA) {
+    ctx.drawImage(grayLayer(imgA, IDENTITY_TRANSFORM), 0, 0);
+  } else if (showB) {
+    ctx.drawImage(grayLayer(imgB, IDENTITY_TRANSFORM), 0, 0);
   }
-  ctx.putImageData(out, 0, 0);
   document.getElementById('pdf-status').textContent = '';
   if (fit) fitToView();
 }
@@ -2742,6 +2758,15 @@ function armFreezePane() {
     // while still making the svg hit-testable, so the drag-to-capture
     // gesture below has something to draw its draft rect into.
     const svg = document.getElementById('markup-svg');
+    // Take exclusive ownership of the svg's class for real: if take-offs are
+    // enabled, syncTakeoffOverlaySvgVisibility() already left
+    // overlay-takeoff-active on this element from ordinary overlay viewing,
+    // and its CSS rule (equal specificity, declared after this one) doesn't
+    // exempt #freeze-draft-layer - left in place, it would win the cascade
+    // and hide the freeze draft rect along with everything else.
+    // disarmFreezePane() hands it back via that same function once freeze
+    // pane lets go.
+    svg.classList.remove('overlay-takeoff-active');
     svg.classList.add('overlay-freeze-active');
     svg.style.display = '';
   }
