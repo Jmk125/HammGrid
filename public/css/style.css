@@ -1419,14 +1419,19 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   flex-shrink: 0;
   background: var(--surface);
   border-left: 1px solid var(--border);
-  min-height: calc(100vh - 53px);
+  height: calc(100vh - 53px);
   transition: width 0.15s ease;
   position: relative;
   overflow: hidden;
 }
 .sheet-pane.pane-wide { width: 360px; }
 .sheet-pane.collapsed { width: 32px; }
-.sheet-pane .pane-body { padding-top: 42px; }
+.sheet-pane .pane-body {
+  padding-top: 42px;
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
 .sheet-pane.collapsed .pane-body { display: none; }
 .pane-toggle {
   position: absolute;
