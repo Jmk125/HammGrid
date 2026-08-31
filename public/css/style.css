@@ -83,6 +83,11 @@ body {
   color: var(--text);
 }
 
+/* Sheet viewer: the page itself never scrolls - only .pane-body does. This
+   keeps the version badge and nav arrows on-screen no matter how long the
+   takeoffs list in the right pane gets. */
+body.sheet-page { height: 100vh; overflow: hidden; }
+
 a { color: var(--accent); }
 
 /* ---------- Top bar ---------- */
@@ -1430,6 +1435,7 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   padding-top: 42px;
   height: 100%;
   overflow-y: auto;
+  overscroll-behavior: contain;
   box-sizing: border-box;
 }
 .sheet-pane.collapsed .pane-body { display: none; }
