@@ -171,6 +171,47 @@ function outputAndRawParts(item, rawValue) {
   return { output: formatQuantity(item.type, value), raw: '—' };
 }
 
+// Sums each numeric column across whatever items are currently visible
+// (search-filtered, same set the CSV export and empty-message use) -
+// independent of folder collapse state, so toggling a folder open/closed
+// doesn't change the grand total underneath it.
+function computeItemsTotals(items) {
+  let totalSum = 0;
+  const totalUnits = new Set();
+  let takeoffSum = 0;
+  let hasTakeoff = false;
+  const takeoffUnits = new Set();
+  let perimeterSum = 0;
+  let hasPerimeter = false;
+  let instancesSum = 0;
+  for (const item of items) {
+    const parts = outputAndRawNumeric(item, item.total_quantity);
+    totalSum += parts.total;
+    if (parts.totalUnit) totalUnits.add(parts.totalUnit);
+    if (parts.takeoff !== '') {
+      hasTakeoff = true;
+      takeoffSum += parts.takeoff;
+      if (parts.takeoffUnit) takeoffUnits.add(parts.takeoffUnit);
+    }
+    if (item.type === 'area' && item.total_perimeter) {
+      hasPerimeter = true;
+      perimeterSum += item.total_perimeter;
+    }
+    instancesSum += item.instance_count || 0;
+  }
+  // Only label the sum with a unit when every summed item agrees on one -
+  // adding SF to CY to EA is still shown (better than hiding the number),
+  // just without a misleading unit tacked on.
+  const totalUnit = totalUnits.size === 1 ? [...totalUnits][0] : '';
+  const takeoffUnit = takeoffUnits.size === 1 ? [...takeoffUnits][0] : '';
+  return {
+    total: `${totalSum.toLocaleString(undefined, { maximumFractionDigits: 2 })}${totalUnit ? ' ' + totalUnit : ''}`,
+    takeoff: hasTakeoff ? `${takeoffSum.toLocaleString(undefined, { maximumFractionDigits: 2 })}${takeoffUnit ? ' ' + takeoffUnit : ''}` : '—',
+    perimeter: hasPerimeter ? `${perimeterSum.toFixed(1)} ft` : '—',
+    instances: instancesSum,
+  };
+}
+
 function formatType(item) {
   return item.type === 'count' ? `count (${item.shape})` : item.type;
 }
@@ -356,6 +397,25 @@ function renderByItemTable() {
       });
     }
   }
+
+  if (items.length) {
+    const totals = computeItemsTotals(items);
+    const totalsRow = document.createElement('tr');
+    totalsRow.className = 'takeoff-totals-row';
+    totalsRow.innerHTML = `
+      <td></td>
+      <td></td>
+      <td><strong>Total</strong></td>
+      <td></td>
+      <td></td>
+      <td><strong>${totals.total}</strong></td>
+      <td><strong>${totals.takeoff}</strong></td>
+      <td><strong>${totals.perimeter}</strong></td>
+      <td><strong>${totals.instances}</strong></td>
+      <td></td>`;
+    tbody.appendChild(totalsRow);
+  }
+
   updateExpandAllButtonLabel();
 
   tbody.querySelectorAll('[data-action="edit"]').forEach((btn) => {
