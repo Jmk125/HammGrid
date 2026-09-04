@@ -727,6 +727,8 @@ tr.ignored td { opacity: 0.5; }
    run into the hundreds. */
 .takeoff-row-highlighted { background: var(--accent-light); box-shadow: inset 3px 0 0 var(--accent); }
 
+.takeoff-totals-row td { border-top: 2px solid var(--border); }
+
 #takeoff-tooltip {
   position: fixed;
   z-index: 60;
