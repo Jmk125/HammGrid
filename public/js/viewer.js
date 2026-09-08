@@ -190,7 +190,7 @@ function renderGrid(items) {
       const bMeta = isMetadataMatch(b);
       if (aMeta !== bMeta) return aMeta ? -1 : 1;
     }
-    return a.sheet_number.localeCompare(b.sheet_number);
+    return naturalSheetCompare(a.sheet_number, b.sheet_number);
   });
   lastFiltered = filtered;
   // Read by sheet.js to power the forward/back "cycle through the filtered

@@ -44,6 +44,14 @@ function setCachedSessionUser(user) {
   }
 }
 
+// Sheet numbers are sometimes pure numeric ("1".."80"), sometimes
+// alphanumeric ("A-101", "M-2.03"). localeCompare's numeric option treats
+// embedded digit runs as numbers rather than character-by-character, so
+// "2" sorts before "10" and "A-2" sorts before "A-10" either way.
+function naturalSheetCompare(a, b) {
+  return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: 'base' });
+}
+
 async function requireSession() {
   try {
     const { user } = await api('GET', '/api/auth/me');
