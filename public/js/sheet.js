@@ -2042,7 +2042,7 @@ async function openOverlayPicker() {
       label.className = 'overlay-picker-group-label';
       label.textContent = disc;
       listEl.appendChild(label);
-      for (const s of grouped[disc]) {
+      for (const s of grouped[disc].sort((a, b) => naturalSheetCompare(a.sheet_number, b.sheet_number))) {
         const item = document.createElement('div');
         item.className = 'overlay-picker-item';
         item.textContent = `${s.sheet_number} - ${s.current_title || ''}`;

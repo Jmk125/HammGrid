@@ -45,7 +45,7 @@ router.get('/by-sheet', requireTakeoff, (req, res) => {
        JOIN sheets s ON s.id = inst.sheet_id
        WHERE ti.project_id = ?
        GROUP BY s.id, ti.id
-       ORDER BY s.sheet_number, ti.name`
+       ORDER BY natsort_key(s.sheet_number), ti.name`
     )
     .all(req.params.projectId);
   res.json({ rows });
@@ -64,7 +64,7 @@ router.get('/:itemId/breakdown', requireTakeoff, (req, res) => {
        JOIN sheets s ON s.id = inst.sheet_id
        WHERE inst.item_id = ?
        GROUP BY s.id
-       ORDER BY s.sheet_number`
+       ORDER BY natsort_key(s.sheet_number)`
     )
     .all(item.id);
   res.json({ sheets });

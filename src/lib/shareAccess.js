@@ -32,7 +32,7 @@ function getShareSheets(share) {
       sql += ' AND s.discipline = ?';
       args.push(share.discipline_filter);
     }
-    sql += ' ORDER BY s.sheet_number';
+    sql += ' ORDER BY natsort_key(s.sheet_number)';
     rows = db.prepare(sql).all(...args);
   } else {
     const revision = db.prepare('SELECT published_at FROM revisions WHERE id = ?').get(share.snapshot_revision_id);
@@ -56,7 +56,7 @@ function getShareSheets(share) {
       sql += ' AND s.discipline = ?';
       args.push(share.discipline_filter);
     }
-    sql += ' ORDER BY s.sheet_number';
+    sql += ' ORDER BY natsort_key(s.sheet_number)';
     rows = db.prepare(sql).all(...args);
   }
   return rows;

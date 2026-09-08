@@ -93,7 +93,7 @@ router.get('/:id/links', requireAuth, (req, res) => {
        JOIN sheets s ON s.id = m.sheet_id
        WHERE m.linked_document_id = ?
        GROUP BY s.id
-       ORDER BY s.sheet_number`
+       ORDER BY natsort_key(s.sheet_number)`
     )
     .all(document.id);
   res.json({ sheets });

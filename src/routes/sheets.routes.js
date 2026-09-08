@@ -27,7 +27,7 @@ router.get('/', requireAuth, (req, res) => {
     sql += ' AND sv.revision_id = ?';
     args.push(revision_id);
   }
-  sql += ' ORDER BY s.sheet_number';
+  sql += ' ORDER BY natsort_key(s.sheet_number)';
 
   const sheets = db.prepare(sql).all(...args);
   res.json({ sheets });

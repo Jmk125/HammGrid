@@ -13,7 +13,7 @@ function getCurrentSheets(projectId) {
        FROM sheets s
        JOIN sheet_versions sv ON sv.id = s.current_version_id
        WHERE s.project_id = ?
-       ORDER BY s.sheet_number`
+       ORDER BY natsort_key(s.sheet_number)`
     )
     .all(projectId);
 }

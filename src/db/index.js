@@ -13,6 +13,14 @@ const db = new Database(config.dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+// Sheet numbers are sometimes pure numeric ("1".."80"), sometimes
+// alphanumeric ("A-101", "M-2.03"). Plain text ORDER BY sorts those
+// lexicographically ("10" before "2"), so ORDER BY sheet_number clauses use
+// this to sort each embedded digit run as a number instead of by character.
+db.function('natsort_key', { deterministic: true }, (value) =>
+  value == null ? '' : String(value).replace(/\d+/g, (digits) => digits.padStart(20, '0'))
+);
+
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 

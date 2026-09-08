@@ -519,7 +519,7 @@ function groupRowsBySheet(rows) {
     if (!bySheet.has(r.sheet_id)) bySheet.set(r.sheet_id, { sheet_id: r.sheet_id, sheet_number: r.sheet_number, items: [] });
     bySheet.get(r.sheet_id).items.push(r);
   }
-  return [...bySheet.values()].sort((a, b) => a.sheet_number.localeCompare(b.sheet_number));
+  return [...bySheet.values()].sort((a, b) => naturalSheetCompare(a.sheet_number, b.sheet_number));
 }
 
 function renderBySheetTable() {
