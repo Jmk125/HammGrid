@@ -28,6 +28,20 @@ let currentView = 'by-item';
 let searchTerm = '';
 let disciplineFilter = ''; // only meaningful in the By Sheet view - a take-off item has no discipline of its own
 
+// Splitting on "*" turns the search box into an AND of substrings, so
+// "continuous * 2.5" finds "2.5' Continuous Footing" without needing the
+// words in title order. Plain single-word searches (no "*") behave exactly
+// as before. searchTerm is already lowercased at the input handler.
+function matchesSearch(name, term) {
+  if (!term) return true;
+  const lowerName = name.toLowerCase();
+  return term
+    .split('*')
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .every((t) => lowerName.includes(t));
+}
+
 // Collapsed folder-group state persists across reloads, same as the sheet
 // pane's section-collapse pattern - keyed by folder id, or 'none' for the
 // unfiled bucket. Item folders are per-project; template folders are global,
@@ -250,7 +264,7 @@ function csvEscape(value) {
 // Exports whatever's currently visible (search-filtered), matching what's
 // on screen.
 function exportTakeoffsCsv() {
-  const items = allItems.filter((i) => i.name.toLowerCase().includes(searchTerm));
+  const items = allItems.filter((i) => matchesSearch(i.name, searchTerm));
   const header = ['Name', 'Type', 'Total', 'Total Unit', 'Take-off Qty', 'Take-off Unit', 'Perimeter (ft)', 'Instances'];
   const rows = items.map((item) => {
     const parts = outputAndRawNumeric(item, item.total_quantity);
@@ -321,7 +335,7 @@ async function loadItems() {
 // trailing "No Folder" bucket, which is also the only bucket shown at all
 // when the project has no folders yet.
 function renderByItemTable() {
-  const items = allItems.filter((i) => i.name.toLowerCase().includes(searchTerm));
+  const items = allItems.filter((i) => matchesSearch(i.name, searchTerm));
   const tbody = document.querySelector('#takeoff-items-table tbody');
   tbody.innerHTML = '';
   document.getElementById('takeoff-empty-msg').style.display = items.length ? 'none' : '';
@@ -518,7 +532,7 @@ function populateDisciplineFilter(rows) {
 function groupRowsBySheet(rows) {
   const bySheet = new Map();
   for (const r of rows) {
-    if (!r.item_name.toLowerCase().includes(searchTerm)) continue;
+    if (!matchesSearch(r.item_name, searchTerm)) continue;
     if (disciplineFilter && r.discipline !== disciplineFilter) continue;
     if (!bySheet.has(r.sheet_id)) bySheet.set(r.sheet_id, { sheet_id: r.sheet_id, sheet_number: r.sheet_number, items: [] });
     bySheet.get(r.sheet_id).items.push(r);
