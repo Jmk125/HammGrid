@@ -171,10 +171,12 @@ function outputAndRawParts(item, rawValue) {
   return { output: formatQuantity(item.type, value), raw: '—' };
 }
 
-// Sums each numeric column across whatever items are currently visible
-// (search-filtered, same set the CSV export and empty-message use) -
-// independent of folder collapse state, so toggling a folder open/closed
-// doesn't change the grand total underneath it.
+// Sums each numeric column across whatever items are passed in. The By
+// Take-off view passes only items in expanded folders, so collapsing a
+// folder drops it out of the grand total (e.g. collapse Building B to see
+// just Building A's footing total); the CSV export passes every
+// search-filtered item regardless of collapse state, since a CSV has no
+// notion of "collapsed".
 function computeItemsTotals(items) {
   let totalSum = 0;
   const totalUnits = new Set();
@@ -342,6 +344,7 @@ function renderByItemTable() {
   const folderKeys = [...folderMap.keys()].sort((a, b) => folderMap.get(a).name.localeCompare(folderMap.get(b).name));
   const orderedKeys = groups.has('none') || folderKeys.length === 0 ? [...folderKeys, 'none'] : folderKeys;
   const showHeaders = folderKeys.length > 0;
+  const visibleItems = []; // items not hidden inside a collapsed folder - what the totals row sums
 
   for (const key of orderedKeys) {
     const isCollapsed = collapsedItemFolders.has(String(key));
@@ -359,6 +362,7 @@ function renderByItemTable() {
     if (isCollapsed) continue;
 
     for (const item of groups.get(key) || []) {
+      visibleItems.push(item);
       const parts = outputAndRawParts(item, item.total_quantity);
       const perimeter = item.type === 'area' && item.total_perimeter ? `${item.total_perimeter.toFixed(1)} ft` : '—';
       const folderOptions =
@@ -399,7 +403,7 @@ function renderByItemTable() {
   }
 
   if (items.length) {
-    const totals = computeItemsTotals(items);
+    const totals = computeItemsTotals(visibleItems);
     const totalsRow = document.createElement('tr');
     totalsRow.className = 'takeoff-totals-row';
     totalsRow.innerHTML = `
