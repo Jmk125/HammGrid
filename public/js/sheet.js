@@ -1387,6 +1387,21 @@ async function paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut,
     statusEl.textContent = 'Loading full detail...';
     userHasZoomedOrPanned = false;
     fitToView();
+    // Markups and take-off geometry are sheet-scoped, not version-scoped
+    // (see their own definitions), so whatever is already loaded is still
+    // correct for whichever version this placeholder stands in for - but
+    // #markup-svg's viewBox is still sized for the *previous* render until
+    // syncSheetLinkLayer() below runs, and the placeholder canvas we just
+    // painted is almost always a different pixel size (preview vs. final
+    // render resolution differ). Without re-syncing here, every version
+    // switch showed markups/take-offs pinned to the old size/position for
+    // the length of the real render, then snapping to the right spot the
+    // instant it finished. Re-rendering now (cheap - geometry is stored as
+    // 0-1 fractions of canvas size, so it's correct at any resolution) keeps
+    // them aligned with the placeholder immediately instead of jumping.
+    syncSheetLinkLayer();
+    if (canTakeoff) renderTakeoffInstances();
+    if (markupsController) markupsController.resync();
     return true;
   } catch {
     // Best-effort only - the real render below is what actually matters.
