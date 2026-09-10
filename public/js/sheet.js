@@ -1370,10 +1370,26 @@ async function renderPdf(versionId) {
 // round trip ahead of the real PDF fetch for a sheet that has nothing to
 // show locally regardless.
 // Returns true if it actually painted a placeholder (canvas now holds THIS
-// sheet's preview, at the preview's pixel dimensions) so the caller can
-// later rescale the view onto the final render instead of blindly resetting
-// it - see the comment above the rescale step in renderPdfAttempt.
-async function paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut, canvas, ctx, statusEl) {
+// sheet's preview, at the preview's pixel dimensions - or at finalViewport's,
+// see below) so the caller can later rescale the view onto the final render
+// instead of blindly resetting it - see the comment above the rescale step
+// in renderPdfAttempt.
+//
+// finalViewport, when the caller already knows it (see computeFinalViewport
+// in renderPdfAttempt), is the real PDF render's eventual pixel size. When
+// given, the canvas is pre-sized to THAT instead of the preview image's own
+// (almost always different) resolution, stretching the lower-res preview to
+// fill it via drawImage - purely a raster scale, imperceptible for a
+// placeholder. This matters because #markup-svg's on-screen box is CSS-tied
+// to #pdf-canvas's own width/height (.markup-stage in style.css sizes to its
+// canvas child), not just whatever its viewBox claims - so syncing the
+// viewBox to finalViewport without ALSO sizing the canvas to match would
+// still misplace take-off geometry (stored in raw final-render pixels - see
+// getMeasureSvgPoint) even though the numbers look right on paper. Passing
+// finalViewport up front is what lets everything be correctly positioned
+// from this function's very first paint instead of jumping once the real
+// render replaces it.
+async function paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut, canvas, ctx, statusEl, finalViewport) {
   const cachedPreview = await getCachedAsset(versionId, 'preview');
   if (!cachedPreview || isTimedOut() || currentRenderTask !== renderToken) return false;
   let previewUrl;
@@ -1381,17 +1397,19 @@ async function paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut,
     previewUrl = URL.createObjectURL(cachedPreview);
     const img = await loadImage(previewUrl);
     if (isTimedOut() || currentRenderTask !== renderToken) return false; // superseded while the placeholder itself was decoding
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    ctx.drawImage(img, 0, 0);
+    if (finalViewport) {
+      canvas.width = finalViewport.width;
+      canvas.height = finalViewport.height;
+      ctx.drawImage(img, 0, 0, finalViewport.width, finalViewport.height);
+      syncOverlayToFinalViewport(finalViewport);
+    } else {
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      ctx.drawImage(img, 0, 0);
+    }
     statusEl.textContent = 'Loading full detail...';
     userHasZoomedOrPanned = false;
     fitToView();
-    // Deliberately NOT touching #markup-svg's viewBox or re-rendering
-    // markups/take-offs here - see the comment in renderPdfAttempt where
-    // that now happens, keyed off the real render's final pixel dimensions
-    // rather than this placeholder's own (different, and irrelevant to
-    // committed take-off geometry) resolution.
     return true;
   } catch {
     // Best-effort only - the real render below is what actually matters.
@@ -1401,43 +1419,76 @@ async function paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut,
   }
 }
 
-async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx, statusEl) {
-  // Runs concurrently with the placeholder paint below, not after it -
-  // loading+parsing a PDF to read its page size is cheap even for the
-  // pathological sheets that make the actual page.render() slow (see that
-  // comment), so this settles quickly regardless of which one wins the race.
-  const placeholderPromise = paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut, canvas, ctx, statusEl);
-
-  const cachedFile = await getCachedAsset(versionId, 'pdf');
-  const source = cachedFile
-    ? { data: await cachedFile.arrayBuffer() }
-    : { url: `/api/sheet-versions/${versionId}/pdf` };
-  const loadingTask = pdfjsLib.getDocument(source);
-  const pdf = await loadingTask.promise;
-  const page = await pdf.getPage(1);
-  if (isTimedOut() || currentRenderTask !== renderToken) return; // gave up waiting, or superseded while loading
-
+function computeFinalViewport(page) {
   const unitViewport = page.getViewport({ scale: 1 });
   const longestPt = Math.max(unitViewport.width, unitViewport.height);
   const maxRenderPx = currentSheet && currentSheet.is_composite ? MAX_RENDER_PX_COMPOSITE : MAX_RENDER_PX;
   currentRenderScale = Math.min(RENDER_SCALE, maxRenderPx / longestPt);
-  const viewport = page.getViewport({ scale: currentRenderScale });
+  return page.getViewport({ scale: currentRenderScale });
+}
 
-  // Take-off geometry is stored in raw pixels of whatever #markup-svg's
-  // viewBox was at draw time (see getMeasureSvgPoint), which has always been
-  // synced to the *final* render's pixel dimensions - so it's only ever
-  // correct against `viewport` here, never against the placeholder's own
-  // (unrelated preview-image) resolution. Unlike markups, which store
-  // geometry as 0-1 fractions and would tolerate either. `viewport` is known
-  // now, well before the slow page.render() below finishes, so sync and
-  // re-render immediately instead of waiting on it - this is what actually
-  // keeps take-offs (and, harmlessly, markups) from sitting in the wrong
-  // spot for the length of a render, whether this is a fresh load or a
-  // version switch with markups/take-offs already loaded from before.
-  if (!isTimedOut() && currentRenderTask === renderToken) {
-    document.getElementById('markup-svg').setAttribute('viewBox', `0 0 ${viewport.width} ${viewport.height}`);
-    if (canTakeoff) renderTakeoffInstances();
-    if (markupsController) markupsController.resync();
+// Take-off geometry is stored in raw pixels of whatever #markup-svg's
+// viewBox was at draw time (see getMeasureSvgPoint), which has always been
+// the *final* render's pixel dimensions - never any placeholder's differing
+// resolution - so this is the only viewBox it's ever correctly positioned
+// against. Markups tolerate either since their geometry is normalized 0-1
+// fractions. Caller must have already sized #pdf-canvas to the same
+// dimensions (see the comment on paintCachedPreviewPlaceholder) - this only
+// sets the SVG side of that pairing.
+function syncOverlayToFinalViewport(viewport) {
+  document.getElementById('markup-svg').setAttribute('viewBox', `0 0 ${viewport.width} ${viewport.height}`);
+  if (canTakeoff) renderTakeoffInstances();
+  if (markupsController) markupsController.resync();
+}
+
+async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx, statusEl) {
+  const cachedFile = await getCachedAsset(versionId, 'pdf');
+  // A fresh object each call, not shared/reused - pdfjsLib.getDocument({data})
+  // transfers (detaches) that ArrayBuffer to its worker, so a second
+  // getDocument() call against the same buffer object would fail. Blob's
+  // own arrayBuffer() is a cheap local re-read each time, unaffected by any
+  // prior transfer.
+  const loadPdfSource = () =>
+    cachedFile ? cachedFile.arrayBuffer().then((data) => ({ data })) : Promise.resolve({ url: `/api/sheet-versions/${versionId}/pdf` });
+
+  // When the PDF is already cached locally, its final render dimensions can
+  // be learned right away via a fast structural parse - getViewport() reads
+  // the page's mediabox, it doesn't run the content stream, so this is cheap
+  // even for the pathological sheets that make the real page.render() below
+  // slow (see paintCachedPreviewPlaceholder's comment). Knowing this before
+  // painting any placeholder is what lets the placeholder be pre-sized
+  // correctly from its first frame. An uncached PDF needs the network fetch
+  // below regardless, so there's no fast path available there - falls
+  // through to the older behavior (placeholder at its own resolution, no
+  // early overlay sync) for that rarer, non-field-ready case.
+  let pdf = null;
+  let page, viewport;
+  if (cachedFile) {
+    try {
+      pdf = await pdfjsLib.getDocument(await loadPdfSource()).promise;
+      page = await pdf.getPage(1);
+      if (isTimedOut() || currentRenderTask !== renderToken) return;
+      viewport = computeFinalViewport(page);
+    } catch {
+      pdf = null; // fall through to the normal load path below
+    }
+  }
+
+  const placeholderShown = await paintCachedPreviewPlaceholder(
+    versionId,
+    renderToken,
+    isTimedOut,
+    canvas,
+    ctx,
+    statusEl,
+    viewport
+  );
+
+  if (!pdf) {
+    pdf = await pdfjsLib.getDocument(await loadPdfSource()).promise;
+    page = await pdf.getPage(1);
+    if (isTimedOut() || currentRenderTask !== renderToken) return; // gave up waiting, or superseded while loading
+    viewport = computeFinalViewport(page);
   }
 
   // Render into an offscreen canvas rather than the visible one. This is
@@ -1456,9 +1507,6 @@ async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx,
   offscreenCtx.imageSmoothingQuality = 'high';
   await page.render({ canvasContext: offscreenCtx, viewport }).promise;
   if (isTimedOut() || currentRenderTask !== renderToken) return; // gave up waiting, or superseded while rendering
-  // Settled long ago in practice (page.render() above is the slow part),
-  // but await it properly rather than assuming.
-  const placeholderShown = await placeholderPromise;
 
   // Capture the placeholder's view before resizing the canvas out from
   // under it - a canvas resize also resets its CSS layout box, and
