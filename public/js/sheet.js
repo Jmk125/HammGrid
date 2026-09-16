@@ -2277,6 +2277,16 @@ let axisLockPinned = false; // when true, angle-snap is on by default and Shift 
 let takeoffSearchTerm = ''; // filters the pane's item list - a job can easily have hundreds of items
 let snapToPointsEnabled = false; // bottom toolbar toggle - snaps placement to nearby existing points, screen-distance based
 
+// Set while the take-offs pane is popped out into its own floating window
+// (see openTakeoffPopout below) - the pane's actual DOM subtree moves into
+// this window rather than being cloned, so every render function below
+// that looks up pane elements by id must resolve them against whichever
+// document currently holds them.
+let takeoffPopoutWin = null;
+function takeoffDoc() {
+  return takeoffPopoutWin && !takeoffPopoutWin.closed ? takeoffPopoutWin.document : document;
+}
+
 // Per-sheet visual hide - purely a "declutter the drawing while I work"
 // toggle, not a delete. Keyed by item id since the same item can appear on
 // many sheets but this preference is local to the one you're looking at.
@@ -3803,7 +3813,7 @@ function clearTakeoffDraft() {
 // but this covers the gap, and the error path since that one never
 // re-renders at all).
 function resetLiveTakeoffItemTotals() {
-  document.querySelectorAll('#takeoff-items-list .takeoff-item-row').forEach((row) => {
+  takeoffDoc().querySelectorAll('#takeoff-items-list .takeoff-item-row').forEach((row) => {
     const item = takeoffItems.find((i) => i.id === Number(row.dataset.itemId));
     const totalEl = row.querySelector('.takeoff-item-total');
     if (item && totalEl) totalEl.textContent = formatTakeoffQuantity(item, Number(row.dataset.sheetTotal) || 0);
@@ -3823,7 +3833,7 @@ function updateLiveTakeoffItemTotals(pts) {
   if (isArea && pts.length < 3) return;
 
   function applyLiveTotal(itemId, rawTotal) {
-    const row = document.querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${itemId}"]`);
+    const row = takeoffDoc().querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${itemId}"]`);
     const totalEl = row && row.querySelector('.takeoff-item-total');
     const item = takeoffItems.find((i) => i.id === itemId);
     if (totalEl && item) totalEl.textContent = formatTakeoffQuantity(item, rawTotal);
@@ -3836,7 +3846,7 @@ function updateLiveTakeoffItemTotals(pts) {
   // one in-progress hole's area needs subtracting here.
   if (subtractingIntoInstanceId) {
     const target = sheetTakeoffInstances.find((i) => i.id === subtractingIntoInstanceId);
-    const row = target && document.querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${target.item_id}"]`);
+    const row = target && takeoffDoc().querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${target.item_id}"]`);
     if (!row) return;
     const base = Number(row.dataset.sheetTotal) || 0;
     applyLiveTotal(target.item_id, Math.max(0, base - polygonAreaFeet(pts)));
@@ -3848,7 +3858,7 @@ function updateLiveTakeoffItemTotals(pts) {
   // instance's worth on top.
   if (continuingInstanceId) {
     const target = sheetTakeoffInstances.find((i) => i.id === continuingInstanceId);
-    const row = target && document.querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${target.item_id}"]`);
+    const row = target && takeoffDoc().querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${target.item_id}"]`);
     if (!row) return;
     const base = Number(row.dataset.sheetTotal) || 0;
     const newQuantity = isArea ? netAreaFeet(pts, target.geometry.holes) : polylineLengthFeet(pts);
@@ -3861,7 +3871,7 @@ function updateLiveTakeoffItemTotals(pts) {
   const newQuantity = isArea ? polygonAreaFeet(pts) : polylineLengthFeet(pts);
   const itemIds = activeTakeoffItemId ? [activeTakeoffItemId, ...multiSelectExtraItemIds] : [...multiSelectExtraItemIds];
   for (const itemId of itemIds) {
-    const row = document.querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${itemId}"]`);
+    const row = takeoffDoc().querySelector(`#takeoff-items-list .takeoff-item-row[data-item-id="${itemId}"]`);
     if (!row) continue;
     applyLiveTotal(itemId, (Number(row.dataset.sheetTotal) || 0) + newQuantity);
   }
@@ -4262,6 +4272,11 @@ function hideTakeoffTooltip() {
 // ---------- Right-click context menu on a placed take-off ----------
 function hideTakeoffContextMenu() {
   document.getElementById('takeoff-context-menu')?.remove();
+  // The item/assembly-list context menus (unlike the canvas one just below,
+  // which only ever opens in the main window) can be opened from inside the
+  // popped-out take-offs window - see showTakeoffItemContextMenu/
+  // showAssemblyContextMenu - so it may need removing from there instead.
+  if (takeoffPopoutWin && !takeoffPopoutWin.closed) takeoffPopoutWin.document.getElementById('takeoff-context-menu')?.remove();
 }
 
 function showTakeoffContextMenu(x, y, instance) {
@@ -5719,7 +5734,7 @@ function deactivateTakeoff() {
   subtractingIntoInstanceId = null;
   clearTakeoffDraft();
   localStorage.removeItem(takeoffStorageKey());
-  document.querySelectorAll('#takeoff-tool-grid .tool-btn').forEach((b) => b.classList.remove('active'));
+  takeoffDoc().querySelectorAll('#takeoff-tool-grid .tool-btn').forEach((b) => b.classList.remove('active'));
   hideTakeoffCrosshair();
   updateTakeoffToolbar();
   renderTakeoffPane();
@@ -6919,7 +6934,7 @@ function renderTakeoffPane() {
   if (markupSvg) markupSvg.style.cursor = takeoffTool ? 'crosshair' : '';
   syncTakeoffOverlaySvgVisibility();
 
-  document.querySelectorAll('#takeoff-tool-grid .tool-btn').forEach((b) => {
+  takeoffDoc().querySelectorAll('#takeoff-tool-grid .tool-btn').forEach((b) => {
     b.classList.toggle('active', b.dataset.tool === takeoffTool);
     b.disabled = (!!activeTakeoffItemId || !!activeAssemblyId) && b.dataset.tool !== takeoffTool;
   });
@@ -6975,8 +6990,8 @@ function renderTakeoffPane() {
   // per-item, per-sheet expand instead). The active item is shown by
   // highlighting its row (no separate banner above the list).
   const grouped = groupTakeoffInstancesByItem();
-  const list = document.getElementById('takeoff-items-list');
-  const hideAllBtn = document.getElementById('takeoff-hide-all-btn');
+  const list = takeoffDoc().getElementById('takeoff-items-list');
+  const hideAllBtn = takeoffDoc().getElementById('takeoff-hide-all-btn');
   list.innerHTML = '';
   if (takeoffItems.length === 0) {
     list.innerHTML = '<p class="muted">No take-off items yet - pick a tool above to create one.</p>';
@@ -7212,7 +7227,8 @@ function showTakeoffItemContextMenu(x, y, item) {
     { action: 'delete', label: 'Delete from project' },
   ];
   menu.innerHTML = actions.map((a) => `<button type="button" data-action="${a.action}">${escapeHtml(a.label)}</button>`).join('');
-  document.body.appendChild(menu);
+  const menuDoc = takeoffDoc();
+  menuDoc.body.appendChild(menu);
   menu.querySelector('[data-action="edit"]').addEventListener('click', () => {
     hideTakeoffContextMenu();
     openTakeoffEditModal(item);
@@ -7230,8 +7246,8 @@ function showTakeoffItemContextMenu(x, y, item) {
     deleteTakeoffItemFromProject(item);
   });
   setTimeout(() => {
-    document.addEventListener('click', hideTakeoffContextMenu, { once: true });
-    document.addEventListener(
+    menuDoc.addEventListener('click', hideTakeoffContextMenu, { once: true });
+    menuDoc.addEventListener(
       'keydown',
       (e) => {
         if (e.key === 'Escape') hideTakeoffContextMenu();
@@ -7265,7 +7281,7 @@ async function loadTakeoffAssemblies() {
 }
 
 function renderTakeoffAssembliesList() {
-  const list = document.getElementById('takeoff-assemblies-list');
+  const list = takeoffDoc().getElementById('takeoff-assemblies-list');
   if (!list) return;
   if (takeoffAssemblies.length === 0) {
     list.innerHTML = '';
@@ -7324,7 +7340,8 @@ function showAssemblyContextMenu(x, y, assembly) {
     { action: 'delete', label: 'Delete assembly' },
   ];
   menu.innerHTML = actions.map((a) => `<button type="button" data-action="${a.action}">${escapeHtml(a.label)}</button>`).join('');
-  document.body.appendChild(menu);
+  const menuDoc = takeoffDoc();
+  menuDoc.body.appendChild(menu);
   menu.querySelector('[data-action="edit"]').addEventListener('click', () => {
     hideTakeoffContextMenu();
     openAssemblyLinksModal(assembly);
@@ -7345,8 +7362,8 @@ function showAssemblyContextMenu(x, y, assembly) {
     deleteAssembly(assembly);
   });
   setTimeout(() => {
-    document.addEventListener('click', hideTakeoffContextMenu, { once: true });
-    document.addEventListener(
+    menuDoc.addEventListener('click', hideTakeoffContextMenu, { once: true });
+    menuDoc.addEventListener(
       'keydown',
       (e) => {
         if (e.key === 'Escape') hideTakeoffContextMenu();
@@ -7387,6 +7404,65 @@ async function loadSheetTakeoffInstances() {
     sheetTakeoffInstances = await getCachedTakeoffInstancesForSheet(sheetId);
   }
   renderTakeoffInstances();
+}
+
+// Moves the pane's actual #takeoff-pane-body node into a second top-level
+// window (rather than cloning it) so every click handler and render
+// function already wired to it keeps working with zero duplication -
+// takeoffDoc() above is the only thing that needed to change. Modals,
+// toasts, and the on-canvas #takeoff-toolbar stay anchored to the main
+// window regardless (see shell.js) - only the list/search/tool-grid portion
+// actually moves.
+function openTakeoffPopout() {
+  if (takeoffPopoutWin && !takeoffPopoutWin.closed) {
+    takeoffPopoutWin.focus();
+    return;
+  }
+  const win = window.open(
+    '/takeoff-popout.html',
+    'hammgrid-takeoff-popout',
+    'width=380,height=760,resizable=yes,menubar=no,toolbar=no,location=no,status=no'
+  );
+  if (!win) {
+    showToast('Pop-out was blocked - allow pop-ups for this site and try again.', 'error');
+    return;
+  }
+  takeoffPopoutWin = win;
+  document.getElementById('takeoff-popout-btn').classList.add('active');
+  document.getElementById('takeoff-popout-placeholder').style.display = '';
+  // Always wait for the popup's own 'load' - immediately after window.open()
+  // returns, win.document is still the browser's placeholder document for
+  // about:blank (already "complete"), not /takeoff-popout.html, so checking
+  // readyState here instead would race and miss the real page.
+  win.addEventListener(
+    'load',
+    () => {
+      // The user (or a sheet switch - see the beforeunload handler below)
+      // could close the popup before its own page finished loading.
+      if (!takeoffPopoutWin || takeoffPopoutWin.closed) return;
+      const content = win.document.getElementById('takeoff-popout-content');
+      const body = document.getElementById('takeoff-pane-body');
+      if (content && body) content.appendChild(body);
+      win.addEventListener('beforeunload', restoreTakeoffFromPopout, { once: true });
+    },
+    { once: true }
+  );
+}
+
+// Fires either from the popup's own beforeunload (user closed the window)
+// or from the pane's "Bring back to panel" button - either way the node
+// goes back where it came from and the placeholder disappears.
+function restoreTakeoffFromPopout() {
+  if (!takeoffPopoutWin) return;
+  const win = takeoffPopoutWin;
+  takeoffPopoutWin = null;
+  const body = win.document.getElementById('takeoff-pane-body');
+  const section = document.getElementById('section-takeoffs');
+  if (body) section.appendChild(body);
+  document.getElementById('takeoff-popout-placeholder').style.display = 'none';
+  document.getElementById('takeoff-popout-btn').classList.remove('active');
+  if (!win.closed) win.close();
+  renderTakeoffPane();
 }
 
 async function setupTakeoffTools() {
@@ -7464,6 +7540,14 @@ async function setupTakeoffTools() {
       return;
     }
     openAssemblyPickerModal();
+  });
+  document.getElementById('takeoff-popout-btn').addEventListener('click', openTakeoffPopout);
+  document.getElementById('takeoff-popout-return-btn').addEventListener('click', restoreTakeoffFromPopout);
+  // A sheet switch is a full page navigation (see sheetUrl/window.location.href
+  // throughout this file) - closing the popup here avoids leaving it open
+  // with event handlers bound to a JS realm that's about to be torn down.
+  window.addEventListener('beforeunload', () => {
+    if (takeoffPopoutWin && !takeoffPopoutWin.closed) takeoffPopoutWin.close();
   });
 
   loadHiddenTakeoffItemIds();
