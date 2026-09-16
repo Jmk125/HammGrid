@@ -88,11 +88,20 @@
             </div>
 
             <div class="pane-section" id="section-takeoffs" style="display:none;">
-              <button class="pane-section-header" type="button" data-section="takeoffs">
-                <span>Take-offs</span>
-                <span class="chevron">&#9662;</span>
-              </button>
-              <div class="pane-section-body">
+              <div class="pane-section-header-row">
+                <button class="pane-section-header" type="button" data-section="takeoffs">
+                  <span>Take-offs</span>
+                  <span class="chevron">&#9662;</span>
+                </button>
+                <button type="button" class="pane-popout-btn" id="takeoff-popout-btn" title="Pop out into a floating window">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                </button>
+              </div>
+              <div class="pane-popout-placeholder" id="takeoff-popout-placeholder" style="display:none;">
+                <p class="muted">Take-offs are open in a floating window.</p>
+                <button type="button" id="takeoff-popout-return-btn">Bring back to panel</button>
+              </div>
+              <div class="pane-section-body" id="takeoff-pane-body">
                 <div class="icon-tool-grid" id="takeoff-tool-grid"></div>
                 <div class="row" style="gap:6px;">
                   <button type="button" id="takeoff-from-template-btn" style="flex:1;">From Template...</button>

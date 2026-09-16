@@ -1490,6 +1490,28 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .pane-section-body { padding: 2px 18px 16px; }
 .pane-section.collapsed .pane-section-body { display: none; }
 
+.pane-section-header-row { display: flex; align-items: stretch; }
+.pane-section-header-row .pane-section-header { width: auto; flex: 1 1 auto; min-width: 0; }
+.pane-popout-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 0;
+}
+.pane-popout-btn:hover { background: var(--bg); color: var(--text); }
+.pane-popout-btn.active { color: var(--accent); }
+.pane-popout-btn svg { width: 15px; height: 15px; display: block; }
+.pane-popout-placeholder { padding: 4px 18px 16px; }
+.pane-popout-placeholder p { margin: 0 0 8px; }
+.pane-section.collapsed .pane-popout-placeholder { display: none; }
+
 .help-body { font-size: 13px; }
 .help-heading {
   font-size: 11px;
