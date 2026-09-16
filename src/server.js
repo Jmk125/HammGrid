@@ -21,6 +21,7 @@ const sheetLinksRoutes = require('./routes/sheetLinks.routes');
 const projectSheetLinksRoutes = require('./routes/projectSheetLinks.routes');
 const projectSheetTextRoutes = require('./routes/projectSheetText.routes');
 const takeoffItemsRoutes = require('./routes/takeoffItems.routes');
+const takeoffItemsSearchRoutes = require('./routes/takeoffItemsSearch.routes');
 const takeoffInstancesRoutes = require('./routes/takeoffInstances.routes');
 const takeoffProjectInstancesRoutes = require('./routes/takeoffProjectInstances.routes');
 const takeoffInstanceByIdRoutes = require('./routes/takeoffInstanceById.routes');
@@ -75,6 +76,7 @@ app.use('/api/projects/:projectId/sheets/:sheetId/take-off-instances', takeoffIn
 app.use('/api/projects/:projectId/take-off-instances', takeoffProjectInstancesRoutes);
 app.use('/api/projects/:projectId/sheets/:sheetId/scale-zones', scaleZonesRoutes);
 app.use('/api/take-off-instances', takeoffInstanceByIdRoutes);
+app.use('/api/take-off-items', takeoffItemsSearchRoutes);
 app.use('/api/take-off-templates', takeoffTemplatesRoutes);
 app.use('/api/projects/:projectId/take-off-folders', takeoffFoldersRoutes);
 app.use('/api/take-off-template-folders', takeoffTemplateFoldersRoutes);

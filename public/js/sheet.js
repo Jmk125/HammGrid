@@ -6417,18 +6417,43 @@ function armNewlyCreatedTakeoffItem(item, type) {
   renderTakeoffPane();
 }
 
-// "From Existing" - same-project items only (not cross-project), and only
-// ones NOT already on this sheet (those already show in the pane per
-// renderTakeoffPane's on-this-sheet filter, so relisting them here would be
-// redundant). No API call needed - takeoffItems already holds the full
-// project list; picking one just arms it via the same activateTakeoffItem
-// used when clicking a pane row.
-function openExistingItemPickerModal() {
+// "From Existing" - continues an item already on this job (same
+// activateTakeoffItem used when clicking a pane row - only ones NOT already
+// on this sheet, since those already show in the pane), or pulls one in
+// from a different job as a starting point. Take-off items are
+// project-scoped in the schema (see takeoffItems.routes.js), so a
+// cross-project pick can never literally be the same row - it goes through
+// the same pre-filled review modal "From Template" uses, then creates a
+// brand-new item here.
+// The project list is fetched once per page load and reused across opens of
+// this modal; each *project's* item list (when you pick one from the
+// dropdown) is cached only for this one open, since re-opening later should
+// see anything created in the meantime.
+let takeoffOtherProjectsCache = null;
+async function openExistingItemPickerModal() {
   const grouped = groupTakeoffInstancesByItem();
-  const candidates = takeoffItems.filter((i) => !grouped.has(i.id));
+  const sameProjectCandidates = takeoffItems.filter((i) => !grouped.has(i.id));
+
+  if (!takeoffOtherProjectsCache) {
+    try {
+      const { projects } = await api('GET', '/api/projects');
+      takeoffOtherProjectsCache = projects;
+    } catch (err) {
+      takeoffOtherProjectsCache = [];
+    }
+  }
+  const otherProjects = takeoffOtherProjectsCache.filter((p) => p.id !== Number(projectId));
 
   openModal(`
     <h2>Continue an existing take-off</h2>
+    <div class="field">
+      <label>Project</label>
+      <select id="existing-picker-project">
+        <option value="this">This project</option>
+        <option value="all">All projects...</option>
+        ${otherProjects.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join('')}
+      </select>
+    </div>
     <input type="text" id="existing-picker-search" placeholder="Search take-offs..." autocomplete="off" style="width:100%;">
     <div class="takeoff-template-picker-list" id="existing-picker-list"></div>
     <div class="modal-actions">
@@ -6438,34 +6463,114 @@ function openExistingItemPickerModal() {
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
   const searchInput = document.getElementById('existing-picker-search');
   const listEl = document.getElementById('existing-picker-list');
+  const projectSelect = document.getElementById('existing-picker-project');
   searchInput.focus();
 
-  function renderList() {
-    const term = searchInput.value.trim().toLowerCase();
-    const matches = term ? candidates.filter((i) => i.name.toLowerCase().includes(term)) : candidates;
-    if (matches.length === 0) {
-      listEl.innerHTML = `<p class="muted">${candidates.length === 0 ? 'Every take-off item in this project is already on this sheet.' : 'No take-offs match your search.'}</p>`;
+  // Items from another project, keyed by that project's id - populated on
+  // demand the first time it's selected in the dropdown.
+  const otherProjectItemsCache = new Map();
+  let searchDebounce = null;
+
+  function selectExistingItem(item) {
+    closeModal();
+    if (item.project_id === Number(projectId)) {
+      activateTakeoffItem(item);
       return;
     }
-    listEl.innerHTML = matches
+    openTakeoffNamingModal(item.type, (created) => armNewlyCreatedTakeoffItem(created, item.type), {
+      name: item.name,
+      color: item.color,
+      shape: item.shape,
+      properties: parseTakeoffProperties(item.properties),
+      formula: item.formula || '',
+      outputLabel: item.output_label || '',
+    });
+  }
+
+  function renderRows(items, { showProject } = {}) {
+    if (items.length === 0) {
+      listEl.innerHTML = '<p class="muted">No take-offs match your search.</p>';
+      return;
+    }
+    listEl.innerHTML = items
       .map(
         (i) => `
-        <button type="button" class="takeoff-template-picker-row" data-id="${i.id}">
+        <button type="button" class="takeoff-template-picker-row" data-id="${i.id}" data-project-id="${i.project_id}">
           <span class="takeoff-color-dot" style="background:${i.color};"></span>
           <span class="takeoff-template-picker-name">${escapeHtml(i.name)}</span>
+          ${showProject ? `<span class="muted">${escapeHtml(i.project_name || '')}</span>` : ''}
           <span class="muted">${i.type === 'count' ? `count (${i.shape})` : i.type}</span>
         </button>`
       )
       .join('');
     listEl.querySelectorAll('.takeoff-template-picker-row').forEach((row) => {
       row.addEventListener('click', () => {
-        const item = candidates.find((i) => i.id === Number(row.dataset.id));
-        closeModal();
-        activateTakeoffItem(item);
+        const item = items.find((i) => i.id === Number(row.dataset.id) && i.project_id === Number(row.dataset.projectId));
+        if (item) selectExistingItem(item);
       });
     });
   }
-  searchInput.addEventListener('input', renderList);
+
+  async function renderList() {
+    const term = searchInput.value.trim().toLowerCase();
+    const scope = projectSelect.value;
+
+    if (scope === 'this') {
+      const matches = term ? sameProjectCandidates.filter((i) => i.name.toLowerCase().includes(term)) : sameProjectCandidates;
+      if (matches.length === 0 && !term && sameProjectCandidates.length === 0) {
+        listEl.innerHTML = '<p class="muted">Every take-off item in this project is already on this sheet.</p>';
+        return;
+      }
+      renderRows(matches);
+      return;
+    }
+
+    if (scope === 'all') {
+      if (!term) {
+        listEl.innerHTML = '<p class="muted">Type to search take-off items across every job.</p>';
+        return;
+      }
+      listEl.innerHTML = '<p class="muted">Searching...</p>';
+      try {
+        const { items } = await api('GET', `/api/take-off-items/search?q=${encodeURIComponent(term)}`);
+        // Stale-response guard - a slower earlier request finishing after a
+        // faster later one (or after the user switched away from "All
+        // projects") would otherwise clobber a newer, already-rendered result.
+        if (searchInput.value.trim().toLowerCase() !== term || projectSelect.value !== 'all') return;
+        renderRows(items, { showProject: true });
+      } catch (err) {
+        listEl.innerHTML = `<p class="error">Search failed: ${escapeHtml(err.message)}</p>`;
+      }
+      return;
+    }
+
+    // A specific other project, chosen by id.
+    const otherProjectId = Number(scope);
+    if (!otherProjectItemsCache.has(otherProjectId)) {
+      listEl.innerHTML = '<p class="muted">Loading...</p>';
+      try {
+        const { items } = await api('GET', `/api/projects/${otherProjectId}/take-off-items`);
+        otherProjectItemsCache.set(otherProjectId, items);
+      } catch (err) {
+        listEl.innerHTML = `<p class="error">Failed to load: ${escapeHtml(err.message)}</p>`;
+        return;
+      }
+      if (projectSelect.value !== scope) return; // switched again while this was in flight
+    }
+    const projectName = otherProjects.find((p) => p.id === otherProjectId)?.name || '';
+    const items = otherProjectItemsCache.get(otherProjectId).map((i) => ({ ...i, project_name: projectName }));
+    const matches = term ? items.filter((i) => i.name.toLowerCase().includes(term)) : items;
+    renderRows(matches, { showProject: true });
+  }
+
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    // Only the cross-all-projects search actually hits the network per
+    // keystroke - same-project and single-other-project filtering is plain
+    // client-side array filtering over data already in hand, same as before.
+    searchDebounce = setTimeout(renderList, projectSelect.value === 'all' ? 250 : 0);
+  });
+  projectSelect.addEventListener('change', renderList);
   renderList();
 }
 
