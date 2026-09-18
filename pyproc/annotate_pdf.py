@@ -111,7 +111,10 @@ def draw_legend(page, legend):
     box=fitz.Rect(x,y,x+lw,y+lh)
     page.draw_rect(box, color=(0.2,0.2,0.2), fill=(1,1,1), fill_opacity=0.92, width=1)
 
-    font_size=min(28, max(7, lw*FONT_RATIO))
+    # No upper bound - only a floor so a tiny box stays legible. Drag the
+    # box as wide as the page and this keeps growing right along with it,
+    # matching the on-screen preview's uncapped CSS (max(7px, 4.5cqw)).
+    font_size=max(7, lw*FONT_RATIO)
     # insert_textbox below needs noticeably more vertical room than the bare
     # font size to fit even a single line without silently refusing to draw
     # it at all (confirmed empirically - a 1.7x row height reliably fits by
@@ -120,11 +123,19 @@ def draw_legend(page, legend):
     # font_size needs (e.g. both pinned at the same fixed max) recreates the
     # exact "too little height" failure this multiplier exists to avoid.
     row_h=max(9, font_size*2.0)
-    title_h=row_h
+    # The title bar itself IS capped to the box's own height though - a
+    # very wide but short box could otherwise compute a title taller than
+    # the whole legend, pushing it past the box's own border.
+    title_h=min(row_h, lh)
     title=fitz.Rect(box.x0,box.y0,box.x1,box.y0+title_h)
     page.draw_rect(title, color=(0.2,0.2,0.2), fill=(0.2,0.2,0.2), width=0)
+    # Uses title_h (not the possibly-larger font_size) to size its own text -
+    # unlike a body row, there's no "just drop this row" fallback for the
+    # title, so it must downsize itself rather than risk insert_textbox
+    # silently drawing nothing in the same short-but-wide edge case title_h's
+    # own clamp above exists for.
     page.insert_textbox(fitz.Rect(title.x0+6,title.y0,title.x1-6,title.y1), 'LEGEND',
-                         fontsize=font_size, color=(1,1,1), fontname='hebo')
+                         fontsize=min(font_size, title_h/2.0), color=(1,1,1), fontname='hebo')
 
     body=fitz.Rect(box.x0,title.y1,box.x1,box.y1)
     items=legend.get('items') or []
