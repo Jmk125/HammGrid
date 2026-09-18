@@ -224,7 +224,10 @@ a { color: var(--accent); }
    shape like every other (short, fixed-text) state uses. */
 .sync-pill.error { background: #fee2e2; color: #991b1b; white-space: normal; text-align: left; }
 .topbar .network-indicator { border: 1px solid rgba(255,255,255,0.25); }
-.project-card .sync-pill { margin-top: 8px; align-self: flex-start; }
+.project-card .card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.project-card .card-archive-btn { padding: 3px 10px; font-size: 12px; }
+.dashboard-heading { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+.dashboard-heading h1 { margin: 0; }
 .project-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* ---------- App shell (sidebar + content) ---------- */

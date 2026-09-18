@@ -7,7 +7,13 @@
 <body>
   <div class="topbar" id="topbar"></div>
   <main>
-    <h1>Projects</h1>
+    <div class="dashboard-heading">
+      <h1>Projects</h1>
+      <div class="segmented" id="project-view-toggle">
+        <button type="button" data-view="current" class="active">Current</button>
+        <button type="button" data-view="archived">Archived</button>
+      </div>
+    </div>
     <div id="project-grid" class="project-grid"></div>
     <p class="muted" id="empty-msg" style="display:none;">No projects yet.</p>
   </main>
