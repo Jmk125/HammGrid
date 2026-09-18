@@ -46,7 +46,12 @@ const fs = require('fs');
 
 const app = express();
 
-app.use(express.json());
+// Default 100kb is too tight for the take-off legend export payload (sheet
+// pane's POST /api/sheet-versions/:id/download) - a logistics plan with a
+// few dozen area/perimeter take-offs, each with a real vertex count, adds up
+// fast. Every other route's body is tiny by comparison, so a generous cap
+// here costs nothing.
+app.use(express.json({ limit: '5mb' }));
 app.use(
   session({
     store: new SqliteSessionStore(db),
