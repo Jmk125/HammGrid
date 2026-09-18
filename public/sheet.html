@@ -173,6 +173,11 @@
     <label class="chip-toggle" id="takeoff-snap-points-chip">
       <input type="checkbox" id="takeoff-snap-points-checkbox"><span class="dot"></span>Snap to points
     </label>
+    <!-- Keep this the LAST child so it's always the rightmost control no
+         matter which of the groups above are showing. -->
+    <button type="button" class="takeoff-goto-btn" id="takeoff-goto-btn" title="Go to item in take-offs" style="display:none;">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+    </button>
   </div>
   <div id="freeze-pane-toolbar" class="selection-bar" style="display:none;">
     <span>Drag a box around what you want to pin on screen</span>
