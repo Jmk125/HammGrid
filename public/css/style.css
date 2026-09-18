@@ -1009,7 +1009,10 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .takeoff-legend-handle {
   flex: 0 0 auto;
   padding: 0.3em 0.6em;
-  font-size: clamp(7px, 4.5cqw, 28px);
+  /* No upper bound - only a floor so a tiny box stays legible. Drag the
+     box as wide as the page and the text keeps growing right along with
+     it, matching annotate_pdf.py's uncapped font_size in the export. */
+  font-size: max(7px, 4.5cqw);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -1021,7 +1024,7 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .takeoff-legend-items { flex: 1 1 auto; overflow: hidden; padding: 0.4em 0.6em; }
 .takeoff-legend-item {
   display: flex; align-items: center; gap: 0.4em;
-  font-size: clamp(7px, 4.5cqw, 28px);
+  font-size: max(7px, 4.5cqw);
   line-height: 1.7;
 }
 .takeoff-legend-item.muted { color: #667085; font-style: italic; white-space: normal; }
