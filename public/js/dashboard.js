@@ -11,6 +11,11 @@ let selectionMode = false;
 let selectedProjectIds = new Set();
 let lastProjects = [];
 
+// Which list the grid shows. Kept in the URL (?view=archived) rather than
+// state, so going into an archived project and hitting Back returns to the
+// archived list instead of snapping back to Current.
+let view = new URLSearchParams(window.location.search).get('view') === 'archived' ? 'archived' : 'current';
+
 function renderTopbar() {
   applyTheme(me.settings);
   const topbar = document.getElementById('topbar');
@@ -88,17 +93,60 @@ async function updateProjectCardSync(card, project) {
 
 let lastOffline = false;
 
+async function setProjectArchived(project, archived) {
+  try {
+    await api('POST', `/api/projects/${project.id}/${archived ? 'archive' : 'unarchive'}`);
+  } catch (err) {
+    alert(`Couldn't ${archived ? 'archive' : 'restore'} "${project.name}": ${err.message}`);
+    return;
+  }
+  // Reload rather than patching lastProjects in place so the offline cache
+  // (cacheProjectList) also picks up the new archived_at.
+  await loadProjects();
+}
+
+function setView(next) {
+  if (next === view) return;
+  view = next;
+  const url = new URL(window.location.href);
+  if (view === 'archived') url.searchParams.set('view', 'archived');
+  else url.searchParams.delete('view');
+  window.history.replaceState(null, '', url);
+  // A selection made in one list would be invisible (but still counted) in
+  // the other, so start fresh.
+  selectedProjectIds.clear();
+  renderProjectGrid();
+}
+
+function setupViewToggle() {
+  for (const btn of document.querySelectorAll('#project-view-toggle button')) {
+    btn.addEventListener('click', () => setView(btn.dataset.view));
+  }
+}
+
 function renderProjectGrid() {
-  const projects = lastProjects;
+  const archivedCount = lastProjects.filter((p) => p.archived_at).length;
+  const projects = lastProjects.filter((p) => !!p.archived_at === (view === 'archived'));
+  for (const btn of document.querySelectorAll('#project-view-toggle button')) {
+    const isArchivedBtn = btn.dataset.view === 'archived';
+    btn.classList.toggle('active', btn.dataset.view === view);
+    btn.textContent = isArchivedBtn && archivedCount ? `Archived (${archivedCount})` : isArchivedBtn ? 'Archived' : 'Current';
+  }
   const grid = document.getElementById('project-grid');
   grid.innerHTML = '';
   const emptyMsg = document.getElementById('empty-msg');
   emptyMsg.style.display = projects.length ? 'none' : '';
   emptyMsg.textContent =
-    lastOffline && projects.length === 0
+    lastOffline && lastProjects.length === 0
       ? 'No projects cached for offline use yet - open the dashboard once while online first.'
-      : 'No projects yet.';
+      : view === 'archived'
+        ? 'No archived projects.'
+        : 'No projects yet.';
 
+  const archivedView = view === 'archived';
+  // Admin-only (matches the server), and hidden offline / in selection mode
+  // where a stray tap on it would be confusing or just fail.
+  const canArchive = me.role === 'admin' && !selectionMode && !lastOffline;
   for (const p of projects) {
     const selected = selectedProjectIds.has(p.id);
     // Selection mode swaps the card from a navigating <a> to a
@@ -117,8 +165,21 @@ function renderProjectGrid() {
       <div class="body">
         <div class="project-name">${p.name}</div>
         <div class="project-meta">${metaParts}</div>
-        <span class="sync-pill syncing">Checking sync…</span>
+        <div class="card-footer">
+          <span class="sync-pill syncing">Checking sync…</span>
+          ${canArchive ? `<button type="button" class="card-archive-btn">${archivedView ? 'Make current' : 'Archive'}</button>` : ''}
+        </div>
       </div>`;
+    // The card is an <a> outside selection mode, so the button has to stop
+    // the click from also navigating into the project.
+    const archiveBtn = a.querySelector('.card-archive-btn');
+    if (archiveBtn) {
+      archiveBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setProjectArchived(p, !archivedView);
+      });
+    }
     // The thumbnail itself isn't cached (only the project list entry is -
     // see cacheProjectList) - a broken-image icon offline is uglier than
     // just falling back to the same placeholder an actually-empty project
@@ -193,6 +254,7 @@ function setupProjectSelectionBar() {
   if (!me) return;
   renderTopbar();
   setupProjectSelectionBar();
+  setupViewToggle();
   await loadProjects();
   checkPendingJobs();
 })();

@@ -40,6 +40,9 @@ db.exec(`UPDATE markups SET updated_at = created_at WHERE updated_at IS NULL`);
 
 addColumnIfMissing('projects', 'location', 'TEXT');
 addColumnIfMissing('projects', 'size', 'TEXT');
+// NULL = current, timestamp = archived. Archiving is purely a dashboard
+// visibility flag - nothing on disk or in any other table changes.
+addColumnIfMissing('projects', 'archived_at', 'TEXT');
 
 addColumnIfMissing('sheets', 'scale_feet_per_inch', 'REAL');
 addColumnIfMissing('sheets', 'is_composite', 'INTEGER NOT NULL DEFAULT 0');
