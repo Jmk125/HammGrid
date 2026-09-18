@@ -524,13 +524,81 @@ function openDownloadPicker() {
     </div>
   `);
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
-  document.getElementById('modal-ok').addEventListener('click', () => {
+  document.getElementById('modal-ok').addEventListener('click', async () => {
     const includePublished = document.getElementById('dl-published').checked;
     const includePersonal = document.getElementById('dl-personal').checked;
-    const qs = new URLSearchParams({ published: includePublished ? '1' : '0', personal: includePersonal ? '1' : '0' });
-    window.location.href = `/api/sheet-versions/${displayedVersionId}/download?${qs}`;
-    closeModal();
+    // The plain markups-only case keeps the old simple GET/navigation
+    // (unchanged behavior, zero risk for anyone not using the legend
+    // toggle) - only take-off shapes + a legend push this into a POST with
+    // a JSON body, since their geometry can easily be too much data for a
+    // URL's length limit.
+    const takeoffPayload = takeoffLegendEnabled ? buildTakeoffExportPayload() : null;
+    if (!takeoffPayload) {
+      const qs = new URLSearchParams({ published: includePublished ? '1' : '0', personal: includePersonal ? '1' : '0' });
+      window.location.href = `/api/sheet-versions/${displayedVersionId}/download?${qs}`;
+      closeModal();
+      return;
+    }
+    const okBtn = document.getElementById('modal-ok');
+    okBtn.disabled = true;
+    okBtn.textContent = 'Preparing...';
+    try {
+      const res = await fetch(`/api/sheet-versions/${displayedVersionId}/download`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          published: includePublished,
+          personal: includePersonal,
+          takeoffs: takeoffPayload.shapes,
+          legend: takeoffPayload.legend,
+        }),
+      });
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${currentSheet.sheet_number || 'sheet'}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      closeModal();
+    } catch (err) {
+      showToast(`Download failed: ${err.message}`, 'error');
+      okBtn.disabled = false;
+      okBtn.textContent = 'Download';
+    }
   });
+}
+
+// Normalizes this sheet's currently-visible (non-hidden) take-off instances
+// into 0-1 page fractions - same convention markups.js already uses (see
+// its geometry.x1 = pt.x / w) - for the export route to draw. Only called
+// when the legend toggle is on (see openDownloadPicker above); returns null
+// otherwise so a plain markups-only download never pays for this at all.
+function buildTakeoffExportPayload() {
+  const canvas = document.getElementById('pdf-canvas');
+  const w = canvas.width;
+  const h = canvas.height;
+  if (!w || !h) return null;
+  const normPt = (p) => ({ x: p.x / w, y: p.y / h });
+  const shapes = [];
+  for (const inst of sheetTakeoffInstances) {
+    if (hiddenTakeoffItemIds.has(inst.item_id)) continue;
+    const pts = inst.geometry && inst.geometry.points;
+    if (!pts || pts.length === 0) continue;
+    const shape = { type: inst.item_type, shape: inst.item_shape, color: inst.item_color, points: pts.map(normPt) };
+    if (inst.item_type === 'area' && inst.geometry.holes && inst.geometry.holes.length) {
+      shape.holes = inst.geometry.holes.map((hole) => hole.map(normPt));
+    }
+    shapes.push(shape);
+  }
+  return {
+    shapes,
+    legend: { ...takeoffLegendRect, items: visibleTakeoffLegendItems().map((i) => ({ name: i.name, color: i.color })) },
+  };
 }
 
 function setupDownloadButton() {
@@ -2331,6 +2399,33 @@ function loadPinnedTakeoffItemIds() {
 }
 function savePinnedTakeoffItemIds() {
   localStorage.setItem(takeoffPinnedStorageKey(), JSON.stringify([...sheetPinnedItemIds]));
+}
+
+// ---------- Take-off legend (Reference pane toggle) ----------
+// Per-sheet, like the hide toggle above - a logistics plan wants this on,
+// a normal quantity take-off sheet usually doesn't. The box's position/size
+// is stored as a fraction of the rendered page (same 0-1 convention markups
+// use - see markups.js) rather than raw pixels, so it survives across
+// sessions/render sizes and translates directly into the PDF-point rect the
+// export route needs.
+let takeoffLegendEnabled = false;
+let takeoffLegendRect = { x: 0.68, y: 0.78, w: 0.28, h: 0.18 };
+function takeoffLegendStorageKey() {
+  return `hammgrid-takeoff-legend:${projectId}:${sheetId}`;
+}
+function loadTakeoffLegendPrefs() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(takeoffLegendStorageKey()));
+    if (saved) {
+      takeoffLegendEnabled = !!saved.enabled;
+      if (saved.rect) takeoffLegendRect = saved.rect;
+    }
+  } catch (err) {
+    // Corrupt/blocked storage - fall back to the defaults above.
+  }
+}
+function saveTakeoffLegendPrefs() {
+  localStorage.setItem(takeoffLegendStorageKey(), JSON.stringify({ enabled: takeoffLegendEnabled, rect: takeoffLegendRect }));
 }
 
 // Hide-all/unhide-all only acts on items actually visible on this sheet
@@ -4224,6 +4319,153 @@ function renderTakeoffInstances() {
     el.addEventListener('mouseleave', hideTakeoffTooltip);
     layer.appendChild(el);
   }
+  renderTakeoffLegend();
+}
+
+// ---------- Take-off legend overlay (Reference pane's toggle button) ----------
+// A foreignObject inside #markup-svg (not a separate positioned <div>) so it
+// shares the exact same coordinate space as every take-off/markup shape
+// already drawn there with zero extra transform math - it pans/zooms with
+// the drawing for free. Built once and left in place; only its position/
+// size/content get updated on re-render (see renderTakeoffLegend).
+function ensureTakeoffLegendLayer() {
+  const svg = document.getElementById('markup-svg');
+  let fo = svg.querySelector('#takeoff-legend-fo');
+  if (!fo) {
+    fo = measureSvgNs('foreignObject');
+    fo.id = 'takeoff-legend-fo';
+    fo.innerHTML = `
+      <div xmlns="http://www.w3.org/1999/xhtml" class="takeoff-legend-box">
+        <div class="takeoff-legend-handle">Legend</div>
+        <div class="takeoff-legend-items"></div>
+        <div class="takeoff-legend-resize" title="Drag to resize"></div>
+      </div>`;
+    svg.appendChild(fo);
+    wireTakeoffLegendDrag(fo);
+  }
+  return fo;
+}
+
+// Drag the handle to move, drag the corner grip to resize - both convert the
+// screen-pixel mouse delta into #markup-svg's own viewBox units via
+// getMeasureSvgPoint (same helper the measure/markup tools use), so the box
+// tracks the cursor 1:1 regardless of current zoom. Committed back to
+// takeoffLegendRect as a 0-1 fraction of the canvas only once, on
+// mouseup/touchend - not on every move - so a render mid-drag (e.g. another
+// user's change arriving) can't fight the in-progress gesture.
+function wireTakeoffLegendDrag(fo) {
+  const MIN_W = 140;
+  const MIN_H = 70;
+  function startDrag(e, onMove) {
+    e.preventDefault();
+    e.stopPropagation();
+    const start = getMeasureSvgPoint(e);
+    const startX = parseFloat(fo.getAttribute('x')) || 0;
+    const startY = parseFloat(fo.getAttribute('y')) || 0;
+    const startW = parseFloat(fo.getAttribute('width')) || MIN_W;
+    const startH = parseFloat(fo.getAttribute('height')) || MIN_H;
+    function move(ev) {
+      const cur = getMeasureSvgPoint(ev);
+      onMove(cur.x - start.x, cur.y - start.y, { startX, startY, startW, startH });
+    }
+    function stop() {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', stop);
+      window.removeEventListener('touchmove', move);
+      window.removeEventListener('touchend', stop);
+      const canvas = document.getElementById('pdf-canvas');
+      takeoffLegendRect = {
+        x: (parseFloat(fo.getAttribute('x')) || 0) / canvas.width,
+        y: (parseFloat(fo.getAttribute('y')) || 0) / canvas.height,
+        w: (parseFloat(fo.getAttribute('width')) || MIN_W) / canvas.width,
+        h: (parseFloat(fo.getAttribute('height')) || MIN_H) / canvas.height,
+      };
+      saveTakeoffLegendPrefs();
+    }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', stop);
+    window.addEventListener('touchmove', move, { passive: false });
+    window.addEventListener('touchend', stop);
+  }
+
+  fo.querySelector('.takeoff-legend-handle').addEventListener('mousedown', (e) =>
+    startDrag(e, (dx, dy, s) => {
+      fo.setAttribute('x', s.startX + dx);
+      fo.setAttribute('y', s.startY + dy);
+    })
+  );
+  fo.querySelector('.takeoff-legend-handle').addEventListener(
+    'touchstart',
+    (e) =>
+      startDrag(e, (dx, dy, s) => {
+        fo.setAttribute('x', s.startX + dx);
+        fo.setAttribute('y', s.startY + dy);
+      }),
+    { passive: false }
+  );
+  fo.querySelector('.takeoff-legend-resize').addEventListener('mousedown', (e) =>
+    startDrag(e, (dx, dy, s) => {
+      fo.setAttribute('width', Math.max(MIN_W, s.startW + dx));
+      fo.setAttribute('height', Math.max(MIN_H, s.startH + dy));
+    })
+  );
+  fo.querySelector('.takeoff-legend-resize').addEventListener(
+    'touchstart',
+    (e) =>
+      startDrag(e, (dx, dy, s) => {
+        fo.setAttribute('width', Math.max(MIN_W, s.startW + dx));
+        fo.setAttribute('height', Math.max(MIN_H, s.startH + dy));
+      }),
+    { passive: false }
+  );
+}
+
+// Lists each distinct item with at least one non-hidden instance on this
+// sheet - same "visible on this sheet" rule the hide toggle already
+// enforces on the shapes themselves (see renderTakeoffInstances' skip
+// above), so hiding an item drops it from the legend too, matching what a
+// viewer looking at the drawing would actually expect a legend to reflect.
+function visibleTakeoffLegendItems() {
+  const seen = new Set();
+  const items = [];
+  for (const inst of sheetTakeoffInstances) {
+    if (hiddenTakeoffItemIds.has(inst.item_id) || seen.has(inst.item_id)) continue;
+    seen.add(inst.item_id);
+    items.push({ id: inst.item_id, name: inst.item_name, color: inst.item_color });
+  }
+  items.sort((a, b) => a.name.localeCompare(b.name));
+  return items;
+}
+
+function renderTakeoffLegend() {
+  const svg = document.getElementById('markup-svg');
+  if (!takeoffLegendEnabled) {
+    svg.querySelector('#takeoff-legend-fo')?.remove();
+    return;
+  }
+  const fo = ensureTakeoffLegendLayer();
+  const canvas = document.getElementById('pdf-canvas');
+  fo.setAttribute('x', takeoffLegendRect.x * canvas.width);
+  fo.setAttribute('y', takeoffLegendRect.y * canvas.height);
+  fo.setAttribute('width', takeoffLegendRect.w * canvas.width);
+  fo.setAttribute('height', takeoffLegendRect.h * canvas.height);
+
+  const items = visibleTakeoffLegendItems();
+  fo.querySelector('.takeoff-legend-items').innerHTML = items.length
+    ? items
+        .map(
+          (i) =>
+            `<div class="takeoff-legend-item"><span class="takeoff-legend-swatch" style="background:${i.color};"></span>${escapeHtml(i.name)}</div>`
+        )
+        .join('')
+    : '<div class="takeoff-legend-item muted">No visible take-offs on this sheet</div>';
+}
+
+function toggleTakeoffLegend() {
+  takeoffLegendEnabled = !takeoffLegendEnabled;
+  saveTakeoffLegendPrefs();
+  document.getElementById('takeoff-legend-toggle-btn').classList.toggle('active', takeoffLegendEnabled);
+  renderTakeoffLegend();
 }
 
 // ---------- Hover tooltip on placed take-off geometry ----------
@@ -7654,6 +7896,12 @@ async function setupTakeoffTools() {
   window.addEventListener('beforeunload', () => {
     if (takeoffPopoutWin && !takeoffPopoutWin.closed) takeoffPopoutWin.close();
   });
+
+  const legendToggleBtn = document.getElementById('takeoff-legend-toggle-btn');
+  legendToggleBtn.style.display = '';
+  legendToggleBtn.addEventListener('click', toggleTakeoffLegend);
+  loadTakeoffLegendPrefs();
+  legendToggleBtn.classList.toggle('active', takeoffLegendEnabled);
 
   loadHiddenTakeoffItemIds();
   loadPinnedTakeoffItemIds();
