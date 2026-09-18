@@ -998,11 +998,18 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   overflow: hidden;
   font-family: inherit;
   color: #1a1a1a;
+  /* Establishes the containment context `cqw` below measures against, so
+     text size tracks the BOX'S OWN width - drag it wider and the font
+     grows, independent of how many items are in it (that's what height/row
+     count controls instead). annotate_pdf.py's draw_legend uses the same
+     ratio (its FONT_RATIO) against the box's actual PDF-point width, so the
+     exported legend scales the same way the on-screen preview does. */
+  container-type: inline-size;
 }
 .takeoff-legend-handle {
   flex: 0 0 auto;
-  padding: 3px 8px;
-  font-size: 11px;
+  padding: 0.3em 0.6em;
+  font-size: clamp(7px, 4.5cqw, 28px);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
@@ -1011,10 +1018,16 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   cursor: move;
   user-select: none;
 }
-.takeoff-legend-items { flex: 1 1 auto; overflow: hidden; padding: 6px 8px; }
-.takeoff-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 1.6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.takeoff-legend-items { flex: 1 1 auto; overflow: hidden; padding: 0.4em 0.6em; }
+.takeoff-legend-item {
+  display: flex; align-items: center; gap: 0.4em;
+  font-size: clamp(7px, 4.5cqw, 28px);
+  line-height: 1.7;
+}
 .takeoff-legend-item.muted { color: #667085; font-style: italic; white-space: normal; }
-.takeoff-legend-swatch { flex: 0 0 auto; width: 10px; height: 10px; border-radius: 2px; border: 1px solid rgba(0,0,0,0.25); }
+.takeoff-legend-swatch { flex: 0 0 auto; width: 0.85em; height: 0.85em; border-radius: 2px; border: 1px solid rgba(0,0,0,0.25); }
+.takeoff-legend-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.takeoff-legend-qty { flex: 0 0 auto; color: #444; white-space: nowrap; }
 .takeoff-legend-resize {
   position: absolute; right: 0; bottom: 0;
   width: 14px; height: 14px;

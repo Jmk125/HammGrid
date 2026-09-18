@@ -597,7 +597,7 @@ function buildTakeoffExportPayload() {
   }
   return {
     shapes,
-    legend: { ...takeoffLegendRect, items: visibleTakeoffLegendItems().map((i) => ({ name: i.name, color: i.color })) },
+    legend: { ...takeoffLegendRect, items: visibleTakeoffLegendItems().map((i) => ({ name: i.name, color: i.color, quantity: i.quantity })) },
   };
 }
 
@@ -4425,13 +4425,22 @@ function wireTakeoffLegendDrag(fo) {
 // enforces on the shapes themselves (see renderTakeoffInstances' skip
 // above), so hiding an item drops it from the legend too, matching what a
 // viewer looking at the drawing would actually expect a legend to reflect.
+// quantity is this sheet's total for the item (same sum renderTakeoffPane's
+// rows show), formatted through the item's own output formula if it has one
+// - same formatTakeoffQuantity call every other quantity display uses.
 function visibleTakeoffLegendItems() {
-  const seen = new Set();
+  const grouped = groupTakeoffInstancesByItem();
   const items = [];
-  for (const inst of sheetTakeoffInstances) {
-    if (hiddenTakeoffItemIds.has(inst.item_id) || seen.has(inst.item_id)) continue;
-    seen.add(inst.item_id);
-    items.push({ id: inst.item_id, name: inst.item_name, color: inst.item_color });
+  for (const [itemId, instances] of grouped) {
+    if (hiddenTakeoffItemIds.has(itemId)) continue;
+    const first = instances[0];
+    const sheetTotal = instances.reduce((sum, i) => sum + i.quantity, 0);
+    items.push({
+      id: itemId,
+      name: first.item_name,
+      color: first.item_color,
+      quantity: formatTakeoffQuantity(takeoffItemLikeFromInstance(first), sheetTotal),
+    });
   }
   items.sort((a, b) => a.name.localeCompare(b.name));
   return items;
@@ -4451,11 +4460,19 @@ function renderTakeoffLegend() {
   fo.setAttribute('height', takeoffLegendRect.h * canvas.height);
 
   const items = visibleTakeoffLegendItems();
+  // Font size itself isn't set here - it's a CSS container-query value (see
+  // style.css's .takeoff-legend-item) driven by this box's own rendered
+  // width, so widening/narrowing it via the resize handle grows/shrinks the
+  // text automatically with zero re-render needed.
   fo.querySelector('.takeoff-legend-items').innerHTML = items.length
     ? items
         .map(
           (i) =>
-            `<div class="takeoff-legend-item"><span class="takeoff-legend-swatch" style="background:${i.color};"></span>${escapeHtml(i.name)}</div>`
+            `<div class="takeoff-legend-item">
+              <span class="takeoff-legend-swatch" style="background:${i.color};"></span>
+              <span class="takeoff-legend-name">${escapeHtml(i.name)}</span>
+              <span class="takeoff-legend-qty">${escapeHtml(i.quantity)}</span>
+            </div>`
         )
         .join('')
     : '<div class="takeoff-legend-item muted">No visible take-offs on this sheet</div>';
@@ -4480,18 +4497,22 @@ function ensureTakeoffTooltip() {
   return el;
 }
 
-function showTakeoffTooltip(inst, e) {
-  const tooltip = ensureTakeoffTooltip();
-  // inst is a flat joined row (item_name/item_color/item_type/item_formula/
-  // item_properties/item_output_label) rather than a real item object -
-  // formatTakeoffQuantity only reads {type, formula, properties,
-  // output_label}, so a minimal stand-in works without a lookup.
-  const itemLike = {
+// inst is a flat joined row (item_name/item_color/item_type/item_formula/
+// item_properties/item_output_label) rather than a real item object -
+// formatTakeoffQuantity only reads {type, formula, properties,
+// output_label}, so a minimal stand-in works without a lookup.
+function takeoffItemLikeFromInstance(inst) {
+  return {
     type: inst.item_type,
     formula: inst.item_formula,
     properties: inst.item_properties,
     output_label: inst.item_output_label,
   };
+}
+
+function showTakeoffTooltip(inst, e) {
+  const tooltip = ensureTakeoffTooltip();
+  const itemLike = takeoffItemLikeFromInstance(inst);
   const perimeterLine =
     inst.item_type === 'area' && Number.isFinite(inst.perimeter) ? `<br>Perimeter: ${inst.perimeter.toFixed(1)} ft` : '';
   tooltip.innerHTML = `<b>${escapeHtml(inst.item_name)}</b><br>${escapeHtml(formatTakeoffQuantity(itemLike, inst.quantity))}${perimeterLine}`;
