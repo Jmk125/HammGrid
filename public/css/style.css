@@ -530,6 +530,9 @@ tr.ignored td { opacity: 0.5; }
 .selection-bar button { border-color: rgba(255,255,255,0.35); background: transparent; color: #fff; }
 .selection-bar button.primary { background: var(--accent); border-color: var(--accent); }
 .selection-bar button:hover:not(:disabled):not(.primary) { background: rgba(255,255,255,0.1); }
+/* "Go to item in take-offs" - same box-with-arrow glyph as .pane-popout-btn. */
+.selection-bar .takeoff-goto-btn { display: inline-flex; align-items: center; justify-content: center; padding: 6px 8px; }
+.selection-bar .takeoff-goto-btn svg { width: 16px; height: 16px; display: block; }
 
 /* ---------- Chip toggle: app-styled checkbox, used anywhere a native
    checkbox would otherwise look like raw HTML (select-all, overlay layer

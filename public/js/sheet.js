@@ -4542,6 +4542,12 @@ function hideTakeoffContextMenu() {
   if (takeoffPopoutWin && !takeoffPopoutWin.closed) takeoffPopoutWin.document.getElementById('takeoff-context-menu')?.remove();
 }
 
+// Shared by the right-click menu's "Go to Item in Take-offs" and the bottom
+// bar's #takeoff-goto-btn.
+function goToTakeoffItemInTakeoffs(itemId) {
+  window.location.href = `/takeoffs.html?projectId=${projectId}&itemId=${itemId}`;
+}
+
 function showTakeoffContextMenu(x, y, instance) {
   hideTakeoffContextMenu();
   const menu = document.createElement('div');
@@ -4581,7 +4587,7 @@ function showTakeoffContextMenu(x, y, instance) {
   });
   menu.querySelector('[data-action="goto"]').addEventListener('click', () => {
     hideTakeoffContextMenu();
-    window.location.href = `/takeoffs.html?projectId=${projectId}&itemId=${instance.item_id}`;
+    goToTakeoffItemInTakeoffs(instance.item_id);
   });
 
   // Dismiss on the next click anywhere, or Escape. Deferred by a tick so the
@@ -5393,6 +5399,11 @@ function setupTakeoffEditToolbar() {
     editSelectedPointIndices = new Set();
     takeoffEditDefaultSelection = false;
     renderTakeoffEditOverlay();
+  });
+
+  document.getElementById('takeoff-goto-btn').addEventListener('click', () => {
+    const itemId = currentBarItemId();
+    if (itemId) goToTakeoffItemInTakeoffs(itemId);
   });
 }
 
@@ -8021,6 +8032,12 @@ function updateTakeoffToolbar() {
   // is itself disabled the moment a placement tool arms (see
   // renderTakeoffPane's edit-enabled toggle).
   document.getElementById('takeoff-edit-select-group').style.display = editingInstance ? 'flex' : 'none';
+  // Always the bar's last child, so it stays rightmost regardless of what
+  // else is showing. Only meaningful when there's an actual item to go to
+  // (an assembly has no row on the take-offs page to land on).
+  const gotoItemId = currentBarItemId();
+  document.getElementById('takeoff-goto-btn').style.display =
+    gotoItemId && takeoffItems.some((i) => i.id === gotoItemId) ? '' : 'none';
 }
 
 // Rebuilds the <option> list and re-syncs the selected value from current
