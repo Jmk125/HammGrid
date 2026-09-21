@@ -1,6 +1,7 @@
 import { renderShell, openModal, closeModal, confirmModal, promptModal, showToast } from '/js/shell.js';
 import { setupAdvancedFields, wireNamePreview } from '/js/takeoffAdvancedFields.js';
 import { computeTakeoffOutput, parseTakeoffProperties, resolveTakeoffName } from '/js/takeoffFormula.js';
+import { getDefaultTakeoffFolderId, setDefaultTakeoffFolderId } from '/js/takeoffDefaultFolder.js';
 
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
@@ -111,6 +112,9 @@ async function performFolderDelete(folderId, cascade) {
   try {
     await api('DELETE', `/api/projects/${projectId}/take-off-folders/${folderId}${cascade ? '?cascade=true' : ''}`);
     showToast(cascade ? 'Folder and its items deleted.' : 'Folder deleted.', 'success');
+    // Row ids can be reused by SQLite, so don't leave a dead default behind
+    // that a later folder might silently inherit.
+    if (getDefaultTakeoffFolderId(projectId, allFolders) === folderId) setDefaultTakeoffFolderId(projectId, null);
     await loadFolders();
     await loadItems();
   } catch (err) {
@@ -448,9 +452,9 @@ function renderByItemTable() {
     sel.addEventListener('change', async () => {
       sel.disabled = true;
       try {
-        await api('PATCH', `/api/projects/${projectId}/take-off-items/${sel.dataset.id}`, {
-          folder_id: sel.value ? Number(sel.value) : null,
-        });
+        const folderId = sel.value ? Number(sel.value) : null;
+        await api('PATCH', `/api/projects/${projectId}/take-off-items/${sel.dataset.id}`, { folder_id: folderId });
+        setDefaultTakeoffFolderId(projectId, folderId);
         await loadItems();
       } catch (err) {
         showToast(`Failed to move: ${err.message}`, 'error');
@@ -1147,6 +1151,9 @@ function openEditModal(item) {
         output_label: outputLabel || null,
         folder_id: folderId,
       });
+      // Only a real folder change counts as "assigning" - renaming an item
+      // that's already in some folder shouldn't retarget where new ones go.
+      if (folderId !== item.folder_id) setDefaultTakeoffFolderId(projectId, folderId);
       closeModal();
       showToast('Take-off item updated.', 'success');
       await refreshCurrentView();
