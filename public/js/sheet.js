@@ -11,6 +11,7 @@ import {
 import { renderShell, openModal, closeModal, showToast, promptModal, confirmModal } from '/js/shell.js';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 import { setupAdvancedFields, wireNamePreview } from '/js/takeoffAdvancedFields.js';
+import { getDefaultTakeoffFolderId, setDefaultTakeoffFolderId } from '/js/takeoffDefaultFolder.js';
 import { computeTakeoffOutput, parseTakeoffProperties, resolveTakeoffName } from '/js/takeoffFormula.js';
 import { openFragmentPicker } from '/js/fragmentPicker.js';
 
@@ -4705,6 +4706,7 @@ function openChangeTakeoffItemModal(instance) {
           type: instance.item_type,
           color,
           shape: instance.item_type === 'count' ? originalItem?.shape || 'square' : undefined,
+          folder_id: defaultTakeoffFolderId(),
         });
         takeoffItems.push({ ...item, total_quantity: 0, instance_count: 0 });
         targetItemId = item.id;
@@ -5465,8 +5467,9 @@ function showCopySelectionContextMenu(x, y) {
 // currently selected in edit mode - a fast way to reuse a shape you've
 // already traced for one item as the starting point for a different one,
 // instead of tracing the same edge twice. Deliberately minimal (name/type/
-// color only, no folder/properties/formula) - the new item can be edited
-// normally afterward if it needs those.
+// color only, no properties/formula, and no folder picker - it just lands in
+// the remembered default folder) - the new item can be edited normally
+// afterward if it needs those.
 function openCopySelectionModal() {
   const points = getSelectedEditPoints();
   if (points.length < 2) {
@@ -5518,7 +5521,12 @@ function openCopySelectionModal() {
     const createBtn = document.getElementById('modal-create');
     createBtn.disabled = true;
     try {
-      const { item } = await api('POST', `/api/projects/${projectId}/take-off-items`, { name, type, color });
+      const { item } = await api('POST', `/api/projects/${projectId}/take-off-items`, {
+        name,
+        type,
+        color,
+        folder_id: defaultTakeoffFolderId(),
+      });
       const quantity = type === 'area' ? polygonAreaFeet(points) : polylineLengthFeet(points);
       const perimeter = type === 'area' ? polygonPerimeterFeet(points) : null;
       await api('POST', `/api/projects/${projectId}/sheets/${sheetId}/take-off-instances`, {
@@ -6515,7 +6523,7 @@ function openTakeoffNamingModal(type, onDone, prefill) {
     outputLabel: prefill ? prefill.outputLabel : '',
     expanded: !!prefill && (!!prefill.formula || (prefill.properties && prefill.properties.length > 0)),
     folders: takeoffFoldersCache || [],
-    folderId: null,
+    folderId: defaultTakeoffFolderId(),
     onCreateFolder: createTakeoffFolder,
   });
   wireNamePreview(document.getElementById('takeoff-name'), document.getElementById('takeoff-name-preview'), advancedRoot, advanced);
@@ -6582,6 +6590,7 @@ function openTakeoffNamingModal(type, onDone, prefill) {
         output_label: outputLabel || null,
         folder_id: folderId,
       });
+      setDefaultTakeoffFolderId(projectId, folderId);
       if (saveAsTemplate) {
         try {
           await api('POST', '/api/take-off-templates', {
@@ -6662,6 +6671,9 @@ function openTakeoffEditModal(item) {
         output_label: outputLabel || null,
         folder_id: folderId,
       });
+      // Only a real folder change counts as "assigning" - renaming an item
+      // that's already in some folder shouldn't retarget where new ones go.
+      if (folderId !== item.folder_id) setDefaultTakeoffFolderId(projectId, folderId);
       closeModal();
       showToast('Take-off item updated.', 'success');
       await loadTakeoffItems();
@@ -6872,6 +6884,11 @@ async function loadTakeoffFolders() {
     // fails to load over a feature as minor as folder organization.
     return takeoffFoldersCache || [];
   }
+}
+// Folder new items land in unless the user picks otherwise - the last one
+// they assigned a take-off to (see takeoffDefaultFolder.js).
+function defaultTakeoffFolderId() {
+  return getDefaultTakeoffFolderId(projectId, takeoffFoldersCache);
 }
 async function createTakeoffFolder(name) {
   try {
