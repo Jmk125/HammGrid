@@ -6393,6 +6393,23 @@ function setupTakeoffInteraction() {
     if (e.key === 'Enter' && takeoffTool && (takeoffTool !== 'linear' || continuingInstanceId) && takeoffPoints.length >= 3)
       finishTakeoffInstance();
 
+    // P/B switch between Point-to-point and Box, mirroring the segmented
+    // control in the bottom toolbar - which only exists for Area, so the keys
+    // only do anything there. P is also the freeze-pane shortcut, but that
+    // one stays out of the way whenever a take-off tool is armed (see
+    // setupFreezePaneTool), so the two never both fire.
+    if (takeoffTool === 'area' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const mode = e.key === 'p' || e.key === 'P' ? 'points' : e.key === 'b' || e.key === 'B' ? 'box' : null;
+      const tag = (document.activeElement && document.activeElement.tagName) || '';
+      if (mode && tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
+        e.preventDefault();
+        // Re-pressing the current mode's key is a no-op rather than a
+        // draft-clearing "switch" - a stray keystroke shouldn't wipe a trace.
+        if (mode !== takeoffPlacementMode) setTakeoffPlacementMode(mode);
+        return;
+      }
+    }
+
     if ((e.key === 'a' || e.key === 'A') && takeoffTool) {
       const tag = (document.activeElement && document.activeElement.tagName) || '';
       if (tag === 'INPUT' || tag === 'TEXTAREA') return; // don't hijack typing elsewhere
@@ -7989,22 +8006,27 @@ async function setupTakeoffTools() {
 // armed 'count' item, or a merely-selected/being-edited item with nothing
 // armed, shows the group with axis-lock/snap/box-mode hidden, since none of
 // those apply outside active linear/perimeter/area placement.
+// Shared by the Point-to-point/Box buttons and the P/B keyboard shortcuts.
+function setTakeoffPlacementMode(mode) {
+  takeoffPlacementMode = mode;
+  document
+    .querySelectorAll('#takeoff-placement-mode button')
+    .forEach((b) => b.classList.toggle('active', b.dataset.mode === mode));
+  clearTakeoffDraft();
+  // Paired assemblies (see toggleMultiSelectExtraAssembly) only make
+  // sense against a rectangle - drop them the moment placement mode
+  // leaves Box rather than silently reusing a freehand polygon's
+  // bounding box as if it were the traced shape.
+  if (takeoffPlacementMode !== 'box' && multiSelectExtraAssemblyIds.size > 0) {
+    multiSelectExtraAssemblyIds = new Set();
+    renderTakeoffAssembliesList();
+  }
+}
+
 function setupTakeoffToolbar() {
   const modeGroup = document.getElementById('takeoff-placement-mode');
   modeGroup.querySelectorAll('button').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      takeoffPlacementMode = btn.dataset.mode;
-      modeGroup.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
-      clearTakeoffDraft();
-      // Paired assemblies (see toggleMultiSelectExtraAssembly) only make
-      // sense against a rectangle - drop them the moment placement mode
-      // leaves Box rather than silently reusing a freehand polygon's
-      // bounding box as if it were the traced shape.
-      if (takeoffPlacementMode !== 'box' && multiSelectExtraAssemblyIds.size > 0) {
-        multiSelectExtraAssemblyIds = new Set();
-        renderTakeoffAssembliesList();
-      }
-    });
+    btn.addEventListener('click', () => setTakeoffPlacementMode(btn.dataset.mode));
   });
 
   const axisLockInput = document.getElementById('takeoff-axis-lock-checkbox');
