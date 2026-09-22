@@ -3022,20 +3022,22 @@ function redrawFreezeDraft(livePt) {
 
 let freezePaneIdCounter = 0;
 
-// Persisted panes are stored per-project (not per-sheet) so checking "keep
-// across drawings" on one sheet makes it reappear - same screen position,
-// same captured image, same label/collapsed state - on every other sheet in
-// this project, until explicitly closed. Stored as a plain array of {id,
-// dataUrl, width, height, left, top, boxWidth, boxHeight, collapsed, label,
-// versionId} in localStorage; nothing server-side, matching the rest of this
-// feature's session-scratch nature (just longer-lived scratch). boxWidth/
-// boxHeight are only present once the user has manually resized the pane
-// (undefined means "stay shrink-to-fit around the image"). versionId is
-// whichever sheet_versions id was on screen when the pane was captured
-// (the single visible overlay layer's version if captured mid-overlay,
-// otherwise displayedVersionId) - see applyFreezePaneOverlayColor, which
-// uses it to color-code the pane whenever overlay compare is later entered
-// against that same version, whether or not the pane was captured there.
+// Persisted panes for the whole project live under one storage key; which
+// sheets a given pane reappears on is decided by its own `scope` field, not
+// by which key it's filed under - 'project' reappears on every sheet in the
+// project, 'sheet' only on the `sheetId` it was pinned from (see
+// freezePaneVisibleOnThisSheet). Stored as a plain array of {id, dataUrl,
+// width, height, left, top, boxWidth, boxHeight, collapsed, label,
+// versionId, scope, sheetId} in localStorage; nothing server-side, matching
+// the rest of this feature's session-scratch nature (just longer-lived
+// scratch). boxWidth/boxHeight are only present once the user has manually
+// resized the pane (undefined means "stay shrink-to-fit around the image").
+// versionId is whichever sheet_versions id was on screen when the pane was
+// captured (the single visible overlay layer's version if captured
+// mid-overlay, otherwise displayedVersionId) - see
+// applyFreezePaneOverlayColor, which uses it to color-code the pane whenever
+// overlay compare is later entered against that same version, whether or
+// not the pane was captured there.
 function freezePanesStorageKey() {
   return `hammgrid-frozen-panes:${projectId}`;
 }
@@ -3085,13 +3087,13 @@ function clientPointFromEvent(e) {
   return { x: p.clientX, y: p.clientY };
 }
 
-// Builds the floating panel shell (drag handle, label, "keep across
-// drawings" checkbox, close button, resize handles) around an already-built
-// content element - a live capture <canvas> for a freshly-drawn box, or an
-// <img> when rehydrating a persisted pane on a different sheet. The two
+// Builds the floating panel shell (drag handle, label, three-state pin
+// button, close button, resize handles) around an already-built content
+// element - a live capture <canvas> for a freshly-drawn box, or an <img>
+// when rehydrating a persisted pane on a different sheet. The two
 // creation paths below share everything except how the image content is
 // produced.
-function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collapsed, boxWidth, boxHeight, versionId }) {
+function buildFreezePaneEl({ id, contentEl, left, top, pinState, label, collapsed, boxWidth, boxHeight, versionId }) {
   const el = document.createElement('div');
   el.className = 'freeze-pane';
   el.style.left = `${left}px`;
@@ -3104,9 +3106,12 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
       <input type="text" class="freeze-pane-label" placeholder="Label...">
       <div class="freeze-pane-header-actions">
         <button type="button" class="icon-btn freeze-pane-collapse" title="Collapse">&#9650;</button>
-        <label class="freeze-pane-pin" title="Keep this pane across drawings until closed">
-          <input type="checkbox" class="freeze-pane-persist-checkbox">
-        </label>
+        <button type="button" class="icon-btn freeze-pane-pin" data-pin-state="off">
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+            <path class="pin-shape" d="M12 2C8.69 2 6 4.69 6 8c0 4.5 6 12 6 12s6-7.5 6-12c0-3.31-2.69-6-6-6zm0 8a2 2 0 110-4 2 2 0 010 4z"/>
+            <circle class="pin-badge" cx="18.5" cy="4.5" r="3.5"/>
+          </svg>
+        </button>
         <button type="button" class="icon-btn freeze-pane-close" title="Close">&#10005;</button>
       </div>
     </div>
@@ -3201,34 +3206,62 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
   freezePanes.push({ id, el, versionId });
   applyFreezePaneOverlayColor(el, versionId);
 
-  const persistCheckbox = el.querySelector('.freeze-pane-persist-checkbox');
+  const pinBtn = el.querySelector('.freeze-pane-pin');
   const labelInput = el.querySelector('.freeze-pane-label');
   const collapseBtn = el.querySelector('.freeze-pane-collapse');
 
   labelInput.value = label || '';
-  persistCheckbox.checked = !!persisted;
-  persistCheckbox.addEventListener('change', () => {
-    if (persistCheckbox.checked) {
-      savePersistedFreezePane({
-        id,
-        dataUrl: contentEl.tagName === 'CANVAS' ? contentEl.toDataURL('image/png') : contentEl.src,
-        width: contentEl.width || contentEl.naturalWidth,
-        height: contentEl.height || contentEl.naturalHeight,
-        left: el.offsetLeft,
-        top: el.offsetTop,
-        boxWidth: el.style.width ? el.offsetWidth : undefined,
-        boxHeight: el.style.height ? el.offsetHeight : undefined,
-        collapsed: el.classList.contains('freeze-pane-collapsed'),
-        label: labelInput.value,
-        versionId,
-      });
-    } else {
+
+  // Three-state pin, cycling off -> sheet -> project -> off (see the
+  // freeze-panes module comment). "sheet" and "project" both mean
+  // "persisted," differing only in the scope field written to storage;
+  // isPinned() below is the single place that collapses that distinction
+  // back down to a boolean for every other persistence call site.
+  const PIN_TITLES = {
+    off: 'Not pinned — click to keep this pane on this drawing',
+    sheet: 'Pinned to this drawing — click to keep it on every drawing',
+    project: 'Pinned to every drawing — click to unpin',
+  };
+  const PIN_NEXT = { off: 'sheet', sheet: 'project', project: 'off' };
+  let currentPinState = pinState || 'off';
+
+  function isPinned() {
+    return currentPinState !== 'off';
+  }
+
+  function applyPinButtonState() {
+    pinBtn.dataset.pinState = currentPinState;
+    pinBtn.title = PIN_TITLES[currentPinState];
+  }
+  applyPinButtonState();
+
+  function setPinState(next) {
+    currentPinState = next;
+    applyPinButtonState();
+    if (next === 'off') {
       removePersistedFreezePane(id);
+      return;
     }
-  });
+    savePersistedFreezePane({
+      id,
+      dataUrl: contentEl.tagName === 'CANVAS' ? contentEl.toDataURL('image/png') : contentEl.src,
+      width: contentEl.width || contentEl.naturalWidth,
+      height: contentEl.height || contentEl.naturalHeight,
+      left: el.offsetLeft,
+      top: el.offsetTop,
+      boxWidth: el.style.width ? el.offsetWidth : undefined,
+      boxHeight: el.style.height ? el.offsetHeight : undefined,
+      collapsed: el.classList.contains('freeze-pane-collapsed'),
+      label: labelInput.value,
+      versionId,
+      scope: next,
+      sheetId,
+    });
+  }
+  pinBtn.addEventListener('click', () => setPinState(PIN_NEXT[currentPinState]));
 
   labelInput.addEventListener('input', () => {
-    if (persistCheckbox.checked) updatePersistedFreezePane(id, { label: labelInput.value });
+    if (isPinned()) updatePersistedFreezePane(id, { label: labelInput.value });
   });
 
   // Collapsing hides the content but must not leave an explicit inline
@@ -3249,7 +3282,7 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
   collapseBtn.addEventListener('click', () => {
     const next = !el.classList.contains('freeze-pane-collapsed');
     setCollapsed(next);
-    if (persistCheckbox.checked) updatePersistedFreezePane(id, { collapsed: next });
+    if (isPinned()) updatePersistedFreezePane(id, { collapsed: next });
   });
 
   el.querySelector('.freeze-pane-close').addEventListener('click', () => {
@@ -3278,7 +3311,7 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onUp);
-      if (persistCheckbox.checked) updatePersistedFreezePane(id, { left: el.offsetLeft, top: el.offsetTop });
+      if (isPinned()) updatePersistedFreezePane(id, { left: el.offsetLeft, top: el.offsetTop });
     }
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
@@ -3357,7 +3390,7 @@ function buildFreezePaneEl({ id, contentEl, left, top, persisted, label, collaps
         window.removeEventListener('mouseup', onUp);
         window.removeEventListener('touchmove', onMove);
         window.removeEventListener('touchend', onUp);
-        if (!persistCheckbox.checked) return;
+        if (!isPinned()) return;
         const patch = { left: el.offsetLeft, top: el.offsetTop, boxWidth: el.offsetWidth };
         if (!el.classList.contains('freeze-pane-collapsed')) patch.boxHeight = el.offsetHeight;
         updatePersistedFreezePane(id, patch);
@@ -3405,13 +3438,23 @@ function createFreezePane(rect) {
     contentEl: captureCanvas,
     left: screenX,
     top: screenY,
-    persisted: false,
+    pinState: 'off',
     versionId,
   });
 }
 
+// A "sheet"-scoped entry only comes back on the sheet it was pinned from;
+// a "project"-scoped one comes back everywhere. Older entries saved before
+// the sheet/project split has a scope field default to 'project' (the only
+// mode that existed then), so nothing already pinned disappears.
+function freezePaneVisibleOnThisSheet(entry) {
+  const scope = entry.scope || 'project';
+  return scope === 'project' || String(entry.sheetId) === String(sheetId);
+}
+
 function restorePersistedFreezePanes() {
   for (const entry of loadPersistedFreezePanes()) {
+    if (!freezePaneVisibleOnThisSheet(entry)) continue;
     const img = document.createElement('img');
     img.src = entry.dataUrl;
     img.width = entry.width;
@@ -3421,7 +3464,7 @@ function restorePersistedFreezePanes() {
       contentEl: img,
       left: entry.left,
       top: entry.top,
-      persisted: true,
+      pinState: entry.scope || 'project',
       label: entry.label,
       collapsed: entry.collapsed,
       boxWidth: entry.boxWidth,
