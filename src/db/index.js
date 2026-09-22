@@ -328,6 +328,44 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_sheet_links_type ON sheet_links(project_
   console.log('Rebuilt markups table to add document_id (nullable sheet_id) so markups can attach to documents.');
 })();
 
+(function ensureMarkupsPhotoType() {
+  const cols = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='markups'").get();
+  if (!cols || cols.sql.includes("'photo'")) return;
+
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE markups_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id INTEGER REFERENCES sheets(id) ON DELETE CASCADE,
+        document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+        author_id INTEGER NOT NULL REFERENCES users(id),
+        visibility TEXT NOT NULL CHECK (visibility IN ('private', 'published')) DEFAULT 'private',
+        type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect', 'flag', 'photo')),
+        geometry TEXT NOT NULL,
+        style TEXT NOT NULL DEFAULT '{}',
+        linked_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK ((sheet_id IS NOT NULL AND document_id IS NULL) OR (sheet_id IS NULL AND document_id IS NOT NULL))
+      )
+    `);
+    db.exec(`
+      INSERT INTO markups_new (id, sheet_id, document_id, author_id, visibility, type, geometry, style, linked_document_id, created_at, updated_at)
+      SELECT id, sheet_id, document_id, author_id, visibility, type, geometry, style, linked_document_id, created_at, updated_at FROM markups
+    `);
+    db.exec('DROP TABLE markups');
+    db.exec('ALTER TABLE markups_new RENAME TO markups');
+    const violations = db.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length) {
+      throw new Error(`markups table rebuild left ${violations.length} dangling reference(s): ${JSON.stringify(violations)}`);
+    }
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+  console.log("Rebuilt markups table to add 'photo' to the type CHECK constraint.");
+})();
+
 db.exec('CREATE INDEX IF NOT EXISTS idx_markups_sheet ON markups(sheet_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_markups_document ON markups(document_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_markups_linked_document ON markups(linked_document_id)');

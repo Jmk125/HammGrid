@@ -1,6 +1,7 @@
 import { getCachedMarkupsForSheet } from '/js/offline-store.js';
 import { openDocPicker } from '/js/docPicker.js';
-import { confirmModal, promptModal, showToast } from '/js/shell.js';
+import { confirmModal, promptModal, showToast, openModal, closeModal } from '/js/shell.js';
+import { getDefaultPhotoFolderId, setDefaultPhotoFolderId } from '/js/photoPinDefaultFolder.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CLOUD_BUMP_SIZE = { 'cloud-small': 14, 'cloud-large': 30 };
@@ -14,10 +15,21 @@ const TOOL_ICONS = {
     '<svg viewBox="0 0 20 20"><path d="M5 14c-1.7 0-3-1.3-3-3 0-1.5 1.1-2.7 2.5-3-0.1-0.3-0.1-0.6-0.1-0.9 0-1.9 1.6-3.5 3.5-3.5 1.2 0 2.3 0.6 2.9 1.6 0.4-0.2 0.9-0.3 1.4-0.3 1.7 0 3.1 1.3 3.2 3 1.5 0.3 2.6 1.6 2.6 3.1 0 1.7-1.3 3-3 3H5z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/></svg>',
   text: '<svg viewBox="0 0 20 20"><text x="4" y="15" font-size="14" font-weight="700" fill="currentColor" font-family="sans-serif">T</text></svg>',
   flag: '<svg viewBox="0 0 20 20"><path d="M5 17V3h11l-3 4 3 4H5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+  // Facing-direction pin: a dot with a wedge pointing "up", matching how a
+  // placed photo pin renders on the sheet (see photoConePathD) before the
+  // user has aimed it anywhere in particular.
+  photo:
+    '<svg viewBox="0 0 20 20"><path d="M10 11 L4 2 L16 2 Z" fill="currentColor" fill-opacity="0.45"/><circle cx="10" cy="11" r="2.6" fill="currentColor"/></svg>',
 };
 
 const OPEN_DOC_ICON =
   '<svg viewBox="0 0 20 20"><path d="M8 4H4v12h12v-4M11 3h6v6M17 3l-8 8" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const FOLDER_ICON =
+  '<svg viewBox="0 0 20 20" class="doc-picker-icon"><path d="M2 5a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5z" fill="currentColor"/></svg>';
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
 
 function el(tag) {
   return document.createElementNS(SVG_NS, tag);
@@ -94,6 +106,35 @@ function cloudPath(x, y, w, h, bumpSize) {
   return d + 'Z';
 }
 
+// Photo pin direction: degrees clockwise from "up" (0 = straight up the
+// sheet), not the usual atan2-from-east-counterclockwise math convention -
+// this is a facing direction a field worker reads like a compass bearing on
+// the drawing, not a vector angle.
+function photoAngleFromDelta(dx, dy) {
+  let deg = Math.atan2(dx, -dy) * (180 / Math.PI);
+  if (deg < 0) deg += 360;
+  return deg;
+}
+
+function photoPoint(cx, cy, angleDeg, radius) {
+  const rad = (angleDeg * Math.PI) / 180;
+  return { x: cx + radius * Math.sin(rad), y: cy - radius * Math.cos(rad) };
+}
+
+const PHOTO_PIN_RADIUS = 7;
+const PHOTO_CONE_LENGTH = 22;
+const PHOTO_CONE_SPREAD = 24; // degrees each side of the facing direction
+
+// Screen-constant sizing (divide by the outer CSS zoom scale) - same
+// convention as every other stroke-width/handle-radius in this file, so the
+// cone reads the same physical size on screen regardless of sheet zoom.
+function photoConePathD(cx, cy, direction, zoomScale) {
+  const r = PHOTO_CONE_LENGTH / zoomScale;
+  const p1 = photoPoint(cx, cy, direction - PHOTO_CONE_SPREAD, r);
+  const p2 = photoPoint(cx, cy, direction + PHOTO_CONE_SPREAD, r);
+  return `M ${cx} ${cy} L ${p1.x} ${p1.y} L ${p2.x} ${p2.y} Z`;
+}
+
 export function initMarkups({
   sheetId,
   apiBase,
@@ -122,6 +163,12 @@ export function initMarkups({
   let editingId = null;
   let handleDrag = null;
   let bodyDrag = null;
+  // documentId -> its document_versions array (newest first), lazily fetched
+  // the first time a photo pin's popup is opened and reused after that -
+  // repopulated wholesale (not appended to) whenever a photo is added, since
+  // that's a single extra request and simpler than reasoning about partial
+  // cache staleness.
+  const photoVersionsCache = new Map();
   // Zoom is a CSS transform on an ancestor div, outside the SVG's own
   // coordinate system - vector-effect="non-scaling-stroke" only cancels
   // scaling from *inside* the SVG (viewBox, <g transform>), so it can't see
@@ -243,6 +290,10 @@ export function initMarkups({
     if (m.type === 'text') {
       return { x: m.geometry.x * w, y: m.geometry.y * h - 16, w: 10, h: 16 };
     }
+    if (m.type === 'photo') {
+      const size = PHOTO_PIN_RADIUS * 2;
+      return { x: m.geometry.x * w - size / 2, y: m.geometry.y * h - size / 2, w: size, h: size };
+    }
     return { x: m.geometry.x * w, y: m.geometry.y * h, w: m.geometry.w * w, h: m.geometry.h * h };
   }
 
@@ -301,6 +352,24 @@ export function initMarkups({
       node.setAttribute('stroke-width', strokeWidth);
       node.setAttribute('fill', color);
       node.setAttribute('fill-opacity', '0.25');
+      node.style.pointerEvents = 'all';
+    } else if (m.type === 'photo') {
+      node = el('g');
+      const cx = m.geometry.x * w;
+      const cy = m.geometry.y * h;
+      const cone = el('path');
+      cone.setAttribute('d', photoConePathD(cx, cy, m.geometry.direction || 0, currentZoomScale));
+      cone.setAttribute('fill', color);
+      cone.setAttribute('fill-opacity', '0.35');
+      node.appendChild(cone);
+      const circle = el('circle');
+      circle.setAttribute('cx', cx);
+      circle.setAttribute('cy', cy);
+      circle.setAttribute('r', PHOTO_PIN_RADIUS / currentZoomScale);
+      circle.setAttribute('fill', color);
+      circle.setAttribute('stroke', '#ffffff');
+      circle.setAttribute('stroke-width', 1.5 / currentZoomScale);
+      node.appendChild(circle);
       node.style.pointerEvents = 'all';
     }
 
@@ -393,6 +462,20 @@ export function initMarkups({
       handleAt(m.geometry.x * w, m.geometry.y * h, (pt) => {
         m.geometry.x = pt.x / w;
         m.geometry.y = pt.y / h;
+      });
+    } else if (m.type === 'photo') {
+      // One handle at the cone tip, re-aiming the facing direction only -
+      // position itself still moves via the ordinary body-drag (see the
+      // generic x/y branch in the mousemove handlers below), which leaves
+      // geometry.direction untouched since it spreads the rest of the
+      // geometry object as-is.
+      const cx = m.geometry.x * w;
+      const cy = m.geometry.y * h;
+      const tip = photoPoint(cx, cy, m.geometry.direction || 0, PHOTO_CONE_LENGTH / currentZoomScale);
+      handleAt(tip.x, tip.y, (pt) => {
+        const dx = pt.x - cx;
+        const dy = pt.y - cy;
+        if (Math.hypot(dx, dy) > 4) m.geometry.direction = photoAngleFromDelta(dx, dy);
       });
     }
 
@@ -637,7 +720,81 @@ export function initMarkups({
         });
         popupEl.appendChild(saveBtn);
       }
+    } else if (m.type === 'photo') {
+      const gallery = document.createElement('div');
+      gallery.className = 'markup-popup-photo-gallery';
+      popupEl.appendChild(gallery);
+      renderPhotoGalleryInto(gallery, m);
+
+      // Adding a photo here doesn't touch the markup itself (linked_document_id
+      // stays put - only the underlying document gets a new version), so this
+      // follows the server's own document-upload authorization
+      // (requireRole('admin','editor') in documents.routes.js) rather than
+      // perm.canEdit (author-or-admin, meant for the markup's own fields).
+      if (me.role === 'admin' || me.role === 'editor') {
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.textContent = 'Add photo';
+        addBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const file = await pickPhotoFile();
+          if (!file) return;
+          try {
+            await uploadPhotoVersion(m.linked_document_id, file);
+            showToast('Photo added.', 'success');
+            renderPhotoGalleryInto(gallery, m, true);
+          } catch (err) {
+            showToast(err.message || 'Could not save photo.', 'error');
+          }
+        });
+        popupEl.appendChild(addBtn);
+      }
     }
+  }
+
+  function loadPhotoVersions(documentId, force) {
+    if (!force && photoVersionsCache.has(documentId)) return Promise.resolve(photoVersionsCache.get(documentId));
+    return api('GET', `/api/documents/${documentId}`).then(({ versions }) => {
+      photoVersionsCache.set(documentId, versions);
+      return versions;
+    });
+  }
+
+  // Thumbnail strip of every photo taken at this pin, newest first (the
+  // document_versions history behind m.linked_document_id - see
+  // promptAndCreatePhotoMarkup/uploadPhotoVersion for how that document
+  // grows over repeat visits). Each thumbnail opens the full photo in a new
+  // tab, same "easy download, back = close tab" pattern CLAUDE.md specifies
+  // for linked documents generally.
+  function renderPhotoGalleryInto(gallery, m, force) {
+    // The popup itself is always dark (see .markup-popup), unlike the rest
+    // of the app which follows the light/dark theme setting - the
+    // theme-aware .muted class (used elsewhere, e.g. docPicker.js) can read
+    // as near-invisible against it in light mode, so status text here uses
+    // its own fixed-color class instead, matching .markup-popup-doclabel.
+    if (!m.linked_document_id) {
+      gallery.innerHTML = '<p class="markup-popup-photo-status">No photo attached yet.</p>';
+      return;
+    }
+    gallery.innerHTML = '<p class="markup-popup-photo-status">Loading photos...</p>';
+    loadPhotoVersions(m.linked_document_id, force)
+      .then((versions) => {
+        if (!versions.length) {
+          gallery.innerHTML = '<p class="markup-popup-photo-status">No photos yet.</p>';
+          return;
+        }
+        gallery.innerHTML = versions
+          .map(
+            (v) => `
+            <a class="markup-popup-photo-thumb" href="/api/document-versions/${v.id}/pdf" target="_blank" title="${escapeHtml(new Date(v.created_at).toLocaleString())}">
+              <img src="/api/document-versions/${v.id}/pdf" loading="lazy" alt="">
+            </a>`
+          )
+          .join('');
+      })
+      .catch(() => {
+        gallery.innerHTML = '<p class="markup-popup-photo-status">Could not load photos.</p>';
+      });
   }
 
   // Precise real-world length/width entry for a rect/line/arrow markup
@@ -758,7 +915,7 @@ export function initMarkups({
     renderAll();
   }
 
-  async function createMarkup(type, geometry, extraStyle) {
+  async function createMarkup(type, geometry, extraStyle, extra) {
     if (currentPage != null) geometry.page = currentPage;
     const style = { color: colorInput.value, strokeWidth: Number(widthInput.value), ...extraStyle };
     const visibility = publishDefaultInput.checked ? 'published' : 'private';
@@ -767,10 +924,185 @@ export function initMarkups({
       geometry,
       style,
       visibility,
+      ...extra,
     });
     markups.push(markup);
     renderAll();
     return markup;
+  }
+
+  function photoDocumentName() {
+    return `Photo - ${new Date().toLocaleString()}`;
+  }
+
+  // Native <input type="file"> picker. On iPad/iPhone Safari, accept="image/*"
+  // alone already pops the "Take Photo, Photo Library, Choose File" action
+  // sheet - both halves of "camera or an existing photo" from a single plain
+  // input, no custom camera UI needed. Resolves the chosen File, or null if
+  // the user backed out without choosing one.
+  //
+  // There's no reliably cross-browser 'cancel' event on a file input - most
+  // browsers just never fire 'change' in that case. The window regaining
+  // focus is what actually happens when the native picker sheet closes
+  // either way, so a 'change' that hasn't already fired shortly after focus
+  // returns is treated as a cancel.
+  function pickPhotoFile() {
+    return new Promise((resolve) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      let settled = false;
+      function finish(file) {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener('focus', onFocus);
+        input.remove();
+        resolve(file);
+      }
+      function onFocus() {
+        setTimeout(() => finish(null), 300);
+      }
+      input.addEventListener('change', () => finish(input.files[0] || null));
+      window.addEventListener('focus', onFocus);
+      input.click();
+    });
+  }
+
+  // Small folder-navigable picker for where a NEW photo pin's first photo
+  // gets saved, styled to match docPicker.js's "Link to document" modal
+  // (same breadcrumb/row classes) but for choosing a destination folder
+  // rather than an existing document, plus an inline "New folder" action -
+  // the field-use case is often "start a fresh folder for this job walk"
+  // rather than picking one that already exists.
+  // Resolves the chosen folder id (null = project root), or undefined if
+  // cancelled - undefined (not null) specifically so the caller can tell
+  // "cancelled" apart from "root folder chosen".
+  function pickPhotoFolder() {
+    return new Promise((resolve) => {
+      let currentFolderId = getDefaultPhotoFolderId(projectId, folders);
+      const backdrop = openModal(`
+        <h2>Save photo to folder</h2>
+        <div id="photo-folder-body"></div>
+        <div class="modal-actions">
+          <button type="button" id="photo-folder-new">New folder</button>
+          <button type="button" id="photo-folder-cancel">Cancel</button>
+          <button class="primary" type="button" id="photo-folder-save">Save here</button>
+        </div>
+      `);
+      const body = backdrop.querySelector('#photo-folder-body');
+      let finished = false;
+      function finish(value) {
+        if (finished) return;
+        finished = true;
+        closeModal();
+        resolve(value);
+      }
+      backdrop.querySelector('#photo-folder-cancel').addEventListener('click', () => finish(undefined));
+      backdrop.querySelector('#photo-folder-save').addEventListener('click', () => finish(currentFolderId));
+      backdrop.querySelector('#photo-folder-new').addEventListener('click', async () => {
+        const name = await promptModal({ title: 'New folder', placeholder: 'e.g. Progress Photos' });
+        if (!name) return;
+        const { folder } = await api('POST', `/api/projects/${projectId}/documents/folders`, {
+          name,
+          parent_folder_id: currentFolderId,
+        });
+        folders.push(folder);
+        currentFolderId = folder.id;
+        render();
+      });
+
+      function render() {
+        const path = [];
+        let f = currentFolderId;
+        while (f) {
+          const folder = folders.find((x) => x.id === f);
+          if (!folder) break;
+          path.unshift(folder);
+          f = folder.parent_folder_id;
+        }
+        const childFolders = folders
+          .filter((x) => (x.parent_folder_id || null) === currentFolderId)
+          .sort((a, b) => a.name.localeCompare(b.name));
+        const breadcrumb =
+          `<span class="doc-picker-crumb" data-folder="">Root</span>` +
+          path.map((p) => ` / <span class="doc-picker-crumb" data-folder="${p.id}">${escapeHtml(p.name)}</span>`).join('');
+        const rows =
+          childFolders
+            .map((fld) => `<div class="doc-picker-row folder" data-folder="${fld.id}">${FOLDER_ICON}<span>${escapeHtml(fld.name)}</span></div>`)
+            .join('') || '<p class="muted" style="padding:8px 4px;">No subfolders here.</p>';
+        body.innerHTML = `<div class="doc-picker-breadcrumb">${breadcrumb}</div><div class="doc-picker-list">${rows}</div>`;
+        body.querySelectorAll('.doc-picker-crumb').forEach((elx) => {
+          elx.addEventListener('click', () => {
+            currentFolderId = elx.dataset.folder ? Number(elx.dataset.folder) : null;
+            render();
+          });
+        });
+        body.querySelectorAll('.doc-picker-row.folder').forEach((elx) => {
+          elx.addEventListener('click', () => {
+            currentFolderId = Number(elx.dataset.folder);
+            render();
+          });
+        });
+      }
+      render();
+    });
+  }
+
+  // Uploads `file` as a new document_versions row on an ALREADY-linked
+  // photo pin's document (a revisit photo) - no folder prompt (it inherits
+  // the document's existing folder) and no markup change (linked_document_id
+  // stays put; only the version history grows). Invalidates the gallery
+  // cache for that document so the popup's next render re-fetches it.
+  async function uploadPhotoVersion(documentId, file) {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch(`/api/projects/${projectId}/documents/${documentId}/versions`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save photo.');
+    photoVersionsCache.delete(documentId);
+    return data.document;
+  }
+
+  // The full place-a-NEW-pin flow: folder pick -> native photo picker ->
+  // upload (creating the document) -> create the markup linked to it. Any
+  // step backing out just removes the draft pin with no server calls at
+  // all - there's deliberately no path that leaves an orphaned markup with
+  // nothing attached to it.
+  async function promptAndCreatePhotoMarkup(geometry, draftEl) {
+    try {
+      const folderId = await pickPhotoFolder();
+      if (folderId === undefined) return; // cancelled
+      const file = await pickPhotoFile();
+      if (!file) return;
+      setDefaultPhotoFolderId(projectId, folderId);
+
+      const fd = new FormData();
+      fd.append('name', photoDocumentName());
+      if (folderId) fd.append('folder_id', folderId);
+      fd.append('file', file);
+      const res = await fetch(`/api/projects/${projectId}/documents`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Could not save photo.');
+      if (documents) documents.push(data.document);
+
+      const markup = await createMarkup('photo', geometry, { color: '#2563eb', strokeWidth: 2 }, { linked_document_id: data.document.id });
+      selectMarkup(markup.id);
+      showToast('Photo pin added.', 'success');
+    } catch (err) {
+      showToast(err.message || 'Could not save photo.', 'error');
+    } finally {
+      if (draftEl) draftEl.remove();
+    }
   }
 
   function activateTool(tool) {
@@ -791,6 +1123,14 @@ export function initMarkups({
     { tool: 'cloud-large', icon: TOOL_ICONS.cloud, badge: 'L', title: 'Cloud (large)' },
     { tool: 'text', icon: TOOL_ICONS.text, title: 'Text' },
     { tool: 'flag', icon: TOOL_ICONS.flag, title: 'Flag (F)' },
+    // Placing one uploads a photo (POST /documents), which the server
+    // restricts to admin/editor (documents.routes.js) same as any other
+    // document upload - a viewer could otherwise place the pin but then hit
+    // a 403 on the upload it depends on, so it's left off their toolbar
+    // entirely instead.
+    ...(me.role === 'admin' || me.role === 'editor'
+      ? [{ tool: 'photo', icon: TOOL_ICONS.photo, title: 'Photo pin - place, drag to aim, then attach a photo' }]
+      : []),
   ];
   const toolGrid = document.getElementById('tool-grid');
   for (const def of TOOL_DEFS) {
@@ -859,6 +1199,31 @@ export function initMarkups({
       return;
     }
 
+    if (activeTool === 'photo') {
+      // Position locks in immediately on touch-down (unlike the drag-to-draw
+      // types below, whose "start" corner can still move if the pointer
+      // backs up before release) - only the facing direction is live during
+      // the drag, swept in updateDrawing from this fixed origin.
+      drawing = { type: 'photo', origin: pt, direction: 0 };
+      previewEl = el('g');
+      previewEl.classList.add('photo-pin-draft');
+      const cone = el('path');
+      cone.setAttribute('fill', colorInput.value);
+      cone.setAttribute('fill-opacity', '0.4');
+      previewEl.appendChild(cone);
+      const circle = el('circle');
+      circle.setAttribute('cx', pt.x);
+      circle.setAttribute('cy', pt.y);
+      circle.setAttribute('r', PHOTO_PIN_RADIUS / currentZoomScale);
+      circle.setAttribute('fill', colorInput.value);
+      circle.setAttribute('stroke', '#ffffff');
+      circle.setAttribute('stroke-width', 1.5 / currentZoomScale);
+      previewEl.appendChild(circle);
+      cone.setAttribute('d', photoConePathD(pt.x, pt.y, 0, currentZoomScale));
+      svgEl.appendChild(previewEl);
+      return;
+    }
+
     drawing = { type: activeTool, start: pt };
     previewEl = el(activeTool === 'line' || activeTool === 'arrow' ? 'line' : activeTool.startsWith('cloud') ? 'path' : 'rect');
     previewEl.setAttribute('stroke', colorInput.value);
@@ -872,7 +1237,18 @@ export function initMarkups({
     if (!drawing) return;
     evt.preventDefault();
     const pt = getSvgPoint(evt);
-    const { type, start } = drawing;
+    const { type } = drawing;
+    if (type === 'photo') {
+      const dx = pt.x - drawing.origin.x;
+      const dy = pt.y - drawing.origin.y;
+      // Below the same 4px noise floor every other drag gesture in this file
+      // uses - a shaky tap shouldn't visibly snap the needle to a near-random
+      // direction before the user has actually moved anywhere.
+      if (Math.hypot(dx, dy) > 4) drawing.direction = photoAngleFromDelta(dx, dy);
+      previewEl.querySelector('path').setAttribute('d', photoConePathD(drawing.origin.x, drawing.origin.y, drawing.direction, currentZoomScale));
+      return;
+    }
+    const { start } = drawing;
     if (type === 'line' || type === 'arrow') {
       previewEl.setAttribute('x1', start.x);
       previewEl.setAttribute('y1', start.y);
@@ -898,7 +1274,28 @@ export function initMarkups({
     if (!drawing) return false;
     evt.preventDefault();
     const pt = getSvgPoint(evt);
-    const { type, start } = drawing;
+    const { type } = drawing;
+
+    if (type === 'photo') {
+      // previewEl is deliberately NOT removed here (unlike every other
+      // type below) - it stays on screen as a placeholder through the
+      // async folder-pick/upload flow, and promptAndCreatePhotoMarkup()
+      // removes it itself once that settles either way (attached or
+      // cancelled), so the pin doesn't just vanish mid-flow.
+      const dx = pt.x - drawing.origin.x;
+      const dy = pt.y - drawing.origin.y;
+      const direction = Math.hypot(dx, dy) > 4 ? photoAngleFromDelta(dx, dy) : drawing.direction;
+      const origin = drawing.origin;
+      const draftEl = previewEl;
+      drawing = null;
+      previewEl = null;
+      activateTool('select');
+      const { w, h } = vbSize();
+      await promptAndCreatePhotoMarkup({ x: origin.x / w, y: origin.y / h, direction }, draftEl);
+      return true;
+    }
+
+    const { start } = drawing;
     if (previewEl) previewEl.remove();
     drawing = null;
 
