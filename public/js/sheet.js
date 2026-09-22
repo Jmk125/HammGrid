@@ -6585,6 +6585,7 @@ function openTakeoffNamingModal(type, onDone, prefill) {
     folders: takeoffFoldersCache || [],
     folderId: defaultTakeoffFolderId(),
     onCreateFolder: createTakeoffFolder,
+    nestedFolders: true,
   });
   wireNamePreview(document.getElementById('takeoff-name'), document.getElementById('takeoff-name-preview'), advancedRoot, advanced);
 
@@ -6712,6 +6713,7 @@ function openTakeoffEditModal(item) {
     folders: takeoffFoldersCache || [],
     folderId: item.folder_id,
     onCreateFolder: createTakeoffFolder,
+    nestedFolders: true,
   });
   wireNamePreview(document.getElementById('takeoff-edit-name'), document.getElementById('takeoff-edit-name-preview'), editAdvancedRoot, advanced);
 
@@ -6950,9 +6952,9 @@ async function loadTakeoffFolders() {
 function defaultTakeoffFolderId() {
   return getDefaultTakeoffFolderId(projectId, takeoffFoldersCache);
 }
-async function createTakeoffFolder(name) {
+async function createTakeoffFolder(name, parentFolderId = null) {
   try {
-    const { folder } = await api('POST', `/api/projects/${projectId}/take-off-folders`, { name });
+    const { folder } = await api('POST', `/api/projects/${projectId}/take-off-folders`, { name, parent_folder_id: parentFolderId });
     await loadTakeoffFolders();
     return folder;
   } catch (err) {

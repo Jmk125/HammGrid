@@ -24,6 +24,46 @@ export function wireNamePreview(nameInput, previewEl, advancedContainerEl, advan
   update();
 }
 
+// Take-off folders self-nest via parent_folder_id (template folders don't
+// have that column, so they just come out flat/top-level here). A folder
+// whose parent is missing from the list is treated as top level rather than
+// dropped. Returns Map(parentId | null -> child folders sorted by name).
+export function folderChildrenMap(folders) {
+  const ids = new Set(folders.map((f) => f.id));
+  const children = new Map();
+  for (const f of folders) {
+    const parentKey = f.parent_folder_id && ids.has(f.parent_folder_id) ? f.parent_folder_id : null;
+    if (!children.has(parentKey)) children.set(parentKey, []);
+    children.get(parentKey).push(f);
+  }
+  for (const list of children.values()) list.sort((a, b) => a.name.localeCompare(b.name));
+  return children;
+}
+
+// Depth-first tree order, each with its slash path ("Base Bid/Architectural")
+// - used for every folder dropdown so nesting reads at a glance. Tree order
+// (not a plain sort on the path string) keeps a folder's subfolders directly
+// under it, e.g. "Base Bid 2" can't land between "Base Bid" and its children.
+export function orderedFolderPaths(folders) {
+  const children = folderChildrenMap(folders);
+  const out = [];
+  const seen = new Set(); // guards against a parent cycle in bad data
+  (function walk(parentKey, prefix, depth) {
+    for (const folder of children.get(parentKey) || []) {
+      if (seen.has(folder.id)) continue;
+      seen.add(folder.id);
+      const path = prefix ? `${prefix}/${folder.name}` : folder.name;
+      out.push({ folder, path, depth });
+      walk(folder.id, path, depth + 1);
+    }
+  })(null, '', 0);
+  return out;
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+}
+
 export function setupAdvancedFields(containerEl, initial = {}) {
   const initialProperties = (initial.properties || []).map((p) => ({ name: p.name || '', value: p.value ?? '' }));
   let expanded = initial.expanded !== undefined ? initial.expanded : initialProperties.length > 0 || !!initial.formula;
@@ -31,6 +71,9 @@ export function setupAdvancedFields(containerEl, initial = {}) {
   // `folders` (project-scoped organization); the global Templates modal
   // doesn't, since a folder is project-specific and a template isn't.
   const hasFolders = Array.isArray(initial.folders);
+  // Take-off item folders nest (the inline "+ New folder..." row then asks
+  // where to put it); template folders are flat, so they leave this off.
+  const nestedFolders = hasFolders && !!initial.nestedFolders;
   const NEW_FOLDER_VALUE = '__new__';
 
   containerEl.innerHTML = `
@@ -43,6 +86,7 @@ export function setupAdvancedFields(containerEl, initial = {}) {
                <select id="ta-folder"></select>
                <div class="row" id="ta-folder-new-row" style="display:none; margin-top:4px;">
                  <input type="text" id="ta-folder-new-name" placeholder="New folder name" autocomplete="off" style="flex:1;">
+                 ${nestedFolders ? '<select id="ta-folder-new-parent" title="Location"></select>' : ''}
                  <button type="button" id="ta-folder-new-add">Add</button>
                  <button type="button" id="ta-folder-new-cancel">Cancel</button>
                </div>
@@ -87,7 +131,9 @@ export function setupAdvancedFields(containerEl, initial = {}) {
     if (!folderSelect) return;
     folderSelect.innerHTML =
       '<option value="">No folder</option>' +
-      folders.map((f) => `<option value="${f.id}">${f.name}</option>`).join('') +
+      orderedFolderPaths(folders)
+        .map(({ folder, path }) => `<option value="${folder.id}">${escapeHtml(path)}</option>`)
+        .join('') +
       `<option value="${NEW_FOLDER_VALUE}">+ New folder...</option>`;
     folderSelect.value = selectedId ? String(selectedId) : '';
   }
@@ -96,6 +142,7 @@ export function setupAdvancedFields(containerEl, initial = {}) {
     folderSelect.dataset.prev = initial.folderId ? String(initial.folderId) : '';
     const newRow = containerEl.querySelector('#ta-folder-new-row');
     const newNameInput = containerEl.querySelector('#ta-folder-new-name');
+    const newParentSelect = containerEl.querySelector('#ta-folder-new-parent');
     // An inline swap, not a nested promptModal() - promptModal opens its own
     // modal-backdrop, and openModal() always calls closeModal() first (see
     // shell.js), which would silently wipe out this entire item-creation
@@ -109,6 +156,17 @@ export function setupAdvancedFields(containerEl, initial = {}) {
       folderSelect.style.display = 'none';
       newRow.style.display = 'flex';
       newNameInput.value = '';
+      if (newParentSelect) {
+        // Only worth asking once there's somewhere to nest it. Defaults to
+        // whatever folder was picked before choosing "+ New folder...".
+        newParentSelect.style.display = folders.length ? '' : 'none';
+        newParentSelect.innerHTML =
+          '<option value="">Top level</option>' +
+          orderedFolderPaths(folders)
+            .map(({ folder, path }) => `<option value="${folder.id}">In ${escapeHtml(path)}</option>`)
+            .join('');
+        newParentSelect.value = folderSelect.dataset.prev || '';
+      }
       newNameInput.focus();
     });
     containerEl.querySelector('#ta-folder-new-cancel').addEventListener('click', () => {
@@ -122,7 +180,8 @@ export function setupAdvancedFields(containerEl, initial = {}) {
       const addBtn2 = containerEl.querySelector('#ta-folder-new-add');
       addBtn2.disabled = true;
       try {
-        const created = initial.onCreateFolder ? await initial.onCreateFolder(name) : null;
+        const parentId = newParentSelect && newParentSelect.value ? Number(newParentSelect.value) : null;
+        const created = initial.onCreateFolder ? await initial.onCreateFolder(name, parentId) : null;
         if (created) {
           folders.push(created);
           folderSelect.dataset.prev = String(created.id);

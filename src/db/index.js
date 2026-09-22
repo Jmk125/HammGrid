@@ -62,6 +62,7 @@ addColumnIfMissing('take_off_items', 'properties', "TEXT NOT NULL DEFAULT '[]'")
 addColumnIfMissing('take_off_items', 'formula', 'TEXT');
 addColumnIfMissing('take_off_items', 'output_label', 'TEXT');
 addColumnIfMissing('take_off_items', 'folder_id', 'INTEGER REFERENCES take_off_folders(id) ON DELETE SET NULL');
+addColumnIfMissing('take_off_folders', 'parent_folder_id', 'INTEGER REFERENCES take_off_folders(id) ON DELETE CASCADE');
 addColumnIfMissing('take_off_instances', 'perimeter', 'REAL');
 addColumnIfMissing('take_off_templates', 'folder_id', 'INTEGER REFERENCES take_off_template_folders(id) ON DELETE SET NULL');
 

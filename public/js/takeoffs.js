@@ -1,5 +1,5 @@
 import { renderShell, openModal, closeModal, confirmModal, promptModal, showToast } from '/js/shell.js';
-import { setupAdvancedFields, wireNamePreview } from '/js/takeoffAdvancedFields.js';
+import { setupAdvancedFields, wireNamePreview, folderChildrenMap, orderedFolderPaths } from '/js/takeoffAdvancedFields.js';
 import { computeTakeoffOutput, parseTakeoffProperties, resolveTakeoffName } from '/js/takeoffFormula.js';
 import { getDefaultTakeoffFolderId, setDefaultTakeoffFolderId } from '/js/takeoffDefaultFolder.js';
 
@@ -97,9 +97,9 @@ async function loadFolders() {
     allFolders = allFolders || [];
   }
 }
-async function createFolder(name) {
+async function createFolder(name, parentFolderId = null) {
   try {
-    const { folder } = await api('POST', `/api/projects/${projectId}/take-off-folders`, { name });
+    const { folder } = await api('POST', `/api/projects/${projectId}/take-off-folders`, { name, parent_folder_id: parentFolderId });
     await loadFolders();
     return folder;
   } catch (err) {
@@ -122,18 +122,47 @@ async function performFolderDelete(folderId, cascade) {
   }
 }
 
-async function deleteFolder(folder) {
-  const count = allItems.filter((i) => i.folder_id === folder.id).length;
-  if (count === 0) {
+// folderId plus every folder nested anywhere beneath it.
+function folderSubtreeIds(folderId) {
+  const children = folderChildrenMap(allFolders || []);
+  const ids = new Set();
+  const stack = [folderId];
+  while (stack.length) {
+    const id = stack.pop();
+    if (ids.has(id)) continue;
+    ids.add(id);
+    for (const child of children.get(id) || []) stack.push(child.id);
+  }
+  return ids;
+}
+
+function folderPathById(folderId) {
+  const entry = orderedFolderPaths(allFolders || []).find((e) => e.folder.id === folderId);
+  return entry ? entry.path : null;
+}
+
+async function deleteFolder(folderId) {
+  const folder = (allFolders || []).find((f) => f.id === folderId);
+  if (!folder) return;
+  const subtree = folderSubtreeIds(folder.id);
+  const itemCount = allItems.filter((i) => subtree.has(i.folder_id)).length;
+  const subfolderCount = subtree.size - 1;
+  if (itemCount === 0 && subfolderCount === 0) {
     const ok = await confirmModal({ title: `Delete "${folder.name}"?`, message: 'This folder is empty.', confirmLabel: 'Delete', danger: true });
     if (ok) await performFolderDelete(folder.id, false);
     return;
   }
+  const parts = [];
+  if (itemCount) parts.push(`${itemCount} take-off item${itemCount === 1 ? '' : 's'}`);
+  if (subfolderCount) parts.push(`${subfolderCount} subfolder${subfolderCount === 1 ? '' : 's'}`);
+  const parentPath = folder.parent_folder_id ? folderPathById(folder.parent_folder_id) : null;
   openDeleteFolderModal({
     title: `Delete "${folder.name}"?`,
-    message: `This folder has ${count} take-off item${count === 1 ? '' : 's'} in it. What would you like to do?`,
-    keepLabel: 'Delete folder, keep items',
-    cascadeLabel: 'Delete folder and items',
+    message: `This folder has ${parts.join(' and ')} in it. Keeping the contents moves them up into ${
+      parentPath ? `"${parentPath}"` : 'the top level'
+    }.`,
+    keepLabel: 'Delete folder, keep contents',
+    cascadeLabel: 'Delete folder and everything in it',
     onKeep: () => performFolderDelete(folder.id, false),
     onCascade: () => performFolderDelete(folder.id, true),
   });
@@ -333,11 +362,14 @@ async function loadItems() {
   renderByItemTable();
 }
 
-// Groups rows under folder headers (By Take-off view only - the By Sheet
-// view already has its own structure, sheets, so folders don't apply there
-// per spec). Named folders sort alphabetically; unfiled items land in a
-// trailing "No Folder" bucket, which is also the only bucket shown at all
-// when the project has no folders yet.
+// Groups rows under collapsible folder headers (By Take-off view only - the
+// By Sheet view already has its own structure, sheets, so folders don't
+// apply there per spec). Folders nest: each folder's own items come first,
+// then its subfolders (items listed after a subfolder would read as
+// belonging to it), indented by depth. Siblings sort alphabetically; unfiled
+// items land in a trailing "No Folder" bucket, which is also the only
+// bucket shown at all when the project has no folders yet.
+const FOLDER_INDENT_PX = 18;
 function renderByItemTable() {
   const items = allItems.filter((i) => matchesSearch(i.name, searchTerm));
   const tbody = document.querySelector('#takeoff-items-table tbody');
@@ -347,76 +379,108 @@ function renderByItemTable() {
     ? 'No take-off items match your search.'
     : "No take-off items yet. Create one from a sheet's Take-offs pane.";
 
-  const folderMap = new Map((allFolders || []).map((f) => [f.id, f]));
+  const folders = allFolders || [];
+  const folderMap = new Map(folders.map((f) => [f.id, f]));
+  const children = folderChildrenMap(folders);
+  const folderPaths = orderedFolderPaths(folders);
   const groups = new Map(); // folder id, or 'none' -> items[]
   for (const item of items) {
     const key = item.folder_id && folderMap.has(item.folder_id) ? item.folder_id : 'none';
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);
   }
+
   // Every real folder gets a header even with zero items in it right now -
   // otherwise a freshly-created folder is invisible until something happens
-  // to land in it, which is exactly the "I can create a folder but never
-  // see it" bug. Only the "No Folder" bucket is conditional (skipped
-  // entirely when nothing's unfiled or no folders exist yet).
-  const folderKeys = [...folderMap.keys()].sort((a, b) => folderMap.get(a).name.localeCompare(folderMap.get(b).name));
-  const orderedKeys = groups.has('none') || folderKeys.length === 0 ? [...folderKeys, 'none'] : folderKeys;
-  const showHeaders = folderKeys.length > 0;
+  // to land in it. Exception: while searching, folders with no match
+  // anywhere in their subtree are hidden so the results aren't buried.
+  const matchCount = new Map();
+  function subtreeMatchCount(folderId) {
+    if (matchCount.has(folderId)) return matchCount.get(folderId);
+    matchCount.set(folderId, 0); // cycle guard
+    let n = (groups.get(folderId) || []).length;
+    for (const child of children.get(folderId) || []) n += subtreeMatchCount(child.id);
+    matchCount.set(folderId, n);
+    return n;
+  }
   const visibleItems = []; // items not hidden inside a collapsed folder - what the totals row sums
 
-  for (const key of orderedKeys) {
+  // Returns whether the folder is collapsed.
+  function appendFolderHeader(key, name, depth, folder) {
     const isCollapsed = collapsedItemFolders.has(String(key));
-    if (showHeaders) {
-      const folder = key === 'none' ? null : folderMap.get(key);
-      const name = folder ? folder.name : 'No Folder';
-      const headerRow = document.createElement('tr');
-      headerRow.className = 'takeoff-folder-header-row';
-      headerRow.innerHTML = `<td colspan="10"><div class="takeoff-folder-header-row-inner">
-        <span class="takeoff-folder-toggle" data-key="${key}">${isCollapsed ? '▸' : '▾'} ${escapeHtml(name)}</span>
-        ${folder ? `<button type="button" class="icon-btn takeoff-folder-delete-btn" data-id="${folder.id}" data-name="${escapeHtml(folder.name)}" title="Delete folder">&#128465;</button>` : ''}
-      </div></td>`;
-      tbody.appendChild(headerRow);
-    }
-    if (isCollapsed) continue;
+    const headerRow = document.createElement('tr');
+    headerRow.className = 'takeoff-folder-header-row';
+    headerRow.innerHTML = `<td colspan="10"><div class="takeoff-folder-header-row-inner" style="padding-left:${depth * FOLDER_INDENT_PX}px;">
+      <span class="takeoff-folder-toggle" data-key="${key}">${isCollapsed ? '▸' : '▾'} ${escapeHtml(name)}</span>
+      ${
+        folder
+          ? `<span>
+              <button type="button" class="icon-btn takeoff-folder-add-sub-btn" data-id="${folder.id}" title="New subfolder">+</button>
+              <button type="button" class="icon-btn takeoff-folder-delete-btn" data-id="${folder.id}" title="Delete folder">&#128465;</button>
+            </span>`
+          : ''
+      }
+    </div></td>`;
+    tbody.appendChild(headerRow);
+    return isCollapsed;
+  }
 
-    for (const item of groups.get(key) || []) {
-      visibleItems.push(item);
-      const parts = outputAndRawParts(item, item.total_quantity);
-      const perimeter = item.type === 'area' && item.total_perimeter ? `${item.total_perimeter.toFixed(1)} ft` : '—';
-      const folderOptions =
-        '<option value="">No folder</option>' +
-        (allFolders || [])
-          .map((f) => `<option value="${f.id}" ${item.folder_id === f.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`)
-          .join('');
-      const tr = document.createElement('tr');
-      tr.dataset.itemId = item.id;
-      if (item.id === highlightedItemId) tr.classList.add('takeoff-row-highlighted');
-      tr.innerHTML = `
-        <td><button type="button" class="icon-btn takeoff-expand-btn" title="Show drawings">&#9656;</button></td>
-        <td><span class="takeoff-color-dot" style="background:${item.color};"></span></td>
-        <td>${escapeHtml(item.name)}</td>
-        <td>${escapeHtml(formatType(item))}</td>
-        <td><select class="takeoff-folder-select" data-id="${item.id}">${folderOptions}</select></td>
-        <td>${parts.output}</td>
-        <td>${parts.raw}</td>
-        <td>${perimeter}</td>
-        <td>${item.instance_count}</td>
-        <td>
-          <button type="button" class="icon-btn" data-action="edit" data-id="${item.id}" title="Rename / recolor">&#9998;</button>
-          <button type="button" class="icon-btn" data-action="delete" data-id="${item.id}" title="Delete">&#128465;</button>
-        </td>`;
-      tbody.appendChild(tr);
+  function appendItemRow(item, depth) {
+    visibleItems.push(item);
+    const parts = outputAndRawParts(item, item.total_quantity);
+    const perimeter = item.type === 'area' && item.total_perimeter ? `${item.total_perimeter.toFixed(1)} ft` : '—';
+    const folderOptions =
+      '<option value="">No folder</option>' +
+      folderPaths
+        .map(({ folder, path }) => `<option value="${folder.id}" ${item.folder_id === folder.id ? 'selected' : ''}>${escapeHtml(path)}</option>`)
+        .join('');
+    const tr = document.createElement('tr');
+    tr.dataset.itemId = item.id;
+    if (item.id === highlightedItemId) tr.classList.add('takeoff-row-highlighted');
+    tr.innerHTML = `
+      <td${depth ? ` style="padding-left:${8 + depth * FOLDER_INDENT_PX}px;"` : ''}><button type="button" class="icon-btn takeoff-expand-btn" title="Show drawings">&#9656;</button></td>
+      <td><span class="takeoff-color-dot" style="background:${item.color};"></span></td>
+      <td>${escapeHtml(item.name)}</td>
+      <td>${escapeHtml(formatType(item))}</td>
+      <td><select class="takeoff-folder-select" data-id="${item.id}">${folderOptions}</select></td>
+      <td>${parts.output}</td>
+      <td>${parts.raw}</td>
+      <td>${perimeter}</td>
+      <td>${item.instance_count}</td>
+      <td>
+        <button type="button" class="icon-btn" data-action="edit" data-id="${item.id}" title="Rename / recolor">&#9998;</button>
+        <button type="button" class="icon-btn" data-action="delete" data-id="${item.id}" title="Delete">&#128465;</button>
+      </td>`;
+    tbody.appendChild(tr);
 
-      const breakdownRow = document.createElement('tr');
-      breakdownRow.className = 'takeoff-breakdown-row';
-      breakdownRow.style.display = 'none';
-      breakdownRow.innerHTML = '<td colspan="10"></td>';
-      tbody.appendChild(breakdownRow);
+    const breakdownRow = document.createElement('tr');
+    breakdownRow.className = 'takeoff-breakdown-row';
+    breakdownRow.style.display = 'none';
+    breakdownRow.innerHTML = '<td colspan="10"></td>';
+    tbody.appendChild(breakdownRow);
 
-      tr.querySelector('.takeoff-expand-btn').addEventListener('click', (e) => {
-        toggleBreakdown(item, e.currentTarget, breakdownRow);
-        updateExpandAllButtonLabel();
-      });
+    tr.querySelector('.takeoff-expand-btn').addEventListener('click', (e) => {
+      toggleBreakdown(item, e.currentTarget, breakdownRow);
+      updateExpandAllButtonLabel();
+    });
+  }
+
+  const visited = new Set(); // guards against a parent cycle in bad data
+  function renderFolder(folder, depth) {
+    if (visited.has(folder.id)) return;
+    visited.add(folder.id);
+    if (searchTerm && subtreeMatchCount(folder.id) === 0) return;
+    if (appendFolderHeader(folder.id, folder.name, depth, folder)) return; // collapsed hides the whole subtree
+    for (const item of groups.get(folder.id) || []) appendItemRow(item, depth);
+    for (const child of children.get(folder.id) || []) renderFolder(child, depth + 1);
+  }
+
+  if (folders.length === 0) {
+    for (const item of groups.get('none') || []) appendItemRow(item, 0);
+  } else {
+    for (const folder of children.get(null) || []) renderFolder(folder, 0);
+    if (groups.has('none') && !appendFolderHeader('none', 'No Folder', 0, null)) {
+      for (const item of groups.get('none')) appendItemRow(item, 0);
     }
   }
 
@@ -471,10 +535,16 @@ function renderByItemTable() {
       renderByItemTable();
     });
   });
+  tbody.querySelectorAll('.takeoff-folder-add-sub-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openNewFolderModal(Number(btn.dataset.id));
+    });
+  });
   tbody.querySelectorAll('.takeoff-folder-delete-btn').forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      deleteFolder({ id: Number(btn.dataset.id), name: btn.dataset.name });
+      deleteFolder(Number(btn.dataset.id));
     });
   });
 
@@ -495,15 +565,23 @@ function settleItemHighlight() {
   if (!item) return; // wrong project, or the item's gone - nothing to expand/scroll to
 
   if (!hasAutoExpandedForHighlight) {
-    const folderKey = item.folder_id && (allFolders || []).some((f) => f.id === item.folder_id) ? String(item.folder_id) : 'none';
-    if (collapsedItemFolders.has(folderKey)) {
-      collapsedItemFolders.delete(folderKey);
+    // The item's own folder AND every folder above it - a collapsed
+    // ancestor hides the whole subtree just the same.
+    const folderMap = new Map((allFolders || []).map((f) => [f.id, f]));
+    const keysToOpen = [];
+    let folder = item.folder_id ? folderMap.get(item.folder_id) : null;
+    if (!folder) keysToOpen.push('none');
+    while (folder && !keysToOpen.includes(String(folder.id))) {
+      keysToOpen.push(String(folder.id));
+      folder = folder.parent_folder_id ? folderMap.get(folder.parent_folder_id) : null;
+    }
+    hasAutoExpandedForHighlight = true;
+    if (keysToOpen.some((k) => collapsedItemFolders.has(k))) {
+      keysToOpen.forEach((k) => collapsedItemFolders.delete(k));
       saveCollapsedFolders(itemFolderCollapseKey, collapsedItemFolders);
-      hasAutoExpandedForHighlight = true;
       renderByItemTable();
       return;
     }
-    hasAutoExpandedForHighlight = true;
   }
 
   if (!hasScrolledToHighlight) {
@@ -689,15 +767,7 @@ function setupViewAndSearch() {
   // setupAdvancedFields) - this button lives on the page itself, not nested
   // inside another already-open modal, so there's no parent form for
   // promptModal's own openModal() call to clobber.
-  document.getElementById('takeoff-new-folder-btn').addEventListener('click', async () => {
-    const name = await promptModal({ title: 'New folder', placeholder: 'e.g. Architectural', confirmLabel: 'Create' });
-    if (!name) return;
-    const folder = await createFolder(name.trim());
-    if (folder) {
-      showToast('Folder created.', 'success');
-      renderByItemTable();
-    }
-  });
+  document.getElementById('takeoff-new-folder-btn').addEventListener('click', () => openNewFolderModal());
   document.getElementById('takeoff-new-template-folder-btn').addEventListener('click', async () => {
     const name = await promptModal({ title: 'New folder', placeholder: 'e.g. Steel', confirmLabel: 'Create' });
     if (!name) return;
@@ -708,6 +778,67 @@ function setupViewAndSearch() {
     }
   });
   document.getElementById('takeoff-new-assembly-template-btn').addEventListener('click', () => openAssemblyTemplateModal());
+}
+
+// Name + Location. Location only appears once folders exist (nothing to
+// nest into before that), defaults to defaultParentId (set by a folder
+// header's "+" New subfolder button), and lists folders by slash path.
+function openNewFolderModal(defaultParentId = null) {
+  const paths = orderedFolderPaths(allFolders || []);
+  openModal(`
+    <h2>New folder</h2>
+    <div class="field">
+      <label>Name</label>
+      <input id="new-folder-name" autocomplete="off" placeholder="e.g. Architectural">
+    </div>
+    ${
+      paths.length
+        ? `<div class="field">
+            <label>Location</label>
+            <select id="new-folder-parent">
+              <option value="">Top level</option>
+              ${paths.map(({ folder, path }) => `<option value="${folder.id}">${escapeHtml(path)}</option>`).join('')}
+            </select>
+          </div>`
+        : ''
+    }
+    <div class="modal-actions">
+      <button type="button" id="modal-cancel">Cancel</button>
+      <button class="primary" type="button" id="modal-save">Create</button>
+    </div>
+  `);
+  const nameInput = document.getElementById('new-folder-name');
+  const parentSelect = document.getElementById('new-folder-parent');
+  if (parentSelect && defaultParentId) parentSelect.value = String(defaultParentId);
+  nameInput.focus();
+
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  async function submit() {
+    const name = nameInput.value.trim();
+    if (!name) {
+      nameInput.focus();
+      return;
+    }
+    const parentId = parentSelect && parentSelect.value ? Number(parentSelect.value) : null;
+    const saveBtn = document.getElementById('modal-save');
+    saveBtn.disabled = true;
+    const folder = await createFolder(name, parentId); // toasts its own error
+    if (!folder) {
+      saveBtn.disabled = false;
+      return;
+    }
+    closeModal();
+    // A collapsed ancestor would otherwise hide the folder just created.
+    const folderMap = new Map((allFolders || []).map((f) => [f.id, f]));
+    for (let id = parentId; id; id = folderMap.get(id)?.parent_folder_id) collapsedItemFolders.delete(String(id));
+    saveCollapsedFolders(itemFolderCollapseKey, collapsedItemFolders);
+    showToast('Folder created.', 'success');
+    renderByItemTable();
+  }
+  document.getElementById('modal-save').addEventListener('click', submit);
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submit();
+  });
 }
 
 async function loadTemplates() {
@@ -1133,6 +1264,7 @@ function openEditModal(item) {
     folders: allFolders || [],
     folderId: item.folder_id,
     onCreateFolder: createFolder,
+    nestedFolders: true,
   });
   wireNamePreview(document.getElementById('edit-takeoff-name'), document.getElementById('edit-takeoff-name-preview'), editAdvancedRoot, advanced);
   document.getElementById('modal-cancel').addEventListener('click', closeModal);

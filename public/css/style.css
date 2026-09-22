@@ -725,7 +725,7 @@ tr.ignored td { opacity: 0.5; }
 .takeoff-folder-header-row-inner { display: flex; justify-content: space-between; align-items: center; }
 .takeoff-folder-toggle { cursor: pointer; user-select: none; }
 .takeoff-folder-toggle:hover { color: var(--text); }
-.takeoff-folder-delete-btn { font-size: 13px; text-transform: none; letter-spacing: normal; }
+.takeoff-folder-delete-btn, .takeoff-folder-add-sub-btn { font-size: 13px; text-transform: none; letter-spacing: normal; }
 
 /* "Go to Item in Take-offs" (sheet.js's take-off right-click menu) lands
    here and scrolls this row into view - stays on (not a fade-out flash) so

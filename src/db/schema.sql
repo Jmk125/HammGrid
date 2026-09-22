@@ -141,6 +141,8 @@ CREATE TABLE IF NOT EXISTS take_off_folders (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
+  -- Self-nesting (NULL = top level), shown client-side as "Base Bid/Architectural".
+  parent_folder_id INTEGER REFERENCES take_off_folders(id) ON DELETE CASCADE,
   created_by INTEGER NOT NULL REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
