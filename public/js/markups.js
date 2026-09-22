@@ -357,16 +357,23 @@ export function initMarkups({
       node = el('g');
       const cx = m.geometry.x * w;
       const cy = m.geometry.y * h;
+      // Color is a STATUS indicator for this type, not the usual
+      // user-chosen style swatch (m.style.color is ignored here on
+      // purpose) - red until a photo is actually attached, so a batch of
+      // pins dropped ahead of a job walk visibly stands out as still
+      // needing photos, then flips blue once one's attached.
+      const photoColor = m.linked_document_id ? '#2563eb' : '#e11d48';
+      const pinColor = m.visibility === 'published' ? darkenHex(photoColor, 0.3) : photoColor;
       const cone = el('path');
       cone.setAttribute('d', photoConePathD(cx, cy, m.geometry.direction || 0, currentZoomScale));
-      cone.setAttribute('fill', color);
+      cone.setAttribute('fill', pinColor);
       cone.setAttribute('fill-opacity', '0.35');
       node.appendChild(cone);
       const circle = el('circle');
       circle.setAttribute('cx', cx);
       circle.setAttribute('cy', cy);
       circle.setAttribute('r', PHOTO_PIN_RADIUS / currentZoomScale);
-      circle.setAttribute('fill', color);
+      circle.setAttribute('fill', pinColor);
       circle.setAttribute('stroke', '#ffffff');
       circle.setAttribute('stroke-width', 1.5 / currentZoomScale);
       node.appendChild(circle);
@@ -644,8 +651,27 @@ export function initMarkups({
       delBtn.textContent = 'Delete';
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const ok = await confirmModal({ title: 'Delete this markup?', confirmLabel: 'Delete', danger: true });
-        if (!ok) return;
+        // A photo pin's document exists solely because of that pin (unlike
+        // a flag's linked RFI, which is a shared reference someone else may
+        // still need) - deleting the pin is genuinely ambiguous about
+        // whether the photos should go too, so ask which one they mean
+        // instead of picking a default.
+        let deletePhotosToo = false;
+        if (m.type === 'photo' && m.linked_document_id) {
+          const choice = await confirmDeletePhotoPin();
+          if (!choice) return;
+          deletePhotosToo = choice === 'both';
+        } else {
+          const ok = await confirmModal({ title: 'Delete this markup?', confirmLabel: 'Delete', danger: true });
+          if (!ok) return;
+        }
+        if (deletePhotosToo) {
+          try {
+            await api('DELETE', `/api/documents/${m.linked_document_id}`);
+          } catch (err) {
+            showToast(err.message || 'Could not delete the photos - deleting the pin anyway.', 'error');
+          }
+        }
         await api('DELETE', `/api/markups/${m.id}`);
         markups = markups.filter((x) => x.id !== m.id);
         selectedId = null;
@@ -726,23 +752,42 @@ export function initMarkups({
       popupEl.appendChild(gallery);
       renderPhotoGalleryInto(gallery, m);
 
-      // Adding a photo here doesn't touch the markup itself (linked_document_id
-      // stays put - only the underlying document gets a new version), so this
-      // follows the server's own document-upload authorization
-      // (requireRole('admin','editor') in documents.routes.js) rather than
-      // perm.canEdit (author-or-admin, meant for the markup's own fields).
+      // Attaching a photo here doesn't touch the markup's own author/edit
+      // fields when the pin is already linked (only the underlying
+      // document gets a new version) - and even attaching the FIRST photo
+      // to an empty pin is really "finishing" a document upload, not
+      // editing the markup itself. Either way this follows the server's
+      // own document-upload authorization (requireRole('admin','editor')
+      // in documents.routes.js) rather than perm.canEdit (author-or-admin,
+      // meant for the markup's own geometry/style/link fields).
       if (me.role === 'admin' || me.role === 'editor') {
         const addBtn = document.createElement('button');
         addBtn.type = 'button';
-        addBtn.textContent = 'Add photo';
+        addBtn.textContent = m.linked_document_id ? 'Add photo' : 'Attach photo';
         addBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const file = await pickPhotoFile();
           if (!file) return;
           try {
-            await uploadPhotoVersion(m.linked_document_id, file);
-            showToast('Photo added.', 'success');
-            renderPhotoGalleryInto(gallery, m, true);
+            if (m.linked_document_id) {
+              await uploadPhotoVersion(m.linked_document_id, file);
+              showToast('Photo added.', 'success');
+              renderPhotoGalleryInto(gallery, m, true);
+            } else {
+              // First photo for this pin (it was placed empty - see
+              // finishDrawing's photo branch) - needs a folder before the
+              // document can be created at all. A cancel here just leaves
+              // the pin exactly as it was: empty, still red, poppable
+              // again later.
+              const folderId = await pickPhotoFolder();
+              if (folderId === undefined) return;
+              setDefaultPhotoFolderId(projectId, folderId);
+              const doc = await createPhotoDocument(folderId, file);
+              const { markup } = await api('PATCH', `/api/markups/${m.id}`, { linked_document_id: doc.id });
+              Object.assign(m, markup);
+              showToast('Photo attached.', 'success');
+              renderAll(); // picks up the pin's red -> blue color flip too
+            }
           } catch (err) {
             showToast(err.message || 'Could not save photo.', 'error');
           }
@@ -762,10 +807,10 @@ export function initMarkups({
 
   // Thumbnail strip of every photo taken at this pin, newest first (the
   // document_versions history behind m.linked_document_id - see
-  // promptAndCreatePhotoMarkup/uploadPhotoVersion for how that document
-  // grows over repeat visits). Each thumbnail opens the full photo in a new
-  // tab, same "easy download, back = close tab" pattern CLAUDE.md specifies
-  // for linked documents generally.
+  // createPhotoDocument/uploadPhotoVersion for how that document grows over
+  // repeat visits). Each thumbnail opens the full photo in a new tab, same
+  // "easy download, back = close tab" pattern CLAUDE.md specifies for
+  // linked documents generally.
   function renderPhotoGalleryInto(gallery, m, force) {
     // The popup itself is always dark (see .markup-popup), unlike the rest
     // of the app which follows the light/dark theme setting - the
@@ -915,7 +960,7 @@ export function initMarkups({
     renderAll();
   }
 
-  async function createMarkup(type, geometry, extraStyle, extra) {
+  async function createMarkup(type, geometry, extraStyle) {
     if (currentPage != null) geometry.page = currentPage;
     const style = { color: colorInput.value, strokeWidth: Number(widthInput.value), ...extraStyle };
     const visibility = publishDefaultInput.checked ? 'published' : 'private';
@@ -924,7 +969,6 @@ export function initMarkups({
       geometry,
       style,
       visibility,
-      ...extra,
     });
     markups.push(markup);
     renderAll();
@@ -933,6 +977,34 @@ export function initMarkups({
 
   function photoDocumentName() {
     return `Photo - ${new Date().toLocaleString()}`;
+  }
+
+  // Three-way choice (not confirmModal's plain yes/no) since "delete the
+  // pin" is genuinely ambiguous for a photo pin: keep the photos as
+  // ordinary standalone documents in their folder, or remove them too.
+  // Resolves 'pin-only', 'both', or null if cancelled.
+  function confirmDeletePhotoPin() {
+    return new Promise((resolve) => {
+      const backdrop = openModal(`
+        <h2>Delete this photo pin?</h2>
+        <p class="muted">This pin has photo(s) attached. Keep them as regular documents, or delete them too?</p>
+        <div class="modal-actions">
+          <button type="button" id="photo-del-cancel">Cancel</button>
+          <button type="button" id="photo-del-pin-only">Delete pin, keep photos</button>
+          <button type="button" class="danger" id="photo-del-both">Delete pin and photos</button>
+        </div>
+      `);
+      let resolved = false;
+      function finish(value) {
+        if (resolved) return;
+        resolved = true;
+        closeModal();
+        resolve(value);
+      }
+      backdrop.querySelector('#photo-del-cancel').addEventListener('click', () => finish(null));
+      backdrop.querySelector('#photo-del-pin-only').addEventListener('click', () => finish('pin-only'));
+      backdrop.querySelector('#photo-del-both').addEventListener('click', () => finish('both'));
+    });
   }
 
   // Native <input type="file"> picker. On iPad/iPhone Safari, accept="image/*"
@@ -1069,40 +1141,23 @@ export function initMarkups({
     return data.document;
   }
 
-  // The full place-a-NEW-pin flow: folder pick -> native photo picker ->
-  // upload (creating the document) -> create the markup linked to it. Any
-  // step backing out just removes the draft pin with no server calls at
-  // all - there's deliberately no path that leaves an orphaned markup with
-  // nothing attached to it.
-  async function promptAndCreatePhotoMarkup(geometry, draftEl) {
-    try {
-      const folderId = await pickPhotoFolder();
-      if (folderId === undefined) return; // cancelled
-      const file = await pickPhotoFile();
-      if (!file) return;
-      setDefaultPhotoFolderId(projectId, folderId);
-
-      const fd = new FormData();
-      fd.append('name', photoDocumentName());
-      if (folderId) fd.append('folder_id', folderId);
-      fd.append('file', file);
-      const res = await fetch(`/api/projects/${projectId}/documents`, {
-        method: 'POST',
-        credentials: 'same-origin',
-        body: fd,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Could not save photo.');
-      if (documents) documents.push(data.document);
-
-      const markup = await createMarkup('photo', geometry, { color: '#2563eb', strokeWidth: 2 }, { linked_document_id: data.document.id });
-      selectMarkup(markup.id);
-      showToast('Photo pin added.', 'success');
-    } catch (err) {
-      showToast(err.message || 'Could not save photo.', 'error');
-    } finally {
-      if (draftEl) draftEl.remove();
-    }
+  // Creates a brand-new document (the FIRST photo for a pin that doesn't
+  // have one yet) in `folderId`. Separate from uploadPhotoVersion above
+  // since this one has no existing document to attach to.
+  async function createPhotoDocument(folderId, file) {
+    const fd = new FormData();
+    fd.append('name', photoDocumentName());
+    if (folderId) fd.append('folder_id', folderId);
+    fd.append('file', file);
+    const res = await fetch(`/api/projects/${projectId}/documents`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not save photo.');
+    if (documents) documents.push(data.document);
+    return data.document;
   }
 
   function activateTool(tool) {
@@ -1129,7 +1184,7 @@ export function initMarkups({
     // a 403 on the upload it depends on, so it's left off their toolbar
     // entirely instead.
     ...(me.role === 'admin' || me.role === 'editor'
-      ? [{ tool: 'photo', icon: TOOL_ICONS.photo, title: 'Photo pin - place, drag to aim, then attach a photo' }]
+      ? [{ tool: 'photo', icon: TOOL_ICONS.photo, title: 'Photo pin - place, drag to aim, attach a photo now or later' }]
       : []),
   ];
   const toolGrid = document.getElementById('tool-grid');
@@ -1207,15 +1262,18 @@ export function initMarkups({
       drawing = { type: 'photo', origin: pt, direction: 0 };
       previewEl = el('g');
       previewEl.classList.add('photo-pin-draft');
+      // Matches the "pending" red renderMarkupEl gives every photo pin
+      // before it has a photo attached (not colorInput.value - see that
+      // branch's comment on why this type ignores the color swatch).
       const cone = el('path');
-      cone.setAttribute('fill', colorInput.value);
+      cone.setAttribute('fill', '#e11d48');
       cone.setAttribute('fill-opacity', '0.4');
       previewEl.appendChild(cone);
       const circle = el('circle');
       circle.setAttribute('cx', pt.x);
       circle.setAttribute('cy', pt.y);
       circle.setAttribute('r', PHOTO_PIN_RADIUS / currentZoomScale);
-      circle.setAttribute('fill', colorInput.value);
+      circle.setAttribute('fill', '#e11d48');
       circle.setAttribute('stroke', '#ffffff');
       circle.setAttribute('stroke-width', 1.5 / currentZoomScale);
       previewEl.appendChild(circle);
@@ -1277,21 +1335,24 @@ export function initMarkups({
     const { type } = drawing;
 
     if (type === 'photo') {
-      // previewEl is deliberately NOT removed here (unlike every other
-      // type below) - it stays on screen as a placeholder through the
-      // async folder-pick/upload flow, and promptAndCreatePhotoMarkup()
-      // removes it itself once that settles either way (attached or
-      // cancelled), so the pin doesn't just vanish mid-flow.
+      // Saves immediately as an empty (red/"pending") pin - same
+      // create-then-let-the-popup-fill-it-in pattern as flag below, rather
+      // than gating creation on picking a photo right away. That's what
+      // lets pins be dropped ahead of a job walk with no photo yet: the
+      // popup that opens next has an "Attach photo" button, but closing it
+      // without using that button just leaves the pin sitting there red,
+      // ready to be filled in later from the popup's Add/Attach photo
+      // button (see renderPopupButtons' photo branch).
       const dx = pt.x - drawing.origin.x;
       const dy = pt.y - drawing.origin.y;
       const direction = Math.hypot(dx, dy) > 4 ? photoAngleFromDelta(dx, dy) : drawing.direction;
       const origin = drawing.origin;
-      const draftEl = previewEl;
+      if (previewEl) previewEl.remove();
       drawing = null;
-      previewEl = null;
-      activateTool('select');
       const { w, h } = vbSize();
-      await promptAndCreatePhotoMarkup({ x: origin.x / w, y: origin.y / h, direction }, draftEl);
+      const markup = await createMarkup('photo', { x: origin.x / w, y: origin.y / h, direction });
+      activateTool('select');
+      selectMarkup(markup.id);
       return true;
     }
 
