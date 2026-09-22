@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS markups (
   document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
   author_id INTEGER NOT NULL REFERENCES users(id),
   visibility TEXT NOT NULL CHECK (visibility IN ('private', 'published')) DEFAULT 'private',
-  type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect', 'flag')),
+  type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect', 'flag', 'photo')),
   geometry TEXT NOT NULL,
   style TEXT NOT NULL DEFAULT '{}',
   -- ON DELETE SET NULL: deleting a linked document should just unlink it

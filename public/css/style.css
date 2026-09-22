@@ -1485,6 +1485,24 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .markup-popup-flag-comment::placeholder,
 .markup-popup-flag-tag::placeholder { color: rgba(255,255,255,0.5); }
 
+.markup-popup-photo-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 8px 4px;
+  max-width: 240px;
+}
+.markup-popup-photo-status { padding: 2px 8px 4px; font-size: 11px; color: rgba(255,255,255,0.65); white-space: nowrap; }
+.markup-popup-photo-thumb {
+  display: block;
+  width: 56px;
+  height: 56px;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+.markup-popup-photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
 .markup-popup-dims { display: flex; gap: 6px; padding: 2px 8px 4px; }
 .markup-popup-dim-field { display: flex; flex-direction: column; gap: 2px; font-size: 10px; color: rgba(255,255,255,0.75); }
 .markup-popup-dim-field input {
@@ -1665,6 +1683,11 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 /* ---------- SVG markup selection/edit handles ---------- */
 .markup-selected { outline: 2px dashed var(--accent); outline-offset: 2px; }
 .markup-handle { fill: #fff; stroke: var(--accent); stroke-width: 2; cursor: pointer; }
+/* Placeholder pin shown while the folder-pick/photo-upload flow that follows
+   a photo-pin drag is still in progress (see promptAndCreatePhotoMarkup) -
+   not yet a real markup, so it shouldn't intercept clicks meant for the
+   canvas underneath. */
+.photo-pin-draft { pointer-events: none; }
 
 /* ---------- Overlay picker ---------- */
 .overlay-picker-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
