@@ -1171,8 +1171,24 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .freeze-pane-label::placeholder { color: rgba(255,255,255,0.45); }
 .freeze-pane-label:focus { background: rgba(255,255,255,0.12); border-radius: 4px; }
 .freeze-pane-header-actions { display: flex; align-items: center; gap: 6px; flex: none; }
-.freeze-pane-pin { display: flex; align-items: center; cursor: pointer; }
-.freeze-pane-pin input { cursor: pointer; margin: 0; }
+.freeze-pane-pin {
+  background: transparent;
+  border: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.freeze-pane-pin:hover { background: rgba(255,255,255,0.15); }
+.freeze-pane-pin .pin-shape { fill: none; stroke: #fff; stroke-width: 2; }
+.freeze-pane-pin .pin-badge { display: none; fill: #f59e0b; stroke: #1b232c; stroke-width: 1; }
+.freeze-pane-pin[data-pin-state="sheet"] .pin-shape,
+.freeze-pane-pin[data-pin-state="project"] .pin-shape { fill: #fff; }
+.freeze-pane-pin[data-pin-state="project"] .pin-badge { display: block; }
 .freeze-pane-close {
   background: transparent;
   border: none;
