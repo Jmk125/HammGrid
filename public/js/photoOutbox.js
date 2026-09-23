@@ -13,7 +13,14 @@
 // next time HammGrid is open with a connection, not while it's closed.
 //
 // Entry shape: { id, projectId, sheetId, markupId, documentId, folderId,
-// name, blob, queuedAt, createdDocumentId?, error? }
+// name, filename, bytes, type, queuedAt, createdDocumentId?, error? }
+//
+// The photo is stored as raw bytes (ArrayBuffer), NOT as the File/Blob
+// itself: iOS Safari can hand back a Blob from IndexedDB that uploads
+// truncated when put in a FormData (the server sees "Unexpected end of
+// form"). ArrayBuffers are always stored by value, and a fresh Blob is built
+// from them right before each upload. Entries queued before this change
+// have a `blob` field instead - photoBlob() handles both.
 //   documentId set   -> add as a new version of that (pin's) document
 //   documentId null  -> first photo for an empty pin: create a document in
 //                       folderId, then link the pin to it
@@ -24,8 +31,42 @@ const RETRY_MS = 60 * 1000;
 let flushing = null;
 let retryTimer = null;
 
-export async function queuePhoto(entry) {
-  return addOutboxPhoto({ ...entry, documentId: entry.documentId || null, queuedAt: new Date().toISOString() });
+export async function queuePhoto({ file, ...entry }) {
+  const bytes = await file.arrayBuffer();
+  return addOutboxPhoto({
+    ...entry,
+    filename: file.name,
+    type: file.type || 'image/jpeg',
+    bytes,
+    documentId: entry.documentId || null,
+    queuedAt: new Date().toISOString(),
+  });
+}
+
+// A freshly-built Blob for this entry's photo - used both for uploading and
+// for the popup's pending-thumbnail preview.
+export async function photoBlob(entry) {
+  if (entry.bytes) return new Blob([entry.bytes], { type: entry.type || 'image/jpeg' });
+  // Pre-ArrayBuffer entry: copy the stored Blob's bytes into a new one
+  // rather than uploading the IndexedDB-backed Blob directly.
+  const bytes = await entry.blob.arrayBuffer();
+  return new Blob([bytes], { type: entry.blob.type || 'image/jpeg' });
+}
+
+async function uploadBlob(entry) {
+  let blob;
+  try {
+    blob = await photoBlob(entry);
+  } catch (err) {
+    blob = null;
+  }
+  if (!blob || !blob.size) {
+    // Not retryable - the photo data itself is unreadable on this device.
+    const err = new Error('The photo data on this device could not be read.');
+    err.status = 422;
+    throw err;
+  }
+  return blob;
 }
 
 export async function getQueuedPhotos(projectId) {
@@ -60,20 +101,21 @@ async function postForm(url, fields, blob, filename) {
 }
 
 function filenameFor(entry) {
-  const ext = ((entry.blob && entry.blob.type) || 'image/jpeg').split('/')[1] || 'jpg';
+  const ext = (entry.type || (entry.blob && entry.blob.type) || 'image/jpeg').split('/')[1] || 'jpg';
   return entry.filename || `photo-${entry.id}.${ext}`;
 }
 
 async function createDocument(entry) {
   const url = `/api/projects/${entry.projectId}/documents`;
   const fields = { name: entry.name, folder_id: entry.folderId || null };
+  const blob = await uploadBlob(entry);
   try {
-    return (await postForm(url, fields, entry.blob, filenameFor(entry))).document;
+    return (await postForm(url, fields, blob, filenameFor(entry))).document;
   } catch (err) {
     // The chosen folder was deleted while this sat in the outbox - save to
     // the project root rather than lose the photo.
     if (err.status === 400 && entry.folderId) {
-      return (await postForm(url, { ...fields, folder_id: null }, entry.blob, filenameFor(entry))).document;
+      return (await postForm(url, { ...fields, folder_id: null }, blob, filenameFor(entry))).document;
     }
     throw err;
   }
@@ -85,7 +127,7 @@ async function uploadOne(entry, uploaded) {
       await postForm(
         `/api/projects/${entry.projectId}/documents/${entry.documentId}/versions`,
         {},
-        entry.blob,
+        await uploadBlob(entry),
         filenameFor(entry)
       );
       uploaded.push({ markupId: entry.markupId, documentId: entry.documentId });
