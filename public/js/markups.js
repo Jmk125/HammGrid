@@ -2,6 +2,7 @@ import { getCachedMarkupsForSheet } from '/js/offline-store.js';
 import { openDocPicker } from '/js/docPicker.js';
 import { confirmModal, promptModal, showToast, openModal, closeModal } from '/js/shell.js';
 import { getDefaultPhotoFolderId, setDefaultPhotoFolderId } from '/js/photoPinDefaultFolder.js';
+import { queuePhoto, getQueuedPhotos, flushPhotoOutbox } from '/js/photoOutbox.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CLOUD_BUMP_SIZE = { 'cloud-small': 14, 'cloud-large': 30 };
@@ -169,6 +170,28 @@ export function initMarkups({
   // that's a single extra request and simpler than reasoning about partial
   // cache staleness.
   const photoVersionsCache = new Map();
+  // Photo outbox entries (see photoOutbox.js) for this project - photos
+  // taken on a pin that haven't reached the server yet. Drives the pin's
+  // amber "waiting to upload" color and the gallery's pending thumbnails.
+  let queuedPhotos = [];
+  const queuedPhotoUrls = new Map(); // outbox entry id -> object URL
+  function queuedFor(markupId) {
+    return queuedPhotos.filter((q) => q.markupId === markupId);
+  }
+  async function refreshQueuedPhotos() {
+    if (!projectId) return;
+    try {
+      queuedPhotos = await getQueuedPhotos(projectId);
+    } catch (err) {
+      queuedPhotos = [];
+    }
+    for (const [id, url] of queuedPhotoUrls) {
+      if (!queuedPhotos.some((q) => q.id === id)) {
+        URL.revokeObjectURL(url);
+        queuedPhotoUrls.delete(id);
+      }
+    }
+  }
   // Zoom is a CSS transform on an ancestor div, outside the SVG's own
   // coordinate system - vector-effect="non-scaling-stroke" only cancels
   // scaling from *inside* the SVG (viewBox, <g transform>), so it can't see
@@ -361,8 +384,9 @@ export function initMarkups({
       // user-chosen style swatch (m.style.color is ignored here on
       // purpose) - red until a photo is actually attached, so a batch of
       // pins dropped ahead of a job walk visibly stands out as still
-      // needing photos, then flips blue once one's attached.
-      const photoColor = m.linked_document_id ? '#2563eb' : '#e11d48';
+      // needing photos, then flips blue once one's attached. Amber = a
+      // photo was taken but is still sitting in the offline outbox.
+      const photoColor = m.linked_document_id ? '#2563eb' : queuedFor(m.id).length ? '#f59e0b' : '#e11d48';
       const pinColor = m.visibility === 'published' ? darkenHex(photoColor, 0.3) : photoColor;
       const cone = el('path');
       cone.setAttribute('d', photoConePathD(cx, cy, m.geometry.direction || 0, currentZoomScale));
@@ -768,28 +792,51 @@ export function initMarkups({
           e.stopPropagation();
           const file = await pickPhotoFile();
           if (!file) return;
+          // Every photo goes into the on-device outbox first and is then
+          // uploaded from there (photoOutbox.js) - online that happens
+          // immediately; offline (or on WiFi that drops mid-upload) it
+          // just waits on the device until there's a connection again.
+          let entry;
+          if (m.linked_document_id) {
+            entry = { documentId: m.linked_document_id, folderId: null };
+          } else if (queuedFor(m.id).length) {
+            // Pin is empty on the server but already has a queued first
+            // photo - that one will create the document (in the folder
+            // already chosen for it); this one gets added to it.
+            entry = { documentId: null, folderId: queuedFor(m.id)[0].folderId };
+          } else {
+            // First photo for this pin (it was placed empty - see
+            // finishDrawing's photo branch) - needs a folder before the
+            // document can be created at all. A cancel here just leaves
+            // the pin exactly as it was: empty, still red, poppable
+            // again later.
+            const folderId = await pickPhotoFolder();
+            if (folderId === undefined) return;
+            setDefaultPhotoFolderId(projectId, folderId);
+            entry = { documentId: null, folderId };
+          }
           try {
-            if (m.linked_document_id) {
-              await uploadPhotoVersion(m.linked_document_id, file);
-              showToast('Photo added.', 'success');
-              renderPhotoGalleryInto(gallery, m, true);
-            } else {
-              // First photo for this pin (it was placed empty - see
-              // finishDrawing's photo branch) - needs a folder before the
-              // document can be created at all. A cancel here just leaves
-              // the pin exactly as it was: empty, still red, poppable
-              // again later.
-              const folderId = await pickPhotoFolder();
-              if (folderId === undefined) return;
-              setDefaultPhotoFolderId(projectId, folderId);
-              const doc = await createPhotoDocument(folderId, file);
-              const { markup } = await api('PATCH', `/api/markups/${m.id}`, { linked_document_id: doc.id });
-              Object.assign(m, markup);
-              showToast('Photo attached.', 'success');
-              renderAll(); // picks up the pin's red -> blue color flip too
-            }
+            await queuePhoto({
+              ...entry,
+              projectId: Number(projectId),
+              sheetId: sheetId ? Number(sheetId) : null,
+              markupId: m.id,
+              name: photoDocumentName(),
+              filename: file.name,
+              blob: file,
+            });
           } catch (err) {
-            showToast(err.message || 'Could not save photo.', 'error');
+            showToast('Could not save the photo on this device: ' + (err.message || err), 'error');
+            return;
+          }
+          await refreshQueuedPhotos();
+          renderAll();
+          const { remaining } = await flushPhotoOutbox();
+          // flushPhotoOutbox's 'photo-outbox-change' event (handled near the
+          // bottom of initMarkups) re-links/re-renders on success; only
+          // the still-waiting case needs a message of its own here.
+          if (remaining > 0 && queuedFor(m.id).length) {
+            showToast('Photo saved on this device - it will upload automatically once you are back online.', 'info');
           }
         });
         popupEl.appendChild(addBtn);
@@ -807,7 +854,7 @@ export function initMarkups({
 
   // Thumbnail strip of every photo taken at this pin, newest first (the
   // document_versions history behind m.linked_document_id - see
-  // createPhotoDocument/uploadPhotoVersion for how that document grows over
+  // photoOutbox.js's uploadOne for how that document grows over
   // repeat visits). Each thumbnail opens the full photo in a new tab, same
   // "easy download, back = close tab" pattern CLAUDE.md specifies for
   // linked documents generally.
@@ -817,28 +864,57 @@ export function initMarkups({
     // theme-aware .muted class (used elsewhere, e.g. docPicker.js) can read
     // as near-invisible against it in light mode, so status text here uses
     // its own fixed-color class instead, matching .markup-popup-doclabel.
+    // Photos still in the offline outbox show first (they're the newest),
+    // straight from the on-device blob, with a "waiting to upload" badge.
+    const pending = queuedFor(m.id).slice().reverse();
+    const pendingHtml = pending
+      .map((q) => {
+        if (!queuedPhotoUrls.has(q.id)) queuedPhotoUrls.set(q.id, URL.createObjectURL(q.blob));
+        const url = queuedPhotoUrls.get(q.id);
+        const title = q.error
+          ? `Upload failed: ${q.error}`
+          : `Waiting to upload - taken ${new Date(q.queuedAt).toLocaleString()}`;
+        return `
+            <a class="markup-popup-photo-thumb pending${q.error ? ' failed' : ''}" href="${url}" target="_blank" title="${escapeHtml(title)}">
+              <img src="${url}" alt="">
+              <span class="markup-popup-photo-badge">${q.error ? '!' : '&#8679;'}</span>
+            </a>`;
+      })
+      .join('');
+    const pendingNote = pending.length
+      ? `<p class="markup-popup-photo-status">${pending.length} waiting to upload</p>`
+      : '';
+
     if (!m.linked_document_id) {
-      gallery.innerHTML = '<p class="markup-popup-photo-status">No photo attached yet.</p>';
+      gallery.innerHTML = pending.length
+        ? pendingHtml + pendingNote
+        : '<p class="markup-popup-photo-status">No photo attached yet.</p>';
       return;
     }
-    gallery.innerHTML = '<p class="markup-popup-photo-status">Loading photos...</p>';
+    gallery.innerHTML = pendingHtml + '<p class="markup-popup-photo-status">Loading photos...</p>';
     loadPhotoVersions(m.linked_document_id, force)
       .then((versions) => {
-        if (!versions.length) {
+        if (!versions.length && !pending.length) {
           gallery.innerHTML = '<p class="markup-popup-photo-status">No photos yet.</p>';
           return;
         }
-        gallery.innerHTML = versions
-          .map(
-            (v) => `
+        gallery.innerHTML =
+          pendingHtml +
+          versions
+            .map(
+              (v) => `
             <a class="markup-popup-photo-thumb" href="/api/document-versions/${v.id}/pdf" target="_blank" title="${escapeHtml(new Date(v.created_at).toLocaleString())}">
               <img src="/api/document-versions/${v.id}/pdf" loading="lazy" alt="">
             </a>`
-          )
-          .join('');
+            )
+            .join('') +
+          pendingNote;
       })
       .catch(() => {
-        gallery.innerHTML = '<p class="markup-popup-photo-status">Could not load photos.</p>';
+        gallery.innerHTML =
+          pendingHtml +
+          `<p class="markup-popup-photo-status">${navigator.onLine ? 'Could not load photos.' : 'Offline - already-uploaded photos not shown.'}</p>` +
+          pendingNote;
       });
   }
 
@@ -964,12 +1040,18 @@ export function initMarkups({
     if (currentPage != null) geometry.page = currentPage;
     const style = { color: colorInput.value, strokeWidth: Number(widthInput.value), ...extraStyle };
     const visibility = publishDefaultInput.checked ? 'published' : 'private';
-    const { markup } = await api('POST', `${base}/markups`, {
-      type: type === 'cloud-small' || type === 'cloud-large' ? 'cloud' : type,
-      geometry,
-      style,
-      visibility,
-    });
+    let markup;
+    try {
+      ({ markup } = await api('POST', `${base}/markups`, {
+        type: type === 'cloud-small' || type === 'cloud-large' ? 'cloud' : type,
+        geometry,
+        style,
+        visibility,
+      }));
+    } catch (err) {
+      showToast(err.status ? err.message : "Can't place new markups offline - reconnect and try again.", 'error');
+      return null;
+    }
     markups.push(markup);
     renderAll();
     return markup;
@@ -1076,10 +1158,16 @@ export function initMarkups({
       backdrop.querySelector('#photo-folder-new').addEventListener('click', async () => {
         const name = await promptModal({ title: 'New folder', placeholder: 'e.g. Progress Photos' });
         if (!name) return;
-        const { folder } = await api('POST', `/api/projects/${projectId}/documents/folders`, {
-          name,
-          parent_folder_id: currentFolderId,
-        });
+        let folder;
+        try {
+          ({ folder } = await api('POST', `/api/projects/${projectId}/documents/folders`, {
+            name,
+            parent_folder_id: currentFolderId,
+          }));
+        } catch (err) {
+          showToast(err.status ? err.message : "Can't create folders offline - pick an existing folder for now.", 'error');
+          return;
+        }
         folders.push(folder);
         currentFolderId = folder.id;
         render();
@@ -1120,44 +1208,6 @@ export function initMarkups({
       }
       render();
     });
-  }
-
-  // Uploads `file` as a new document_versions row on an ALREADY-linked
-  // photo pin's document (a revisit photo) - no folder prompt (it inherits
-  // the document's existing folder) and no markup change (linked_document_id
-  // stays put; only the version history grows). Invalidates the gallery
-  // cache for that document so the popup's next render re-fetches it.
-  async function uploadPhotoVersion(documentId, file) {
-    const fd = new FormData();
-    fd.append('file', file);
-    const res = await fetch(`/api/projects/${projectId}/documents/${documentId}/versions`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: fd,
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not save photo.');
-    photoVersionsCache.delete(documentId);
-    return data.document;
-  }
-
-  // Creates a brand-new document (the FIRST photo for a pin that doesn't
-  // have one yet) in `folderId`. Separate from uploadPhotoVersion above
-  // since this one has no existing document to attach to.
-  async function createPhotoDocument(folderId, file) {
-    const fd = new FormData();
-    fd.append('name', photoDocumentName());
-    if (folderId) fd.append('folder_id', folderId);
-    fd.append('file', file);
-    const res = await fetch(`/api/projects/${projectId}/documents`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      body: fd,
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Could not save photo.');
-    if (documents) documents.push(data.document);
-    return data.document;
   }
 
   function activateTool(tool) {
@@ -1373,7 +1423,7 @@ export function initMarkups({
       const { w, h } = vbSize();
       const markup = await createMarkup('photo', { x: origin.x / w, y: origin.y / h, direction });
       activateTool('select');
-      selectMarkup(markup.id);
+      if (markup) selectMarkup(markup.id);
       return true;
     }
 
@@ -1406,7 +1456,7 @@ export function initMarkups({
       geometry.tags = [];
       const markup = await createMarkup('flag', geometry, { color: '#f97316', strokeWidth: 2 });
       activateTool('select');
-      selectMarkup(markup.id);
+      if (markup) selectMarkup(markup.id);
       return true;
     }
     const extraStyle = type.startsWith('cloud') ? { bumpSize: CLOUD_BUMP_SIZE[type] } : undefined;
@@ -1515,10 +1565,24 @@ export function initMarkups({
     previewEl = null;
   });
 
+  // Fired by photoOutbox.js after every upload attempt (this page's, or the
+  // background retry timer's) - links newly-created documents onto their
+  // pins and redraws, so amber pins flip blue without a reload.
+  window.addEventListener('photo-outbox-change', async (e) => {
+    for (const u of e.detail.uploaded) {
+      if (u.document && documents && !documents.some((d) => d.id === u.document.id)) documents.push(u.document);
+      photoVersionsCache.delete(u.documentId);
+      const m = u.markupId != null ? findMarkup(u.markupId) : null;
+      if (m && u.linked) m.linked_document_id = u.documentId;
+    }
+    await refreshQueuedPhotos();
+    renderAll();
+  });
 
   return {
     async load() {
       syncViewBox();
+      await refreshQueuedPhotos();
       try {
         const { markups: loaded } = await api('GET', `${base}/markups`);
         markups = loaded;
