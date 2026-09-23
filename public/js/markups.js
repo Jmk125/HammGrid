@@ -2,7 +2,7 @@ import { getCachedMarkupsForSheet } from '/js/offline-store.js';
 import { openDocPicker } from '/js/docPicker.js';
 import { confirmModal, promptModal, showToast, openModal, closeModal } from '/js/shell.js';
 import { getDefaultPhotoFolderId, setDefaultPhotoFolderId } from '/js/photoPinDefaultFolder.js';
-import { queuePhoto, getQueuedPhotos, flushPhotoOutbox } from '/js/photoOutbox.js';
+import { queuePhoto, getQueuedPhotos, flushPhotoOutbox, photoBlob } from '/js/photoOutbox.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CLOUD_BUMP_SIZE = { 'cloud-small': 14, 'cloud-large': 30 };
@@ -189,6 +189,16 @@ export function initMarkups({
       if (!queuedPhotos.some((q) => q.id === id)) {
         URL.revokeObjectURL(url);
         queuedPhotoUrls.delete(id);
+      }
+    }
+    // Object URLs are built up front (photoBlob is async) so the gallery
+    // can render synchronously.
+    for (const q of queuedPhotos) {
+      if (queuedPhotoUrls.has(q.id)) continue;
+      try {
+        queuedPhotoUrls.set(q.id, URL.createObjectURL(await photoBlob(q)));
+      } catch (err) {
+        queuedPhotoUrls.set(q.id, '');
       }
     }
   }
@@ -822,8 +832,7 @@ export function initMarkups({
               sheetId: sheetId ? Number(sheetId) : null,
               markupId: m.id,
               name: photoDocumentName(),
-              filename: file.name,
-              blob: file,
+              file,
             });
           } catch (err) {
             showToast('Could not save the photo on this device: ' + (err.message || err), 'error');
@@ -869,8 +878,7 @@ export function initMarkups({
     const pending = queuedFor(m.id).slice().reverse();
     const pendingHtml = pending
       .map((q) => {
-        if (!queuedPhotoUrls.has(q.id)) queuedPhotoUrls.set(q.id, URL.createObjectURL(q.blob));
-        const url = queuedPhotoUrls.get(q.id);
+        const url = queuedPhotoUrls.get(q.id) || '';
         const title = q.error
           ? `Upload failed: ${q.error}`
           : `Waiting to upload - taken ${new Date(q.queuedAt).toLocaleString()}`;
