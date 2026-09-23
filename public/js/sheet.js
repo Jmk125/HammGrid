@@ -145,6 +145,7 @@ let userHasZoomedOrPanned = false;
 // (and any other future feature needing the raw pdf.js page/viewport) can
 // re-derive positions without re-rendering.
 let currentPdfPage = null;
+let currentPdfDoc = null; // owner of currentPdfPage - destroyed once a newer render replaces it, see renderPdfAttempt
 let currentViewport = null;
 let activeSearchTerm = localStorage.getItem(searchStorageKey()) || '';
 
@@ -353,6 +354,7 @@ document.querySelectorAll('.pane-section-header').forEach((header) => {
 let zoomPan = null;
 let suppressInteractionFlag = false;
 
+let lastTakeoffRenderScale = null;
 function setupZoomPan() {
   const wrapEl = document.getElementById('zoom-wrap');
   zoomPan = setupSharedZoomPan({
@@ -415,7 +417,10 @@ function setupZoomPan() {
       // later zoom changes, so a line's on-screen thickness would drift
       // instead of staying constant. Re-render on every zoom/pan tick to
       // match.
-      if (sheetTakeoffInstances.length > 0) renderTakeoffInstances();
+      // Only the scale matters for that, so pure pans skip the rebuild.
+      const scaleChanged = state.scale !== lastTakeoffRenderScale;
+      lastTakeoffRenderScale = state.scale;
+      if (scaleChanged && sheetTakeoffInstances.length > 0) renderTakeoffInstances();
       if (editingInstance) renderTakeoffEditOverlay();
     },
   });
@@ -1510,7 +1515,28 @@ function syncOverlayToFinalViewport(viewport) {
   if (markupsController) markupsController.resync();
 }
 
+// Wraps the real attempt so every exit path - success, supersede, timeout,
+// throw - frees what it allocated. Neither of these is released promptly on
+// its own: a PDF.js document keeps its parsed page/image caches alive in the
+// worker until destroy() (and nothing ever called it, so every sheet or
+// version viewed in this tab stayed resident), and iOS Safari holds a
+// canvas's backing store - ~100MB for a 6000px sheet render - until GC gets
+// around to it, which under pan/zoom pressure on an older iPad is how the
+// tab ends up killed and reloaded (the "grey flash") instead.
 async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx, statusEl) {
+  const scratch = { pdf: null, offscreen: null };
+  try {
+    await renderPdfAttemptInner(versionId, renderToken, isTimedOut, canvas, ctx, statusEl, scratch);
+  } finally {
+    if (scratch.offscreen) {
+      scratch.offscreen.width = 0;
+      scratch.offscreen.height = 0;
+    }
+    if (scratch.pdf && scratch.pdf !== currentPdfDoc) scratch.pdf.destroy();
+  }
+}
+
+async function renderPdfAttemptInner(versionId, renderToken, isTimedOut, canvas, ctx, statusEl, scratch) {
   const cachedFile = await getCachedAsset(versionId, 'pdf');
   // A fresh object each call, not shared/reused - pdfjsLib.getDocument({data})
   // transfers (detaches) that ArrayBuffer to its worker, so a second
@@ -1535,11 +1561,14 @@ async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx,
   if (cachedFile) {
     try {
       pdf = await pdfjsLib.getDocument(await loadPdfSource()).promise;
+      scratch.pdf = pdf;
       page = await pdf.getPage(1);
       if (isTimedOut() || currentRenderTask !== renderToken) return;
       viewport = computeFinalViewport(page);
     } catch {
+      if (pdf) pdf.destroy();
       pdf = null; // fall through to the normal load path below
+      scratch.pdf = null;
     }
   }
 
@@ -1555,6 +1584,7 @@ async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx,
 
   if (!pdf) {
     pdf = await pdfjsLib.getDocument(await loadPdfSource()).promise;
+    scratch.pdf = pdf;
     page = await pdf.getPage(1);
     if (isTimedOut() || currentRenderTask !== renderToken) return; // gave up waiting, or superseded while loading
     viewport = computeFinalViewport(page);
@@ -1569,6 +1599,7 @@ async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx,
   // work off the visible canvas means the placeholder stays up, unbroken,
   // until the real image is fully ready to swap in in one atomic step.
   const offscreen = document.createElement('canvas');
+  scratch.offscreen = offscreen;
   offscreen.width = viewport.width;
   offscreen.height = viewport.height;
   const offscreenCtx = offscreen.getContext('2d');
@@ -1594,6 +1625,9 @@ async function renderPdfAttempt(versionId, renderToken, isTimedOut, canvas, ctx,
   canvas.height = viewport.height;
   ctx.drawImage(offscreen, 0, 0);
 
+  const priorPdfDoc = currentPdfDoc;
+  currentPdfDoc = pdf;
+  if (priorPdfDoc && priorPdfDoc !== pdf) priorPdfDoc.destroy();
   currentPdfPage = page;
   currentViewport = viewport;
   statusEl.textContent = cachedFile ? '(from local cache)' : '';
