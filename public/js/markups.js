@@ -1239,6 +1239,27 @@ export function initMarkups({
   svgEl.addEventListener('click', (e) => {
     if (e.target === svgEl) deselect();
   });
+  // On touch, a finger landing on the bare sheet starts a one-finger pan in
+  // zoomPan.js, which preventDefault()s the touchstart - so the synthetic
+  // click above never fires on iPad and a selected markup's popup had no way
+  // to be dismissed. Treat a touch that ends close to where it started
+  // (i.e. a tap, not a pan) as that same "tap off" instead.
+  const TAP_SLOP_PX = 10;
+  let tapStart = null;
+  svgEl.addEventListener('touchstart', (e) => {
+    tapStart = e.touches.length === 1 && e.target === svgEl && activeTool === 'select'
+      ? { x: e.touches[0].clientX, y: e.touches[0].clientY }
+      : null;
+  });
+  svgEl.addEventListener('touchmove', (e) => {
+    if (!tapStart) return;
+    const t = e.touches[0];
+    if (e.touches.length !== 1 || Math.hypot(t.clientX - tapStart.x, t.clientY - tapStart.y) > TAP_SLOP_PX) tapStart = null;
+  });
+  svgEl.addEventListener('touchend', (e) => {
+    if (tapStart && e.touches.length === 0) deselect();
+    tapStart = null;
+  });
 
   async function startDrawing(evt) {
     if (activeTool === 'select' || evt.target !== svgEl) return;
@@ -1514,6 +1535,11 @@ export function initMarkups({
       renderAll();
     },
     setZoomScale(scale) {
+      // Called on every pan/zoom tick, but the only thing that depends on it
+      // is the constant-on-screen stroke/handle sizing - a pure pan leaves
+      // the scale untouched, and rebuilding every markup's DOM per touchmove
+      // anyway was a big part of why panning felt choppy on iPad.
+      if ((scale || 1) === currentZoomScale) return;
       currentZoomScale = scale || 1;
       renderAll({ refreshPopup: false });
     },

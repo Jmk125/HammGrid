@@ -38,6 +38,20 @@ export function setupZoomPan({
     if (onChange) onChange(state);
   }
 
+  // Touch devices can fire touchmove more than once per frame; applying
+  // (transform write + the caller's onChange work) on each one just burns
+  // main-thread time an older iPad doesn't have. State still updates
+  // immediately - only the DOM write is coalesced to once per frame. Mouse/
+  // wheel paths keep calling apply() directly, unchanged.
+  let applyFrame = null;
+  function scheduleApply() {
+    if (applyFrame !== null) return;
+    applyFrame = requestAnimationFrame(() => {
+      applyFrame = null;
+      apply();
+    });
+  }
+
   function fitToView(contentWidth, contentHeight) {
     const rect = wrapEl.getBoundingClientRect();
     if (!contentWidth || !rect.width) return;
@@ -141,7 +155,7 @@ export function setupZoomPan({
         const t = e.touches[0];
         state.x = touchPanState.origX + (t.clientX - touchPanState.startX);
         state.y = touchPanState.origY + (t.clientY - touchPanState.startY);
-        apply();
+        scheduleApply();
         return;
       }
       if (e.touches.length !== 2 || !pinch) return;
@@ -161,7 +175,7 @@ export function setupZoomPan({
       state.x = cx - (cx - state.x) * (newScale / state.scale);
       state.y = cy - (cy - state.y) * (newScale / state.scale);
       state.scale = newScale;
-      apply();
+      scheduleApply();
     },
     { passive: false }
   );
