@@ -634,3 +634,12 @@ export async function deleteOutboxPhoto(id) {
   const db = await openDb();
   await idbDelete(db, 'photo_outbox', id);
 }
+
+// Keeps the offline copy of one markup current after the outbox creates or
+// links it, so it doesn't vanish (or show stale) if the device goes offline
+// again before the next full sync.
+export async function cacheMarkup(projectId, markup) {
+  if (!markup || !markup.sheet_id) return;
+  const db = await openDb();
+  await idbPut(db, 'markups', { ...markup, project_id: Number(projectId) });
+}

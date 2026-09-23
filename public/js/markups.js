@@ -2,7 +2,17 @@ import { getCachedMarkupsForSheet } from '/js/offline-store.js';
 import { openDocPicker } from '/js/docPicker.js';
 import { confirmModal, promptModal, showToast, openModal, closeModal } from '/js/shell.js';
 import { getDefaultPhotoFolderId, setDefaultPhotoFolderId } from '/js/photoPinDefaultFolder.js';
-import { queuePhoto, getQueuedPhotos, flushPhotoOutbox, photoBlob } from '/js/photoOutbox.js';
+import {
+  queuePhoto,
+  getQueuedPhotos,
+  flushPhotoOutbox,
+  photoBlob,
+  queueMarkup,
+  getQueuedMarkups,
+  updateQueuedMarkup,
+  deleteQueuedMarkup,
+  localMarkupId,
+} from '/js/photoOutbox.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const CLOUD_BUMP_SIZE = { 'cloud-small': 14, 'cloud-large': 30 };
@@ -177,6 +187,39 @@ export function initMarkups({
   const queuedPhotoUrls = new Map(); // outbox entry id -> object URL
   function queuedFor(markupId) {
     return queuedPhotos.filter((q) => q.markupId === markupId);
+  }
+
+  // A markup placed offline lives only in the outbox until it uploads (see
+  // photoOutbox.js) - shown here under its negative local id, flagged
+  // `pending` so edits go to the outbox entry instead of the server.
+  function localMarkupFromEntry(entry) {
+    return {
+      ...entry.markup,
+      id: localMarkupId(entry.id),
+      outboxId: entry.id,
+      pending: true,
+      uploadError: entry.error || null,
+      author_id: me.id,
+      linked_document_id: null,
+    };
+  }
+
+  // Every markup edit goes through here: a pending (not yet uploaded)
+  // markup just has its queued entry rewritten; anything else is a normal
+  // PATCH. Returns false (after a toast) if the change couldn't be saved.
+  async function patchMarkup(m, fields) {
+    if (m.pending && (await updateQueuedMarkup(m.outboxId, fields))) {
+      Object.assign(m, fields);
+      return true;
+    }
+    try {
+      const { markup } = await api('PATCH', `/api/markups/${m.id}`, fields);
+      Object.assign(m, markup);
+      return true;
+    } catch (err) {
+      showToast(err.status ? err.message : "Can't save changes to this markup offline - only markups placed offline can be edited without a connection.", 'error');
+      return false;
+    }
   }
   async function refreshQueuedPhotos() {
     if (!projectId) return;
@@ -637,7 +680,9 @@ export function initMarkups({
       buttonRow.appendChild(openBtn);
     }
 
-    if (perm.canEdit) {
+    // Linking needs the markup to exist on the server - hidden until a
+    // markup placed offline has uploaded.
+    if (perm.canEdit && !m.pending) {
       const linkBtn = document.createElement('button');
       linkBtn.type = 'button';
       linkBtn.textContent = m.linked_document_id ? 'Change link' : 'Link doc';
@@ -654,10 +699,7 @@ export function initMarkups({
       pubBtn.textContent = m.visibility === 'published' ? 'Unpublish' : 'Publish';
       pubBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const { markup } = await api('PATCH', `/api/markups/${m.id}`, {
-          visibility: m.visibility === 'published' ? 'private' : 'published',
-        });
-        Object.assign(m, markup);
+        await patchMarkup(m, { visibility: m.visibility === 'published' ? 'private' : 'published' });
         renderAll();
       });
       buttonRow.appendChild(pubBtn);
@@ -685,6 +727,25 @@ export function initMarkups({
       delBtn.textContent = 'Delete';
       delBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if (m.pending) {
+          const photoCount = queuedFor(m.id).length;
+          const ok = await confirmModal({
+            title: 'Delete this markup?',
+            message: photoCount
+              ? `It hasn't been uploaded yet, so its ${photoCount} photo${photoCount === 1 ? '' : 's'} will be deleted from this device too.`
+              : '',
+            confirmLabel: 'Delete',
+            danger: true,
+          });
+          if (!ok) return;
+          await deleteQueuedMarkup(m.outboxId);
+          await refreshQueuedPhotos();
+          markups = markups.filter((x) => x.id !== m.id);
+          selectedId = null;
+          editingId = null;
+          renderAll();
+          return;
+        }
         // A photo pin's document exists solely because of that pin (unlike
         // a flag's linked RFI, which is a shared reference someone else may
         // still need) - deleting the pin is genuinely ambiguous about
@@ -706,7 +767,12 @@ export function initMarkups({
             showToast(err.message || 'Could not delete the photos - deleting the pin anyway.', 'error');
           }
         }
-        await api('DELETE', `/api/markups/${m.id}`);
+        try {
+          await api('DELETE', `/api/markups/${m.id}`);
+        } catch (err) {
+          showToast(err.status ? err.message : "Can't delete this markup offline - reconnect and try again.", 'error');
+          return;
+        }
         markups = markups.filter((x) => x.id !== m.id);
         selectedId = null;
         editingId = null;
@@ -717,6 +783,15 @@ export function initMarkups({
 
     if (editingId === m.id && perm.canEdit && (m.type === 'rect' || m.type === 'line' || m.type === 'arrow')) {
       renderDimensionFields(m);
+    }
+
+    if (m.pending) {
+      const note = document.createElement('div');
+      note.className = 'markup-popup-doclabel';
+      note.textContent = m.uploadError
+        ? `Upload failed: ${m.uploadError}`
+        : 'Saved on this device - uploads when back online.';
+      popupEl.appendChild(note);
     }
 
     // Shows which document is linked (e.g. "RFI-042 - Beam size...") so the
@@ -766,10 +841,10 @@ export function initMarkups({
         saveBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
           const tags = [...new Set(tagInput.value.split(',').map((t) => t.trim()).filter(Boolean))];
-          const { markup } = await api('PATCH', `/api/markups/${m.id}`, {
+          const saved = await patchMarkup(m, {
             geometry: { ...m.geometry, description: descInput.value, comment: commentInput.value, tags },
           });
-          Object.assign(m, markup);
+          if (!saved) return;
           const newTags = tags.filter((t) => !(flagTagsCache || []).includes(t));
           if (newTags.length) {
             flagTagsCache = [...(flagTagsCache || []), ...newTags].sort();
@@ -969,8 +1044,7 @@ export function initMarkups({
           return;
         }
         setFeet(feet);
-        const { markup } = await api('PATCH', `/api/markups/${m.id}`, { geometry: m.geometry });
-        Object.assign(m, markup);
+        await patchMarkup(m, { geometry: m.geometry });
         renderAll();
       });
       field.appendChild(span);
@@ -1048,17 +1122,30 @@ export function initMarkups({
     if (currentPage != null) geometry.page = currentPage;
     const style = { color: colorInput.value, strokeWidth: Number(widthInput.value), ...extraStyle };
     const visibility = publishDefaultInput.checked ? 'published' : 'private';
+    const body = {
+      type: type === 'cloud-small' || type === 'cloud-large' ? 'cloud' : type,
+      geometry,
+      style,
+      visibility,
+    };
     let markup;
     try {
-      ({ markup } = await api('POST', `${base}/markups`, {
-        type: type === 'cloud-small' || type === 'cloud-large' ? 'cloud' : type,
-        geometry,
-        style,
-        visibility,
-      }));
+      ({ markup } = await api('POST', `${base}/markups`, body));
     } catch (err) {
-      showToast(err.status ? err.message : "Can't place new markups offline - reconnect and try again.", 'error');
-      return null;
+      if (err.status) {
+        showToast(err.message, 'error');
+        return null;
+      }
+      // Couldn't reach the server - keep it on the device and create it
+      // when the connection is back (photoOutbox.js).
+      try {
+        const entryId = await queueMarkup({ projectId, url: `${base}/markups`, markup: body });
+        markup = localMarkupFromEntry({ id: entryId, markup: body });
+      } catch (queueErr) {
+        showToast('Could not save the markup on this device: ' + (queueErr.message || queueErr), 'error');
+        return null;
+      }
+      showToast('Offline - markup saved on this device and will upload when back online.', 'info');
     }
     markups.push(markup);
     renderAll();
@@ -1279,18 +1366,14 @@ export function initMarkups({
     if (!editingId) return;
     const m = findMarkup(editingId);
     if (!m) return;
-    m.style = { ...m.style, color: colorInput.value };
-    const { markup } = await api('PATCH', `/api/markups/${m.id}`, { style: m.style });
-    Object.assign(m, markup);
+    await patchMarkup(m, { style: { ...m.style, color: colorInput.value } });
     renderAll();
   });
   widthInput.addEventListener('change', async () => {
     if (!editingId) return;
     const m = findMarkup(editingId);
     if (!m) return;
-    m.style = { ...m.style, strokeWidth: Number(widthInput.value) };
-    const { markup } = await api('PATCH', `/api/markups/${m.id}`, { style: m.style });
-    Object.assign(m, markup);
+    await patchMarkup(m, { style: { ...m.style, strokeWidth: Number(widthInput.value) } });
     renderAll();
   });
 
@@ -1540,16 +1623,14 @@ export function initMarkups({
     if (handleDrag) {
       const m = handleDrag.markup;
       handleDrag = null;
-      const { markup } = await api('PATCH', `/api/markups/${m.id}`, { geometry: m.geometry });
-      Object.assign(m, markup);
+      await patchMarkup(m, { geometry: m.geometry });
       renderAll();
       return true;
     }
     if (bodyDrag) {
       const m = bodyDrag.markup;
       bodyDrag = null;
-      const { markup } = await api('PATCH', `/api/markups/${m.id}`, { geometry: m.geometry });
-      Object.assign(m, markup);
+      await patchMarkup(m, { geometry: m.geometry });
       renderAll();
       return true;
     }
@@ -1577,6 +1658,16 @@ export function initMarkups({
   // background retry timer's) - links newly-created documents onto their
   // pins and redraws, so amber pins flip blue without a reload.
   window.addEventListener('photo-outbox-change', async (e) => {
+    for (const { localId, markup } of e.detail.createdMarkups || []) {
+      const m = findMarkup(localId);
+      if (!m) continue;
+      delete m.pending;
+      delete m.outboxId;
+      delete m.uploadError;
+      Object.assign(m, markup);
+      if (selectedId === localId) selectedId = markup.id;
+      if (editingId === localId) editingId = markup.id;
+    }
     for (const u of e.detail.uploaded) {
       if (u.document && documents && !documents.some((d) => d.id === u.document.id)) documents.push(u.document);
       photoVersionsCache.delete(u.documentId);
@@ -1599,6 +1690,12 @@ export function initMarkups({
         // covers sheets) - just show nothing rather than a sheet-shaped
         // cache lookup that would never have anything for this id anyway.
         markups = sheetId ? await getCachedMarkupsForSheet(sheetId) : [];
+      }
+      try {
+        const queued = await getQueuedMarkups(`${base}/markups`);
+        markups = markups.concat(queued.map(localMarkupFromEntry));
+      } catch (err) {
+        // Outbox unreadable - server/cached markups still show.
       }
       renderAll();
     },

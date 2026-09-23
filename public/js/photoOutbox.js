@@ -12,7 +12,16 @@
 // a slow timer while anything is still waiting. So queued photos upload the
 // next time HammGrid is open with a connection, not while it's closed.
 //
-// Entry shape: { id, projectId, sheetId, markupId, documentId, folderId,
+// Markups placed offline (kind: 'markup') go through this same outbox, so
+// a pin dropped with no signal gets created on the server BEFORE the photos
+// taken on it upload - entries are always processed oldest first, and a
+// queued pin is always older than its photos. Until then the pin exists
+// only on the device under a negative local id (-entry.id), which photo
+// entries reference as their markupId; creating the pin rewrites those to
+// the real id. Entry shape: { id, kind: 'markup', projectId, url, markup:
+// { type, geometry, style, visibility }, createdMarkup?, error? }
+//
+// Photo entry shape: { id, projectId, sheetId, markupId, documentId, folderId,
 // name, filename, bytes, type, queuedAt, createdDocumentId?, error? }
 //
 // The photo is stored as raw bytes (ArrayBuffer), NOT as the File/Blob
@@ -24,7 +33,7 @@
 //   documentId set   -> add as a new version of that (pin's) document
 //   documentId null  -> first photo for an empty pin: create a document in
 //                       folderId, then link the pin to it
-import { addOutboxPhoto, getOutboxPhotos, putOutboxPhoto, deleteOutboxPhoto } from '/js/offline-store.js';
+import { addOutboxPhoto, getOutboxPhotos, putOutboxPhoto, deleteOutboxPhoto, cacheMarkup } from '/js/offline-store.js';
 import { showToast } from '/js/shell.js';
 
 const RETRY_MS = 60 * 1000;
@@ -70,8 +79,43 @@ async function uploadBlob(entry) {
 }
 
 export async function getQueuedPhotos(projectId) {
-  const all = await getOutboxPhotos();
+  const all = (await getOutboxPhotos()).filter((e) => e.kind !== 'markup');
   return projectId == null ? all : all.filter((e) => e.projectId === Number(projectId));
+}
+
+export function localMarkupId(entryId) {
+  return -entryId;
+}
+
+// `url` is the markups collection the markup would have been POSTed to
+// (e.g. /api/sheets/12/markups) - it both says where to create it and
+// scopes which page shows it while it's still local.
+export async function queueMarkup({ projectId, url, markup }) {
+  return addOutboxPhoto({ kind: 'markup', projectId: Number(projectId), url, markup, queuedAt: new Date().toISOString() });
+}
+
+export async function getQueuedMarkups(url) {
+  return (await getOutboxPhotos()).filter((e) => e.kind === 'markup' && e.url === url);
+}
+
+// Edits to a not-yet-uploaded markup (drag, re-aim, publish, flag text...)
+// just rewrite what will be POSTed. Missing entry = it was uploaded in the
+// meantime; the caller falls back to a normal PATCH in that case.
+export async function updateQueuedMarkup(entryId, fields) {
+  const entry = (await getOutboxPhotos()).find((e) => e.id === entryId);
+  if (!entry || entry.createdMarkup) return false;
+  entry.markup = { ...entry.markup, ...fields };
+  await putOutboxPhoto(entry);
+  return true;
+}
+
+// Deleting a not-yet-uploaded markup also discards any photos queued on it,
+// since they were never saved anywhere else.
+export async function deleteQueuedMarkup(entryId) {
+  const localId = localMarkupId(entryId);
+  for (const e of await getOutboxPhotos()) {
+    if (e.id === entryId || e.markupId === localId) await deleteOutboxPhoto(e.id);
+  }
 }
 
 // Network failure (Safari's "Load failed", Chrome's "Failed to fetch") has
@@ -152,8 +196,15 @@ async function uploadOne(entry, uploaded) {
     await putOutboxPhoto(entry);
   }
   const docId = entry.createdDocumentId;
+  if (entry.markupId < 0) {
+    // Still a local-only pin id - only possible when that pin's own creation
+    // was rejected. The photo is already saved as its own document.
+    uploaded.push({ markupId: null, documentId: docId, document: entry.createdDocument, orphaned: true });
+    return;
+  }
   try {
-    await api('PATCH', `/api/markups/${entry.markupId}`, { linked_document_id: docId });
+    const { markup } = await api('PATCH', `/api/markups/${entry.markupId}`, { linked_document_id: docId });
+    await cacheMarkup(entry.projectId, markup).catch(() => {});
   } catch (err) {
     if (err.status !== 404) throw err;
     // Pin was deleted - the photo is already saved as its own document.
@@ -172,8 +223,28 @@ async function uploadOne(entry, uploaded) {
   }
 }
 
+async function createQueuedMarkup(entry, createdMarkups) {
+  // createdMarkup is persisted before the dependent photos are rewritten, so
+  // an interruption between the two steps can't create the markup twice.
+  if (!entry.createdMarkup) {
+    const { markup } = await api('POST', entry.url, entry.markup);
+    entry.createdMarkup = markup;
+    await putOutboxPhoto(entry);
+    await cacheMarkup(entry.projectId, markup).catch(() => {});
+  }
+  const localId = localMarkupId(entry.id);
+  for (const later of await getOutboxPhotos()) {
+    if (later.markupId === localId) {
+      later.markupId = entry.createdMarkup.id;
+      await putOutboxPhoto(later);
+    }
+  }
+  createdMarkups.push({ localId, markup: entry.createdMarkup });
+}
+
 async function doFlush() {
   const uploaded = [];
+  const createdMarkups = [];
   let failed = 0;
   let remaining = 0;
   let stoppedEarly = false;
@@ -185,15 +256,18 @@ async function doFlush() {
     const fresh = (await getOutboxPhotos()).find((e) => e.id === entry.id);
     if (!fresh) continue;
     try {
-      await uploadOne(fresh, uploaded);
+      if (fresh.kind === 'markup') await createQueuedMarkup(fresh, createdMarkups);
+      else await uploadOne(fresh, uploaded);
       await deleteOutboxPhoto(fresh.id);
     } catch (err) {
       if (isRetryable(err)) {
         stoppedEarly = true;
         break;
       }
-      // Rejected outright (e.g. 403 after a role change) - keep the photo on
-      // the device, but stop retrying it every minute.
+      // Rejected outright (e.g. 403 after a role change) - keep it on the
+      // device, but stop retrying it every minute. (A photo on a pin whose
+      // creation was rejected ends up here too, or as a standalone document
+      // - its PATCH to the pin's negative local id 404s like a deleted pin.)
       fresh.error = err.message || 'Upload rejected';
       await putOutboxPhoto(fresh);
       failed++;
@@ -201,16 +275,19 @@ async function doFlush() {
   }
   remaining = (await getOutboxPhotos()).filter((e) => !e.error).length;
 
-  if (uploaded.length) {
+  if (uploaded.length || createdMarkups.length) {
     const orphaned = uploaded.filter((u) => u.orphaned).length;
+    const parts = [];
+    if (createdMarkups.length) parts.push(`${createdMarkups.length} offline markup${createdMarkups.length === 1 ? '' : 's'} saved`);
+    if (uploaded.length) parts.push(`${uploaded.length} photo${uploaded.length === 1 ? '' : 's'} uploaded`);
     showToast(
-      `${uploaded.length} photo${uploaded.length === 1 ? '' : 's'} uploaded.` +
-        (orphaned ? ` ${orphaned} saved as standalone documents because the pin or its document was deleted.` : ''),
+      parts.join(', ') + '.' +
+        (orphaned ? ` ${orphaned} photo${orphaned === 1 ? '' : 's'} saved as standalone documents because the pin or its document was deleted.` : ''),
       'success'
     );
   }
-  if (failed) showToast(`${failed} photo${failed === 1 ? '' : 's'} could not be uploaded and remain on this device.`, 'error');
-  window.dispatchEvent(new CustomEvent('photo-outbox-change', { detail: { uploaded, remaining } }));
+  if (failed) showToast(`${failed} offline item${failed === 1 ? '' : 's'} could not be uploaded and remain on this device.`, 'error');
+  window.dispatchEvent(new CustomEvent('photo-outbox-change', { detail: { uploaded, createdMarkups, remaining } }));
 
   clearTimeout(retryTimer);
   if (remaining) retryTimer = setTimeout(() => flushPhotoOutbox(), RETRY_MS);
