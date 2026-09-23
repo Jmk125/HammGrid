@@ -5,7 +5,7 @@
 // network in the path once synced.
 
 const DB_NAME = 'drawing-app';
-const DB_VERSION = 5;
+const DB_VERSION = 6;
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -43,6 +43,11 @@ function openDb() {
       // number on a small project).
       if (!db.objectStoreNames.contains('documents')) db.createObjectStore('documents', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('document_folders')) db.createObjectStore('document_folders', { keyPath: 'id' });
+      // v6: photos taken on a photo pin while offline (or on flaky trailer
+      // WiFi) - held here, blob and all, until photoOutbox.js can upload
+      // them. Unlike every other store this is the ONLY copy of the data,
+      // so nothing here is ever cleared by deleteCachedProject/re-sync.
+      if (!db.objectStoreNames.contains('photo_outbox')) db.createObjectStore('photo_outbox', { keyPath: 'id', autoIncrement: true });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -599,4 +604,33 @@ function documentAssetKey(versionId) {
 
 export async function getCachedDocumentAsset(versionId) {
   return readAssetFile(documentAssetKey(versionId));
+}
+
+// ---------- Photo outbox (see photoOutbox.js) ----------
+export async function addOutboxPhoto(entry) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('photo_outbox', 'readwrite');
+    const req = tx.objectStore('photo_outbox').add(entry);
+    tx.oncomplete = () => resolve(req.result);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Oldest first (autoIncrement ids) - upload order matters, since a pin's
+// first queued photo creates the document the later ones get added to.
+export async function getOutboxPhotos() {
+  const db = await openDb();
+  const all = await idbGetAll(db, 'photo_outbox');
+  return all.sort((a, b) => a.id - b.id);
+}
+
+export async function putOutboxPhoto(entry) {
+  const db = await openDb();
+  await idbPut(db, 'photo_outbox', entry);
+}
+
+export async function deleteOutboxPhoto(id) {
+  const db = await openDb();
+  await idbDelete(db, 'photo_outbox', id);
 }

@@ -1502,6 +1502,24 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   border: 1px solid rgba(255,255,255,0.2);
 }
 .markup-popup-photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.markup-popup-photo-thumb.pending { position: relative; border: 1px dashed #f59e0b; }
+.markup-popup-photo-thumb.pending.failed { border-color: #e11d48; }
+.markup-popup-photo-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #f59e0b;
+  color: #111;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.markup-popup-photo-thumb.failed .markup-popup-photo-badge { background: #e11d48; color: #fff; }
 
 .markup-popup-dims { display: flex; gap: 6px; padding: 2px 8px 4px; }
 .markup-popup-dim-field { display: flex; flex-direction: column; gap: 2px; font-size: 10px; color: rgba(255,255,255,0.75); }
