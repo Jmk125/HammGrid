@@ -42,10 +42,13 @@
           <button class="pane-toggle" id="pane-toggle-btn" type="button">&#9656;</button>
           <div class="pane-body" id="pane-body">
             <div class="pane-section" id="section-markup">
-              <button class="pane-section-header" type="button" data-section="markup">
-                <span>Markup Tools</span>
-                <span class="chevron">&#9662;</span>
-              </button>
+              <div class="pane-section-header-row">
+                <button class="pane-section-header" type="button" data-section="markup">
+                  <span>Markup Tools</span>
+                  <span class="chevron">&#9662;</span>
+                </button>
+                <button type="button" class="pane-popout-btn" id="markups-visibility-btn" title="Hide all markups"></button>
+              </div>
               <div class="pane-section-body">
                 <div class="icon-tool-grid" id="tool-grid"></div>
                 <div class="field"><label>Color</label><input type="color" id="markup-color" value="#e11d48"></div>

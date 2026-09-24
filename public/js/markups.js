@@ -582,8 +582,60 @@ export function initMarkups({
   // follow the markup on screen, but must NOT rebuild its contents, or an
   // in-progress flag description/comment (typed but not yet saved) gets
   // silently reset to the last-saved value every time the view moves.
+  // "Hide all" toggle next to the Markup Tools header - hides only markups
+  // (take-offs, search highlights etc. share this SVG and stay visible).
+  // Kept for the browser tab's session so it carries across sheet-to-sheet
+  // navigation, but a fresh visit always starts with markups showing.
+  const HIDDEN_KEY = 'hammgrid-markups-hidden';
+  let markupsHidden = (() => {
+    try {
+      return sessionStorage.getItem(HIDDEN_KEY) === '1';
+    } catch (e) {
+      return false;
+    }
+  })();
+  const visibilityBtn = document.getElementById('markups-visibility-btn');
+  const EYE_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+  function updateVisibilityBtn() {
+    if (!visibilityBtn) return;
+    visibilityBtn.innerHTML = markupsHidden ? EYE_OFF_ICON : EYE_ICON;
+    visibilityBtn.title = markupsHidden ? 'Show markups (hidden)' : 'Hide all markups';
+    visibilityBtn.classList.toggle('active', markupsHidden);
+  }
+
+  function setMarkupsHidden(hidden) {
+    markupsHidden = hidden;
+    try {
+      sessionStorage.setItem(HIDDEN_KEY, hidden ? '1' : '0');
+    } catch (e) {
+      // Per-tab convenience only.
+    }
+    if (hidden) {
+      selectedId = null;
+      editingId = null;
+    }
+    updateVisibilityBtn();
+    renderAll();
+  }
+
+  if (visibilityBtn) {
+    updateVisibilityBtn();
+    visibilityBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setMarkupsHidden(!markupsHidden);
+    });
+  }
+
   function renderAll({ refreshPopup = true } = {}) {
     svgEl.querySelectorAll('[data-markup-id], [data-handles-for]').forEach((n) => n.remove());
+    if (markupsHidden) {
+      positionPopup(refreshPopup);
+      return;
+    }
     for (const m of visibleMarkups()) svgEl.appendChild(renderMarkupEl(m));
     if (editingId) {
       const m = findMarkup(editingId);
@@ -1415,6 +1467,11 @@ export function initMarkups({
   }
 
   function activateTool(tool) {
+    // Drawing with markups hidden would place one you can't see.
+    if (tool !== 'select' && markupsHidden) {
+      setMarkupsHidden(false);
+      showToast('Markups shown again.', 'info');
+    }
     activeTool = tool;
     deselect();
     document.querySelectorAll('.tool-btn').forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
@@ -1838,6 +1895,7 @@ export function initMarkups({
     focusMarkup(id) {
       const m = findMarkup(Number(id));
       if (!m) return null;
+      if (markupsHidden) setMarkupsHidden(false);
       selectMarkup(m.id);
       return m.geometry;
     },
