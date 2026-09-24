@@ -856,6 +856,11 @@ tr.doc-selected { background: var(--accent-light); }
 .doc-picker-grid .doc-card-thumb .doc-picker-icon { width: 48px; height: 48px; }
 .doc-picker-grid .doc-card-folder .doc-picker-icon { width: 64px; height: 64px; }
 .doc-picker-grid .doc-picker-row:hover { background: var(--accent-light); }
+/* Multi-select (photo pins) - see docPicker.js's `multiple` option. */
+.doc-picker-check { width: 18px; height: 18px; margin: 0; flex-shrink: 0; pointer-events: none; }
+.doc-picker-row.picked { background: var(--accent-light); }
+.doc-picker-grid .doc-picker-row.picked { outline: 3px solid var(--accent); outline-offset: -1px; }
+.doc-picker-row.disabled { opacity: 0.45; cursor: not-allowed; }
 
 .pdf-viewer-wrap { text-align: center; background: #525659; padding: 16px; border-radius: 8px; }
 .pdf-viewer-wrap canvas { max-width: 100%; box-shadow: 0 2px 10px rgba(0,0,0,0.4); }
@@ -1516,15 +1521,32 @@ tr.doc-selected { background: var(--accent-light); }
 
 .markup-popup-photo-gallery {
   display: grid;
-  grid-template-columns: repeat(2, 150px);
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  align-content: start;
   gap: 6px;
   padding: 4px 8px 6px;
-  max-height: 60vh;
+  width: 400px;
+  max-width: calc(100vw - 40px);
+  max-height: 65vh;
   overflow-y: auto;
+  box-sizing: border-box;
 }
 .markup-popup-photo-gallery > .markup-popup-photo-status { grid-column: 1 / -1; }
 @media (max-width: 520px) {
-  .markup-popup-photo-gallery { grid-template-columns: repeat(2, 120px); }
+  .markup-popup-photo-gallery { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+}
+/* Corner grip for resizing the photo pin popup (markups.js addGalleryResizeHandle). */
+.markup-popup-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 26px;
+  height: 26px;
+  cursor: nwse-resize;
+  touch-action: none;
+  border-bottom-right-radius: 6px;
+  background:
+    linear-gradient(135deg, transparent 0 55%, rgba(255,255,255,0.55) 55% 62%, transparent 62% 72%, rgba(255,255,255,0.55) 72% 79%, transparent 79%);
 }
 .markup-popup-photo-status { padding: 2px 8px 4px; font-size: 11px; color: rgba(255,255,255,0.65); white-space: nowrap; }
 .markup-popup-photo-thumb {
