@@ -738,7 +738,7 @@ export function initMarkups({
     if (perm.canEdit && !m.pending) {
       const linkBtn = document.createElement('button');
       linkBtn.type = 'button';
-      linkBtn.textContent = m.linked_document_id ? 'Change link' : 'Link doc';
+      linkBtn.textContent = m.type === 'photo' ? 'Add existing' : m.linked_document_id ? 'Change link' : 'Link doc';
       linkBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         openLinkPicker(m);
@@ -912,6 +912,8 @@ export function initMarkups({
       const gallery = document.createElement('div');
       gallery.className = 'markup-popup-photo-gallery';
       popupEl.appendChild(gallery);
+      applySavedGallerySize(gallery);
+      addGalleryResizeHandle(gallery);
       renderPhotoGalleryInto(gallery, m);
 
       // Attaching a photo here doesn't touch the markup's own author/edit
@@ -986,6 +988,50 @@ export function initMarkups({
     return api('GET', `/api/documents/${documentId}`).then(({ versions }) => {
       photoVersionsCache.set(documentId, versions);
       return versions;
+    });
+  }
+
+  // Photo pins pick several existing photos at once. They're moved into the
+  // pin's document (server: POST /markups/:id/attach-documents), since a
+  // pin's photos are all versions of one document.
+  function openPhotoPinPicker(m) {
+    openDocPicker({
+      documents: documents || [],
+      folders: folders || [],
+      currentId: m.linked_document_id,
+      multiple: true,
+      title: 'Add photos to this pin',
+      disabledReason: (d) => {
+        if (!d.is_image) return 'Not a photo';
+        if (d.linked_sheet_count > 0) return 'Already linked from another markup';
+        return null;
+      },
+      onSelect: async () => {
+        // "Clear link" - the pin keeps existing, just empty again.
+        const saved = await patchMarkup(m, { linked_document_id: null });
+        if (saved) renderAll();
+      },
+      onSelectMany: async (ids) => {
+        let markup;
+        try {
+          ({ markup } = await api('POST', `/api/markups/${m.id}/attach-documents`, { document_ids: ids }));
+        } catch (err) {
+          showToast(err.status ? err.message : 'Adding photos needs a connection - try again once back online.', 'error');
+          return;
+        }
+        Object.assign(m, markup);
+        photoVersionsCache.delete(m.linked_document_id);
+        // The merged documents no longer exist on their own - drop them so
+        // the picker doesn't offer them again this session.
+        if (documents) {
+          for (let i = documents.length - 1; i >= 0; i--) {
+            if (ids.includes(documents[i].id) && documents[i].id !== m.linked_document_id) documents.splice(i, 1);
+          }
+        }
+        cacheMarkup(projectId, m).catch(() => {});
+        showToast(`Added ${ids.length} photo${ids.length === 1 ? '' : 's'} to this pin.`, 'success');
+        renderAll();
+      },
     });
   }
 
@@ -1064,6 +1110,63 @@ export function initMarkups({
           `<p class="markup-popup-photo-status">${navigator.onLine ? 'Could not load photos.' : 'Offline - already-uploaded photos not shown.'}</p>`
         );
       });
+  }
+
+  // Drag the popup's bottom-right corner to make the photo grid bigger
+  // (mouse or finger). The size is remembered per device for every pin.
+  const PHOTO_POPUP_SIZE_KEY = 'hammgrid-photo-popup-size';
+
+  function applySavedGallerySize(gallery) {
+    let size = null;
+    try {
+      size = JSON.parse(localStorage.getItem(PHOTO_POPUP_SIZE_KEY) || 'null');
+    } catch (e) {
+      size = null;
+    }
+    if (!size) return;
+    gallery.style.width = `${Math.min(size.w, window.innerWidth - 40)}px`;
+    gallery.style.height = `${Math.min(size.h, window.innerHeight * 0.85)}px`;
+    gallery.style.maxHeight = 'none';
+  }
+
+  function addGalleryResizeHandle(gallery) {
+    const handle = document.createElement('div');
+    handle.className = 'markup-popup-resize';
+    handle.title = 'Drag to resize';
+    popupEl.appendChild(handle);
+    let drag = null;
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      handle.setPointerCapture(e.pointerId);
+      drag = { x: e.clientX, y: e.clientY, w: gallery.offsetWidth, h: gallery.offsetHeight };
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      e.preventDefault();
+      // The popup is centered on the pin (translateX(-50%)), so it grows
+      // on both sides - twice the drag distance keeps the corner under
+      // the finger.
+      const w = Math.max(240, Math.min(window.innerWidth - 40, drag.w + (e.clientX - drag.x) * 2));
+      const h = Math.max(150, Math.min(window.innerHeight * 0.85, drag.h + (e.clientY - drag.y)));
+      gallery.style.width = `${w}px`;
+      gallery.style.height = `${h}px`;
+      gallery.style.maxHeight = 'none';
+    });
+    const end = (e) => {
+      if (!drag) return;
+      drag = null;
+      try {
+        localStorage.setItem(PHOTO_POPUP_SIZE_KEY, JSON.stringify({ w: gallery.offsetWidth, h: gallery.offsetHeight }));
+      } catch (err) {
+        // Per-device convenience only.
+      }
+      positionPopup(false);
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+    // Keep the drag from reaching the sheet's pan/deselect handlers.
+    ['click', 'touchstart', 'mousedown'].forEach((type) => handle.addEventListener(type, (e) => e.stopPropagation()));
   }
 
   function formatSqliteDate(s) {
@@ -1254,6 +1357,10 @@ export function initMarkups({
   }
 
   function openLinkPicker(m) {
+    if (m.type === 'photo') {
+      openPhotoPinPicker(m);
+      return;
+    }
     openDocPicker({
       documents: documents || [],
       folders: folders || [],
