@@ -159,4 +159,5 @@ const httpsOptions = {
 // to a different host/IP.
 https.createServer(httpsOptions, app).listen(config.port, () => {
   console.log(`Drawing app server listening on https://10.0.30.50:${config.port}`);
+  require('./lib/documentThumbs').backfillThumbs();
 });

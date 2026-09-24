@@ -12,20 +12,29 @@
       <main class="wide">
         <div class="row" style="justify-content: space-between; margin-bottom: 14px;">
           <div class="doc-breadcrumb" id="breadcrumb"></div>
+          <div class="row">
+          <div class="segmented" role="group" aria-label="View">
+            <button id="view-list-btn" type="button" title="List view">&#9776; List</button>
+            <button id="view-grid-btn" type="button" title="Thumbnail view">&#9638; Thumbnails</button>
+          </div>
           <div class="row" id="doc-actions" style="display:none;">
+            <button id="select-all-btn" type="button" style="display:none;">Select all</button>
+            <button id="move-btn" type="button" style="display:none;" disabled>Move</button>
             <button id="edit-mode-btn" type="button">Edit</button>
             <button id="new-folder-btn" type="button">+ Folder</button>
             <button class="primary" id="upload-btn" type="button">+ Upload</button>
+          </div>
           </div>
         </div>
 
         <div class="card doc-dropzone" id="doc-dropzone">
           <table id="doc-table">
             <thead>
-              <tr><th></th><th id="doc-project-col" style="display:none;">Project</th><th>Name</th><th>Revision</th><th>Issued</th><th>Uploaded</th><th>Links</th><th></th></tr>
+              <tr><th id="doc-select-col" style="display:none;"></th><th></th><th id="doc-project-col" style="display:none;">Project</th><th>Name</th><th>Revision</th><th>Issued</th><th>Uploaded</th><th>Links</th><th></th></tr>
             </thead>
             <tbody></tbody>
           </table>
+          <div class="doc-grid" id="doc-grid" style="display:none;"></div>
           <p class="muted" id="empty-msg" style="display:none; padding: 8px;">This folder is empty. Drag &amp; drop PDFs anywhere in this area to upload.</p>
           <div class="doc-dropzone-hint" id="doc-dropzone-hint">Drop PDFs here to upload</div>
         </div>

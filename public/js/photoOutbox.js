@@ -118,6 +118,12 @@ export async function deleteQueuedMarkup(entryId) {
   }
 }
 
+// A single photo taken on a pin but not uploaded yet - removed from the
+// device (the popup's edit-mode delete button).
+export async function deleteQueuedPhoto(entryId) {
+  await deleteOutboxPhoto(entryId);
+}
+
 // Network failure (Safari's "Load failed", Chrome's "Failed to fetch") has
 // no HTTP status at all; 5xx / 401 (session lapsed while offline) / 408 /
 // 429 are also "try again later", not "this entry is bad".

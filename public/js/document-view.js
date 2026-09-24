@@ -214,6 +214,26 @@ async function setupGalleryNav(doc) {
   }
 }
 
+// A photo pin's photos are all versions of one document (see markups.js's
+// photo gallery, which links here with ?versionId=) - cycles through them
+// newest-first, same order as the pin's popup. location.replace keeps this
+// tab's history at one entry so its Back button (window.close) still works.
+function setupPinPhotoNav(doc, versions) {
+  const idx = versions.findIndex((v) => String(v.id) === versionId);
+  if (idx === -1 || versions.length < 2) return;
+  document.getElementById('gallery-nav-badge').style.display = '';
+  document.getElementById('doc-gallery-label').textContent = `Photo ${idx + 1} / ${versions.length}`;
+  const prevBtn = document.getElementById('doc-gallery-prev-btn');
+  const nextBtn = document.getElementById('doc-gallery-next-btn');
+  prevBtn.disabled = idx <= 0;
+  nextBtn.disabled = idx >= versions.length - 1;
+  const go = (v) => window.location.replace(`/document-view.html?documentId=${doc.id}&versionId=${v.id}`);
+  prevBtn.addEventListener('click', () => idx > 0 && go(versions[idx - 1]));
+  nextBtn.addEventListener('click', () => idx < versions.length - 1 && go(versions[idx + 1]));
+}
+
+const IMAGE_PATH = /\.(jpe?g|png|webp|gif)$/i;
+
 function updatePageNavBadge() {
   const badge = document.getElementById('page-nav-badge');
   const scrubber = document.getElementById('page-scrubber');
@@ -407,9 +427,10 @@ async function renderPdf() {
   // (not-yet-published) sheets have no offline cache at all, and only the
   // CURRENT version's file is ever cached (same delta-sync scope sheets
   // already use), not arbitrary historical ?versionId= ones.
-  if (!shareToken && !stagedSheetId && !versionId) {
+  if (!shareToken && !stagedSheetId) {
     const doc = await getCachedDocumentById(documentId);
-    const blob = doc && doc.current_version_id ? await getCachedDocumentAsset(doc.current_version_id) : null;
+    const cachedCurrent = doc && doc.current_version_id && (!versionId || String(doc.current_version_id) === versionId);
+    const blob = cachedCurrent ? await getCachedDocumentAsset(doc.current_version_id) : null;
     if (blob && (await renderFromUrl(URL.createObjectURL(blob)))) return;
   }
   statusEl.textContent = navigator.onLine
@@ -675,8 +696,17 @@ document.getElementById('download-doc-btn').addEventListener('click', () => {
         const shownVersion = versionId ? versions.find((v) => String(v.id) === versionId) : versions[0];
         const revisionLabel = shownVersion && shownVersion.revision_name ? shownVersion.revision_name : 'Original';
         const issueDate = shownVersion && shownVersion.issue_date ? ` (${shownVersion.issue_date})` : '';
-        const staleNote = versionId && versions[0] && String(versions[0].id) !== versionId ? ' — not the current version' : '';
-        document.getElementById('doc-label').textContent = `${doc.name} — ${revisionLabel}${issueDate}${staleNote}`;
+        const isPhotoSet = versions.length > 0 && versions.every((v) => IMAGE_PATH.test(v.pdf_path || ''));
+        if (isPhotoSet && versionId) {
+          // A photo pin's photo - every "version" is just another photo, so
+          // revision wording doesn't apply.
+          const taken = shownVersion ? new Date(shownVersion.created_at.replace(' ', 'T') + 'Z').toLocaleString() : '';
+          document.getElementById('doc-label').textContent = `${doc.name}${taken ? ` — taken ${taken}` : ''}`;
+          setupPinPhotoNav(doc, versions);
+        } else {
+          const staleNote = versionId && versions[0] && String(versions[0].id) !== versionId ? ' — not the current version' : '';
+          document.getElementById('doc-label').textContent = `${doc.name} — ${revisionLabel}${issueDate}${staleNote}`;
+        }
         // Only for the plain "current version" view - navigating to a sibling
         // photo would otherwise ditch the "specific historical version"
         // context of a ?versionId= link in a confusing way.
