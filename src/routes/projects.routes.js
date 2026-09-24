@@ -4,6 +4,7 @@ const path = require('path');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { removeThumb } = require('../lib/documentThumbs');
 
 const router = express.Router();
 
@@ -171,6 +172,7 @@ router.delete('/:id', requireRole('admin'), (req, res) => {
   }
   for (const docPath of documentPaths) {
     fs.rm(docPath, { force: true }, () => {});
+    removeThumb(docPath);
   }
 
   res.json({ ok: true });

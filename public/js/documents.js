@@ -11,6 +11,9 @@ const TRASH_ICON =
 const GENERIC_FILE_ICON_SVG =
   '<svg viewBox="0 0 20 20" class="doc-icon"><path d="M5 2h7l4 4v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M12 2v4h4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
 
+const FOLDER_ICON_SVG =
+  '<svg viewBox="0 0 20 20" class="doc-icon"><path d="M2 5a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5z" fill="currentColor"/></svg>';
+
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
 // "View Multiple" (see dashboard.js) - a comma-separated set of project ids
@@ -131,25 +134,305 @@ function renderBreadcrumb() {
       e.preventDefault();
       setFolder(a.dataset.folder ? Number(a.dataset.folder) : null, true);
     });
+    makeMoveDropTarget(a, a.dataset.folder ? Number(a.dataset.folder) : null);
   });
 }
 
-function renderTable() {
+function canManage() {
   // Combined mode is view-only regardless of role - see the top-of-file note.
-  const canManage = !combinedMode && (currentUser.role === 'admin' || currentUser.role === 'editor');
-  const tbody = document.querySelector('#doc-table tbody');
-  tbody.innerHTML = '';
+  return !combinedMode && (currentUser.role === 'admin' || currentUser.role === 'editor');
+}
 
-  // Folders are a per-project tree that can't meaningfully merge across
-  // several projects, so combined mode skips them entirely and shows every
-  // document flat, sorted by project then name (see loadAll).
+// Folders are a per-project tree that can't meaningfully merge across
+// several projects, so combined mode skips them entirely and shows every
+// document flat, sorted by project then name (see loadAll).
+function currentChildren() {
   const childFolders = combinedMode
     ? []
     : folders.filter((f) => (f.parent_folder_id || null) === currentFolderId).sort((a, b) => a.name.localeCompare(b.name));
   const childDocs = combinedMode
     ? documents.slice().sort((a, b) => (a.project_name || '').localeCompare(b.project_name || '') || a.name.localeCompare(b.name))
     : documents.filter((d) => (d.folder_id || null) === currentFolderId).sort((a, b) => a.name.localeCompare(b.name));
+  return { childFolders, childDocs };
+}
 
+// Pre-generated small JPEG (see src/lib/documentThumbs.js), not the full
+// photo - a folder of phone photos would otherwise download every one at
+// full size just to browse. ?v= busts the browser cache when a new
+// revision replaces the file.
+function thumbUrl(d) {
+  return `/api/documents/${d.id}/thumb?v=${d.current_version_id || ''}`;
+}
+
+// Live URL fails offline - try the cached blob (see offline-store.js's
+// cacheDocuments/getCachedDocumentAsset) before giving up to the plain
+// file-icon placeholder every other (non-image) document already shows.
+function wireThumbFallback(img, d) {
+  img.addEventListener('error', async () => {
+    const blob = d.current_version_id ? await getCachedDocumentAsset(d.current_version_id) : null;
+    if (blob) {
+      img.src = URL.createObjectURL(blob);
+      return;
+    }
+    img.outerHTML = GENERIC_FILE_ICON_SVG;
+  });
+}
+
+async function deleteFolder(f) {
+  const { linked_markup_count } = await api('GET', `/api/document-folders/${f.id}/links`);
+  const warning =
+    linked_markup_count > 0
+      ? ` ${linked_markup_count} markup(s) on drawings link to documents inside it - those links will be removed too.`
+      : '';
+  const ok = await confirmModal({
+    title: `Delete folder "${f.name}"?`,
+    message: `Everything inside it will be deleted too. This cannot be undone.${warning}`,
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  await api('DELETE', `/api/document-folders/${f.id}`);
+  selected.delete(`f:${f.id}`);
+  showToast(`Folder "${f.name}" deleted.`, 'success');
+  await loadAll();
+  render();
+}
+
+async function deleteDocument(d) {
+  const warning =
+    d.linked_sheet_count > 0 ? ` It's linked from markups on ${d.linked_sheet_count} sheet(s) - those links will be removed too.` : '';
+  const ok = await confirmModal({
+    title: `Delete "${d.name}"?`,
+    message: `All its revisions will be deleted too. This cannot be undone.${warning}`,
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+  await api('DELETE', `/api/documents/${d.id}`);
+  selected.delete(`d:${d.id}`);
+  showToast(`"${d.name}" deleted.`, 'success');
+  await loadAll();
+  render();
+}
+
+// ---------- Selection (edit mode) + move ----------
+// Keys are 'd:<id>' for documents and 'f:<id>' for folders, so one Set can
+// hold a mixed selection.
+const selected = new Set();
+
+function selectCheckboxHtml(key) {
+  return `<input type="checkbox" class="doc-select" data-key="${key}" ${selected.has(key) ? 'checked' : ''} title="Select">`;
+}
+
+function wireSelectCheckbox(el) {
+  const box = el.querySelector('.doc-select');
+  if (!box) return;
+  box.addEventListener('click', (e) => e.stopPropagation());
+  box.addEventListener('change', () => {
+    if (box.checked) selected.add(box.dataset.key);
+    else selected.delete(box.dataset.key);
+    el.classList.toggle('doc-selected', box.checked);
+    updateSelectionUi();
+  });
+}
+
+function childKeys() {
+  const { childFolders, childDocs } = currentChildren();
+  return [...childFolders.map((f) => `f:${f.id}`), ...childDocs.map((d) => `d:${d.id}`)];
+}
+
+function updateSelectionUi() {
+  const moveBtn = document.getElementById('move-btn');
+  const selectAll = document.getElementById('select-all-btn');
+  moveBtn.style.display = editMode ? '' : 'none';
+  selectAll.style.display = editMode ? '' : 'none';
+  moveBtn.disabled = selected.size === 0;
+  moveBtn.textContent = selected.size ? `Move (${selected.size})` : 'Move';
+  const keys = childKeys();
+  selectAll.textContent = keys.length > 0 && keys.every((k) => selected.has(k)) ? 'Select none' : 'Select all';
+}
+
+function toggleSelectAll() {
+  const keys = childKeys();
+  const allSelected = keys.every((k) => selected.has(k));
+  for (const k of keys) {
+    if (allSelected) selected.delete(k);
+    else selected.add(k);
+  }
+  renderItems();
+}
+
+// Every folder id at or under any of the given folders - a folder can't be
+// moved into itself or its own subtree (the server refuses that too).
+function folderSubtreeIds(rootIds) {
+  const out = new Set(rootIds);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const f of folders) {
+      if (f.parent_folder_id && out.has(f.parent_folder_id) && !out.has(f.id)) {
+        out.add(f.id);
+        grew = true;
+      }
+    }
+  }
+  return out;
+}
+
+async function moveItems(keys, targetFolderId) {
+  const blocked = folderSubtreeIds(keys.filter((k) => k.startsWith('f:')).map((k) => Number(k.slice(2))));
+  if (targetFolderId && blocked.has(targetFolderId)) {
+    showToast("A folder can't be moved into itself or one of its own subfolders.", 'error');
+    return;
+  }
+  let moved = 0;
+  let failed = 0;
+  for (const key of keys) {
+    const id = Number(key.slice(2));
+    const isFolder = key.startsWith('f:');
+    const item = isFolder ? folders.find((f) => f.id === id) : documents.find((d) => d.id === id);
+    if (!item) continue;
+    const currentParent = (isFolder ? item.parent_folder_id : item.folder_id) || null;
+    if (currentParent === (targetFolderId || null)) continue;
+    try {
+      if (isFolder) await api('PATCH', `/api/document-folders/${id}`, { parent_folder_id: targetFolderId || null });
+      else await api('PATCH', `/api/documents/${id}`, { folder_id: targetFolderId || null });
+      moved += 1;
+    } catch (err) {
+      failed += 1;
+    }
+  }
+  const target = targetFolderId ? folders.find((f) => f.id === targetFolderId) : null;
+  const where = target ? `"${target.name}"` : 'Documents (top level)';
+  if (failed) showToast(`Moved ${moved}, ${failed} failed${navigator.onLine ? '' : ' - moving needs a connection'}.`, 'error');
+  else if (moved) showToast(`Moved ${moved} item${moved === 1 ? '' : 's'} to ${where}.`, 'success');
+  for (const key of keys) selected.delete(key);
+  await loadAll();
+  render();
+}
+
+// Folder browser for "Move to..." - same breadcrumb + subfolder-list shape
+// as the photo pin's folder picker (markups.js pickPhotoFolder).
+function openMoveModal() {
+  const keys = [...selected];
+  if (!keys.length) return;
+  const blocked = folderSubtreeIds(keys.filter((k) => k.startsWith('f:')).map((k) => Number(k.slice(2))));
+  let browseId = currentFolderId && !blocked.has(currentFolderId) ? currentFolderId : null;
+  const backdrop = openModal(`
+    <h2>Move ${keys.length} item${keys.length === 1 ? '' : 's'} to...</h2>
+    <div id="move-folder-body"></div>
+    <div class="modal-actions">
+      <button type="button" id="move-cancel">Cancel</button>
+      <button class="primary" type="button" id="move-here">Move here</button>
+    </div>
+  `);
+  const body = backdrop.querySelector('#move-folder-body');
+  backdrop.querySelector('#move-cancel').addEventListener('click', closeModal);
+  backdrop.querySelector('#move-here').addEventListener('click', async () => {
+    closeModal();
+    await moveItems(keys, browseId);
+  });
+
+  function renderPicker() {
+    const path = [];
+    let f = browseId;
+    while (f) {
+      const folder = folders.find((x) => x.id === f);
+      if (!folder) break;
+      path.unshift(folder);
+      f = folder.parent_folder_id;
+    }
+    const children = folders
+      .filter((x) => (x.parent_folder_id || null) === browseId && !blocked.has(x.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const breadcrumb =
+      `<span class="doc-picker-crumb" data-folder="">Documents</span>` +
+      path.map((p) => ` / <span class="doc-picker-crumb" data-folder="${p.id}">${escapeHtml(p.name)}</span>`).join('');
+    const rows =
+      children
+        .map((fld) => `<div class="doc-picker-row folder" data-folder="${fld.id}">${FOLDER_ICON_SVG}<span>${escapeHtml(fld.name)}</span></div>`)
+        .join('') || '<p class="muted" style="padding:8px 4px;">No subfolders here.</p>';
+    body.innerHTML = `<div class="doc-picker-breadcrumb">${breadcrumb}</div><div class="doc-picker-list">${rows}</div>`;
+    body.querySelectorAll('.doc-picker-crumb').forEach((el) => {
+      el.addEventListener('click', () => {
+        browseId = el.dataset.folder ? Number(el.dataset.folder) : null;
+        renderPicker();
+      });
+    });
+    body.querySelectorAll('.doc-picker-row.folder').forEach((el) => {
+      el.addEventListener('click', () => {
+        browseId = Number(el.dataset.folder);
+        renderPicker();
+      });
+    });
+  }
+  renderPicker();
+}
+
+// Drag a document/folder onto a folder (or a breadcrumb link) to move it -
+// mouse only; on iPad the checkboxes + Move button do the same job. A
+// custom MIME type keeps this separate from the file-upload drop handling
+// in setupDragAndDrop (which only reacts to real 'Files' drags).
+const MOVE_DRAG_TYPE = 'application/x-hammgrid-doc-keys';
+const finePointer = window.matchMedia && window.matchMedia('(pointer: fine)').matches;
+
+function makeDraggable(el, key) {
+  if (!canManage() || !finePointer) return;
+  el.draggable = true;
+  el.addEventListener('dragstart', (e) => {
+    const keys = selected.has(key) ? [...selected] : [key];
+    e.dataTransfer.setData(MOVE_DRAG_TYPE, JSON.stringify(keys));
+    e.dataTransfer.effectAllowed = 'move';
+  });
+}
+
+function makeMoveDropTarget(el, folderId) {
+  if (!canManage()) return;
+  const isMoveDrag = (e) => Array.from(e.dataTransfer.types || []).includes(MOVE_DRAG_TYPE);
+  el.addEventListener('dragover', (e) => {
+    if (!isMoveDrag(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    el.classList.add('drag-target-folder');
+  });
+  el.addEventListener('dragleave', () => el.classList.remove('drag-target-folder'));
+  el.addEventListener('drop', async (e) => {
+    if (!isMoveDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    el.classList.remove('drag-target-folder');
+    const keys = JSON.parse(e.dataTransfer.getData(MOVE_DRAG_TYPE) || '[]').filter((k) => k !== `f:${folderId}`);
+    if (keys.length) await moveItems(keys, folderId);
+  });
+}
+
+// ---------- List / thumbnail views ----------
+const VIEW_MODE_KEY = 'hammgrid-doc-view-mode';
+let viewMode = (() => {
+  try {
+    return localStorage.getItem(VIEW_MODE_KEY) === 'grid' ? 'grid' : 'list';
+  } catch (e) {
+    return 'list';
+  }
+})();
+
+function setViewMode(mode) {
+  viewMode = mode;
+  try {
+    localStorage.setItem(VIEW_MODE_KEY, mode);
+  } catch (e) {
+    // Per-viewer convenience only.
+  }
+  renderItems();
+}
+
+function renderItems() {
+  document.getElementById('view-list-btn').classList.toggle('active', viewMode === 'list');
+  document.getElementById('view-grid-btn').classList.toggle('active', viewMode === 'grid');
+  document.getElementById('doc-table').style.display = viewMode === 'list' ? '' : 'none';
+  document.getElementById('doc-grid').style.display = viewMode === 'grid' ? '' : 'none';
+
+  const { childFolders, childDocs } = currentChildren();
   const emptyMsg = document.getElementById('empty-msg');
   const isEmpty = childFolders.length === 0 && childDocs.length === 0;
   emptyMsg.style.display = isEmpty ? '' : 'none';
@@ -163,54 +446,51 @@ function renderTable() {
       : 'This folder is empty. Drag & drop PDFs anywhere in this area to upload.';
   }
 
+  if (viewMode === 'grid') renderGrid(childFolders, childDocs);
+  else renderTable(childFolders, childDocs);
+  updateSelectionUi();
+}
+
+function renderTable(childFolders, childDocs) {
+  const manage = canManage();
+  const selecting = manage && editMode;
+  document.getElementById('doc-select-col').style.display = selecting ? '' : 'none';
+  const tbody = document.querySelector('#doc-table tbody');
+  tbody.innerHTML = '';
+
   for (const f of childFolders) {
+    const key = `f:${f.id}`;
     const tr = document.createElement('tr');
-    tr.className = 'doc-row-folder';
+    tr.className = 'doc-row-folder' + (selected.has(key) ? ' doc-selected' : '');
     tr.dataset.folderId = f.id;
     tr.innerHTML = `
-      <td><svg viewBox="0 0 20 20" class="doc-icon"><path d="M2 5a1 1 0 0 1 1-1h4l2 2h8a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5z" fill="currentColor"/></svg></td>
+      ${selecting ? `<td>${selectCheckboxHtml(key)}</td>` : ''}
+      <td>${FOLDER_ICON_SVG}</td>
       <td class="doc-row-name"><a href="#" class="folder-link">${escapeHtml(f.name)}</a></td>
       <td></td><td></td><td></td><td></td>
-      <td>${canManage && editMode ? `<button class="row-delete-icon-btn folder-delete" title="Delete folder">${TRASH_ICON}</button>` : ''}</td>
+      <td>${selecting ? `<button class="row-delete-icon-btn folder-delete" title="Delete folder">${TRASH_ICON}</button>` : ''}</td>
     `;
     tr.querySelector('.folder-link').addEventListener('click', (e) => {
       e.preventDefault();
       setFolder(f.id, true);
     });
     const delBtn = tr.querySelector('.folder-delete');
-    if (delBtn) {
-      delBtn.addEventListener('click', async () => {
-        const { linked_markup_count } = await api('GET', `/api/document-folders/${f.id}/links`);
-        const warning =
-          linked_markup_count > 0
-            ? ` ${linked_markup_count} markup(s) on drawings link to documents inside it - those links will be removed too.`
-            : '';
-        const ok = await confirmModal({
-          title: `Delete folder "${f.name}"?`,
-          message: `Everything inside it will be deleted too. This cannot be undone.${warning}`,
-          confirmLabel: 'Delete',
-          danger: true,
-        });
-        if (!ok) return;
-        await api('DELETE', `/api/document-folders/${f.id}`);
-        showToast(`Folder "${f.name}" deleted.`, 'success');
-        await loadAll();
-        render();
-      });
-    }
+    if (delBtn) delBtn.addEventListener('click', () => deleteFolder(f));
+    wireSelectCheckbox(tr);
+    makeDraggable(tr, key);
+    makeMoveDropTarget(tr, f.id);
     tbody.appendChild(tr);
   }
 
   for (const d of childDocs) {
+    const key = `d:${d.id}`;
     const tr = document.createElement('tr');
-    // A photo gets a real (downscaled-by-CSS) thumbnail instead of the
-    // generic file icon - the full image is small enough at this document
-    // count that a separate thumbnail-generation pipeline isn't worth it,
-    // same URL the viewer itself uses.
-    const icon = d.is_image
-      ? `<img class="doc-icon doc-thumb" src="/api/documents/${d.id}/pdf" alt="" loading="lazy">`
-      : GENERIC_FILE_ICON_SVG;
+    if (selected.has(key)) tr.className = 'doc-selected';
+    // A photo gets a real (small, pre-generated) thumbnail instead of the
+    // generic file icon.
+    const icon = d.is_image ? `<img class="doc-icon doc-thumb" src="${thumbUrl(d)}" alt="" loading="lazy">` : GENERIC_FILE_ICON_SVG;
     tr.innerHTML = `
+      ${selecting ? `<td>${selectCheckboxHtml(key)}</td>` : ''}
       <td>${icon}</td>
       ${combinedMode ? `<td>${escapeHtml(d.project_name || '')}</td>` : ''}
       <td class="doc-row-name"><a href="/document-view.html?documentId=${d.id}" target="_blank">${escapeHtml(d.name)}</a></td>
@@ -220,8 +500,8 @@ function renderTable() {
       <td>${d.linked_sheet_count > 0 ? `<button class="link-btn">${d.linked_sheet_count} sheet${d.linked_sheet_count === 1 ? '' : 's'}</button>` : '<span class="muted">—</span>'}</td>
       <td class="row" style="gap:6px; flex-wrap:nowrap;">
         <button class="versions-btn">Versions</button>
-        ${canManage ? '<button class="issue-rev-btn">Issue revision</button>' : ''}
-        ${canManage && editMode ? `<button class="row-delete-icon-btn doc-delete-btn" title="Delete document">${TRASH_ICON}</button>` : ''}
+        ${manage ? '<button class="issue-rev-btn">Issue revision</button>' : ''}
+        ${selecting ? `<button class="row-delete-icon-btn doc-delete-btn" title="Delete document">${TRASH_ICON}</button>` : ''}
       </td>
     `;
     tr.querySelector('.versions-btn').addEventListener('click', () => openVersionsModal(d));
@@ -230,40 +510,64 @@ function renderTable() {
     const issueBtn = tr.querySelector('.issue-rev-btn');
     if (issueBtn) issueBtn.addEventListener('click', () => openIssueRevisionModal(d));
     const delBtn = tr.querySelector('.doc-delete-btn');
-    if (delBtn) {
-      delBtn.addEventListener('click', async () => {
-        const warning =
-          d.linked_sheet_count > 0
-            ? ` It's linked from markups on ${d.linked_sheet_count} sheet(s) - those links will be removed too.`
-            : '';
-        const ok = await confirmModal({
-          title: `Delete "${d.name}"?`,
-          message: `All its revisions will be deleted too. This cannot be undone.${warning}`,
-          confirmLabel: 'Delete',
-          danger: true,
-        });
-        if (!ok) return;
-        await api('DELETE', `/api/documents/${d.id}`);
-        showToast(`"${d.name}" deleted.`, 'success');
-        await loadAll();
-        render();
-      });
-    }
-    // Live URL fails offline - try the cached blob (see offline-store.js's
-    // cacheDocuments/getCachedDocumentAsset) before giving up to the plain
-    // file-icon placeholder every other (non-image) document already shows.
+    if (delBtn) delBtn.addEventListener('click', () => deleteDocument(d));
     const thumbImg = tr.querySelector('.doc-thumb');
-    if (thumbImg) {
-      thumbImg.addEventListener('error', async () => {
-        const blob = d.current_version_id ? await getCachedDocumentAsset(d.current_version_id) : null;
-        if (blob) {
-          thumbImg.src = URL.createObjectURL(blob);
-          return;
-        }
-        thumbImg.outerHTML = GENERIC_FILE_ICON_SVG;
-      });
-    }
+    if (thumbImg) wireThumbFallback(thumbImg, d);
+    wireSelectCheckbox(tr);
+    makeDraggable(tr, key);
     tbody.appendChild(tr);
+  }
+}
+
+// Large-thumbnail view - mostly for photo folders, where the list's 32px
+// thumbnail isn't enough to tell photos apart. Row-level actions (versions,
+// issue revision, links) stay in the list view.
+function renderGrid(childFolders, childDocs) {
+  const selecting = canManage() && editMode;
+  const grid = document.getElementById('doc-grid');
+  grid.innerHTML = '';
+
+  for (const f of childFolders) {
+    const key = `f:${f.id}`;
+    const card = document.createElement('div');
+    card.className = 'doc-card doc-card-folder' + (selected.has(key) ? ' doc-selected' : '');
+    card.innerHTML = `
+      <a href="#" class="doc-card-thumb">${FOLDER_ICON_SVG}</a>
+      <div class="doc-card-name" title="${escapeHtml(f.name)}">${escapeHtml(f.name)}</div>
+      ${selecting ? `<label class="doc-card-check">${selectCheckboxHtml(key)}</label>` : ''}
+      ${selecting ? `<button class="row-delete-icon-btn doc-card-delete" title="Delete folder">${TRASH_ICON}</button>` : ''}
+    `;
+    card.querySelector('.doc-card-thumb').addEventListener('click', (e) => {
+      e.preventDefault();
+      setFolder(f.id, true);
+    });
+    const delBtn = card.querySelector('.doc-card-delete');
+    if (delBtn) delBtn.addEventListener('click', () => deleteFolder(f));
+    wireSelectCheckbox(card);
+    makeDraggable(card, key);
+    makeMoveDropTarget(card, f.id);
+    grid.appendChild(card);
+  }
+
+  for (const d of childDocs) {
+    const key = `d:${d.id}`;
+    const card = document.createElement('div');
+    card.className = 'doc-card' + (selected.has(key) ? ' doc-selected' : '');
+    const media = d.is_image ? `<img class="doc-card-img" src="${thumbUrl(d)}" alt="" loading="lazy">` : GENERIC_FILE_ICON_SVG;
+    card.innerHTML = `
+      <a href="/document-view.html?documentId=${d.id}" target="_blank" class="doc-card-thumb">${media}</a>
+      <div class="doc-card-name" title="${escapeHtml(d.name)}">${escapeHtml(d.name)}</div>
+      ${combinedMode ? `<div class="doc-card-sub">${escapeHtml(d.project_name || '')}</div>` : ''}
+      ${selecting ? `<label class="doc-card-check">${selectCheckboxHtml(key)}</label>` : ''}
+      ${selecting ? `<button class="row-delete-icon-btn doc-card-delete" title="Delete document">${TRASH_ICON}</button>` : ''}
+    `;
+    const img = card.querySelector('.doc-card-img');
+    if (img) wireThumbFallback(img, d);
+    const delBtn = card.querySelector('.doc-card-delete');
+    if (delBtn) delBtn.addEventListener('click', () => deleteDocument(d));
+    wireSelectCheckbox(card);
+    makeDraggable(card, key);
+    grid.appendChild(card);
   }
 }
 
@@ -482,17 +786,22 @@ function openUploadModal() {
 
 function render() {
   renderBreadcrumb();
-  renderTable();
+  renderItems();
 }
 
 document.getElementById('new-folder-btn').addEventListener('click', openNewFolderModal);
 document.getElementById('upload-btn').addEventListener('click', openUploadModal);
 document.getElementById('edit-mode-btn').addEventListener('click', () => {
   editMode = !editMode;
+  if (!editMode) selected.clear();
   document.getElementById('edit-mode-btn').textContent = editMode ? 'Done' : 'Edit';
   document.getElementById('edit-mode-btn').classList.toggle('primary', editMode);
-  renderTable();
+  renderItems();
 });
+document.getElementById('move-btn').addEventListener('click', openMoveModal);
+document.getElementById('select-all-btn').addEventListener('click', toggleSelectAll);
+document.getElementById('view-list-btn').addEventListener('click', () => setViewMode('list'));
+document.getElementById('view-grid-btn').addEventListener('click', () => setViewMode('grid'));
 
 // ---------- Drag-and-drop upload: drop anywhere in the folder view to
 // upload into the current folder, or drop directly onto a folder row to

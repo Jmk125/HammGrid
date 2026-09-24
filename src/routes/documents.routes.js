@@ -9,6 +9,7 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { toPortablePath } = require('../lib/paths');
 const { ALLOWED_DOCUMENT_EXTENSIONS, extOf, isImagePath } = require('../lib/documentFileTypes');
 const { resolveUploadedFile } = require('../lib/documentUpload');
+const { ensureThumb } = require('../lib/documentThumbs');
 
 const router = express.Router({ mergeParams: true });
 
@@ -118,6 +119,7 @@ router.post('/', requireRole('admin', 'editor'), upload.single('file'), async (r
   });
 
   const document = db.prepare('SELECT * FROM documents WHERE id = ?').get(insertTxn());
+  ensureThumb(filePath);
   res.status(201).json({ document });
 });
 
@@ -149,6 +151,7 @@ router.post('/:id/versions', requireRole('admin', 'editor'), upload.single('file
     )
     .run(document.id, revision_name || null, issue_date || null, toPortablePath(filePath), req.session.user.id);
   db.prepare('UPDATE documents SET current_version_id = ? WHERE id = ?').run(versionResult.lastInsertRowid, document.id);
+  ensureThumb(filePath);
 
   const updated = db.prepare('SELECT * FROM documents WHERE id = ?').get(document.id);
   res.status(201).json({ document: updated });

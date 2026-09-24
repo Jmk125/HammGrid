@@ -320,6 +320,21 @@ export async function getCachedDocumentFolders(projectId) {
   return all.filter((r) => r.project_id === Number(projectId));
 }
 
+// The Flags page's list (sheet AND document flags, with sheet number /
+// document name / author already resolved server-side) - kept as one meta
+// row per project, replaced whole on every successful fetch, since that
+// list is exactly what the page renders and is small.
+export async function cacheFlags(projectId, flags) {
+  const db = await openDb();
+  await putMeta(db, `flags:${projectId}`, flags);
+}
+
+export async function getCachedFlags(projectId) {
+  const db = await openDb();
+  const row = await idbGet(db, 'meta', `flags:${projectId}`);
+  return row ? row.value : null;
+}
+
 export async function ensureProjectCacheFresh(projectId, project = {}) {
   if (!project.created_at) return;
   const db = await openDb();
@@ -447,6 +462,15 @@ export async function syncProject(projectId, { onProgress } = {}) {
       // successfully is the part that must not be undermined by this.
     }
 
+    // Flags list - best-effort like the take-offs above, so the Flags page
+    // has something to show offline (see flags.js).
+    try {
+      const flagsRes = await fetch(`/api/projects/${projectId}/flags`, { credentials: 'same-origin' });
+      if (flagsRes.ok) await cacheFlags(projectId, (await flagsRes.json()).flags);
+    } catch (err) {
+      // Flags caching is best-effort.
+    }
+
     // Documents (RFI/submittal/photo library) - same "best-effort, isolated
     // failure" treatment as take-offs above, though these endpoints don't
     // 403 for anyone with requireAuth - isolating this is still right in
@@ -547,6 +571,7 @@ export async function deleteCachedProject(projectId) {
     idbDelete(db, 'meta', `sync-cursor:${projectId}`),
     idbDelete(db, 'meta', `sync-state:${projectId}`),
     idbDelete(db, 'meta', `project-created-at:${projectId}`),
+    idbDelete(db, 'meta', `flags:${projectId}`),
   ]);
 }
 

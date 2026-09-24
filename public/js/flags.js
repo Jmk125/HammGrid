@@ -1,4 +1,5 @@
 import { renderShell, confirmModal, showToast } from '/js/shell.js';
+import { cacheFlags, getCachedFlags, getCachedProjectList, getCachedSheets, getOutboxPhotos } from '/js/offline-store.js';
 
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
@@ -15,6 +16,7 @@ let searchTerm = '';
 let tagFilter = '';
 let sortState = { column: 'location', dir: 'asc' };
 let editingFlagId = null; // id of the flag row currently in edit mode, or null
+let loadedOffline = false;
 
 function escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -64,11 +66,64 @@ function populateTagFilter() {
   tagFilter = select.value;
 }
 
+// Flags placed while offline live only in the photo outbox until they
+// upload (see photoOutbox.js) - shown here too, so a flag written at the
+// meeting is on the list right away, not only after reconnecting.
+async function queuedFlags(pid) {
+  const entries = (await getOutboxPhotos()).filter(
+    (e) => e.kind === 'markup' && !e.createdMarkup && e.projectId === Number(pid) && e.markup && e.markup.type === 'flag'
+  );
+  if (!entries.length) return [];
+  const sheets = await getCachedSheets(pid);
+  return entries
+    .map((e) => {
+      const sheetId = Number((e.url.match(/\/api\/sheets\/(\d+)\/markups/) || [])[1]);
+      const sheet = sheets.find((s) => s.sheet_id === sheetId);
+      if (!sheet) return null;
+      return {
+        ...e.markup,
+        id: -e.id,
+        pending: true,
+        location: sheet.sheet_number,
+        location_type: 'sheet',
+        target_sheet_id: sheetId,
+        target_document_id: null,
+        author_name: 'You (not uploaded yet)',
+        created_at: e.queuedAt,
+      };
+    })
+    .filter(Boolean);
+}
+
+// Offline (or the server unreachable): the list cached at the last sync
+// (offline-store.js's cacheFlags) plus anything still waiting to upload.
+async function loadCachedFlags() {
+  if (!combinedMode) return [...((await getCachedFlags(projectId)) || []), ...(await queuedFlags(projectId))];
+  const names = new Map((await getCachedProjectList()).map((p) => [String(p.id), p.name]));
+  const perProject = await Promise.all(
+    combinedProjectIds.split(',').map(async (raw) => {
+      const pid = raw.trim();
+      const flags = [...((await getCachedFlags(pid)) || []), ...(await queuedFlags(pid))];
+      return flags.map((f) => ({ ...f, project_id: Number(pid), project_name: names.get(pid) || '' }));
+    })
+  );
+  return perProject.flat();
+}
+
 async function loadFlags() {
-  const { flags } = combinedMode
-    ? await api('GET', `/api/flags/combined?projectIds=${combinedProjectIds}`)
-    : await api('GET', `/api/projects/${projectId}/flags`);
-  allFlags = flags;
+  try {
+    const { flags } = combinedMode
+      ? await api('GET', `/api/flags/combined?projectIds=${combinedProjectIds}`)
+      : await api('GET', `/api/projects/${projectId}/flags`);
+    allFlags = flags;
+    loadedOffline = false;
+    if (!combinedMode) cacheFlags(projectId, flags).catch(() => {});
+  } catch (err) {
+    if (err.status) throw err;
+    allFlags = await loadCachedFlags();
+    loadedOffline = true;
+  }
+  document.getElementById('flags-offline-note').style.display = loadedOffline ? '' : 'none';
   populateTagFilter();
   ensureTagDatalist();
   renderTable();
@@ -116,7 +171,12 @@ function renderTable() {
   const tbody = document.querySelector('#flags-table tbody');
   tbody.innerHTML = '';
   document.getElementById('flags-empty-msg').style.display = flags.length ? 'none' : '';
-  document.getElementById('flags-empty-msg').textContent = searchTerm || tagFilter ? 'No flags match your filters.' : 'No flags yet.';
+  document.getElementById('flags-empty-msg').textContent =
+    searchTerm || tagFilter
+      ? 'No flags match your filters.'
+      : loadedOffline
+      ? 'No flags saved on this device yet - open this project once while online so they sync.'
+      : 'No flags yet.';
 
   for (const flag of flags) {
     const tr = document.createElement('tr');
@@ -175,12 +235,20 @@ function renderTable() {
       tbody.appendChild(tr);
 
       tr.querySelector('.flags-edit-btn').addEventListener('click', () => {
+        if (loadedOffline) {
+          showToast('Editing flags from this list needs a connection - open the flag on its drawing, or edit it once back online.', 'error');
+          return;
+        }
         editingFlagId = flag.id;
         renderTable();
       });
     }
 
     tr.querySelector('.flags-delete-btn').addEventListener('click', async () => {
+      if (loadedOffline) {
+        showToast("Can't delete flags offline - reconnect and try again.", 'error');
+        return;
+      }
       const ok = await confirmModal({ title: 'Delete this flag?', confirmLabel: 'Delete', danger: true });
       if (!ok) return;
       await api('DELETE', `/api/markups/${flag.id}`);

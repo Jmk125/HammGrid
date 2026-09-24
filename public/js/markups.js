@@ -1,4 +1,4 @@
-import { getCachedMarkupsForSheet } from '/js/offline-store.js';
+import { getCachedMarkupsForSheet, cacheMarkup } from '/js/offline-store.js';
 import { openDocPicker } from '/js/docPicker.js';
 import { confirmModal, promptModal, showToast, openModal, closeModal } from '/js/shell.js';
 import { getDefaultPhotoFolderId, setDefaultPhotoFolderId } from '/js/photoPinDefaultFolder.js';
@@ -11,6 +11,7 @@ import {
   getQueuedMarkups,
   updateQueuedMarkup,
   deleteQueuedMarkup,
+  deleteQueuedPhoto,
   localMarkupId,
 } from '/js/photoOutbox.js';
 
@@ -936,69 +937,177 @@ export function initMarkups({
     });
   }
 
-  // Thumbnail strip of every photo taken at this pin, newest first (the
+  // Grid of every photo taken at this pin, newest first (the
   // document_versions history behind m.linked_document_id - see
-  // photoOutbox.js's uploadOne for how that document grows over
-  // repeat visits). Each thumbnail opens the full photo in a new tab, same
-  // "easy download, back = close tab" pattern CLAUDE.md specifies for
-  // linked documents generally.
+  // photoOutbox.js's uploadOne for how that document grows over repeat
+  // visits). Tapping a photo opens it in the in-app document viewer (new
+  // tab, whose Back button closes it) - same as the popup's open-document
+  // arrow, rather than the raw image file, which had no way back on iPad.
+  // In edit mode each photo gets a red delete button.
   function renderPhotoGalleryInto(gallery, m, force) {
     // The popup itself is always dark (see .markup-popup), unlike the rest
     // of the app which follows the light/dark theme setting - the
     // theme-aware .muted class (used elsewhere, e.g. docPicker.js) can read
     // as near-invisible against it in light mode, so status text here uses
     // its own fixed-color class instead, matching .markup-popup-doclabel.
+    const canDeletePhotos = editingId === m.id && (me.role === 'admin' || me.role === 'editor');
     // Photos still in the offline outbox show first (they're the newest),
     // straight from the on-device blob, with a "waiting to upload" badge.
     const pending = queuedFor(m.id).slice().reverse();
-    const pendingHtml = pending
-      .map((q) => {
-        const url = queuedPhotoUrls.get(q.id) || '';
-        const title = q.error
-          ? `Upload failed: ${q.error}`
-          : `Waiting to upload - taken ${new Date(q.queuedAt).toLocaleString()}`;
-        return `
-            <a class="markup-popup-photo-thumb pending${q.error ? ' failed' : ''}" href="${url}" target="_blank" title="${escapeHtml(title)}">
-              <img src="${url}" alt="">
-              <span class="markup-popup-photo-badge">${q.error ? '!' : '&#8679;'}</span>
-            </a>`;
-      })
-      .join('');
     const pendingNote = pending.length
       ? `<p class="markup-popup-photo-status">${pending.length} waiting to upload</p>`
       : '';
 
+    function fill(versions, statusHtml) {
+      gallery.innerHTML = '';
+      for (const q of pending) {
+        const url = queuedPhotoUrls.get(q.id) || '';
+        const thumb = document.createElement('div');
+        thumb.className = `markup-popup-photo-thumb pending${q.error ? ' failed' : ''}`;
+        thumb.title = q.error ? `Upload failed: ${q.error}` : `Waiting to upload - taken ${new Date(q.queuedAt).toLocaleString()}`;
+        thumb.innerHTML = `<img src="${url}" alt=""><span class="markup-popup-photo-badge">${q.error ? '!' : '&#8679;'}</span>`;
+        // Only exists on this device so far - there's no document to open
+        // in the viewer yet, so it opens in a full-screen overlay instead.
+        thumb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (url) openPhotoLightbox(url);
+        });
+        if (canDeletePhotos) addPhotoDeleteButton(thumb, () => deleteQueuedPhotoFromPin(m, q));
+        gallery.appendChild(thumb);
+      }
+      for (const v of versions) {
+        const thumb = document.createElement('div');
+        thumb.className = 'markup-popup-photo-thumb';
+        thumb.title = formatSqliteDate(v.created_at);
+        thumb.innerHTML = `<img src="/api/document-versions/${v.id}/thumb" loading="lazy" alt="">`;
+        thumb.querySelector('img').addEventListener('load', () => positionPopup(false));
+        thumb.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.open(`/document-view.html?documentId=${m.linked_document_id}&versionId=${v.id}`, '_blank');
+        });
+        if (canDeletePhotos) addPhotoDeleteButton(thumb, () => deleteUploadedPhotoFromPin(m, v, versions.length));
+        gallery.appendChild(thumb);
+      }
+      gallery.insertAdjacentHTML('beforeend', (statusHtml || '') + pendingNote);
+      positionPopup(false);
+    }
+
     if (!m.linked_document_id) {
-      gallery.innerHTML = pending.length
-        ? pendingHtml + pendingNote
-        : '<p class="markup-popup-photo-status">No photo attached yet.</p>';
+      if (pending.length) fill([], '');
+      else gallery.innerHTML = '<p class="markup-popup-photo-status">No photo attached yet.</p>';
       return;
     }
-    gallery.innerHTML = pendingHtml + '<p class="markup-popup-photo-status">Loading photos...</p>';
+    gallery.innerHTML = '<p class="markup-popup-photo-status">Loading photos...</p>';
     loadPhotoVersions(m.linked_document_id, force)
       .then((versions) => {
         if (!versions.length && !pending.length) {
           gallery.innerHTML = '<p class="markup-popup-photo-status">No photos yet.</p>';
           return;
         }
-        gallery.innerHTML =
-          pendingHtml +
-          versions
-            .map(
-              (v) => `
-            <a class="markup-popup-photo-thumb" href="/api/document-versions/${v.id}/pdf" target="_blank" title="${escapeHtml(new Date(v.created_at).toLocaleString())}">
-              <img src="/api/document-versions/${v.id}/pdf" loading="lazy" alt="">
-            </a>`
-            )
-            .join('') +
-          pendingNote;
+        fill(versions, '');
       })
       .catch(() => {
-        gallery.innerHTML =
-          pendingHtml +
-          `<p class="markup-popup-photo-status">${navigator.onLine ? 'Could not load photos.' : 'Offline - already-uploaded photos not shown.'}</p>` +
-          pendingNote;
+        fill(
+          [],
+          `<p class="markup-popup-photo-status">${navigator.onLine ? 'Could not load photos.' : 'Offline - already-uploaded photos not shown.'}</p>`
+        );
       });
+  }
+
+  function formatSqliteDate(s) {
+    return s ? new Date(s.replace(' ', 'T') + 'Z').toLocaleString() : '';
+  }
+
+  function addPhotoDeleteButton(thumb, onDelete) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'markup-popup-photo-delete';
+    btn.title = 'Delete this photo';
+    btn.innerHTML = '&times;';
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onDelete();
+    });
+    thumb.appendChild(btn);
+  }
+
+  async function deleteQueuedPhotoFromPin(m, q) {
+    const ok = await confirmModal({
+      title: 'Delete this photo?',
+      message: "It hasn't been uploaded yet, so it will be deleted from this device.",
+      confirmLabel: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    await deleteQueuedPhoto(q.id);
+    await refreshQueuedPhotos();
+    renderAll();
+  }
+
+  // "Just this pin" keeps the photo as its own document in the same folder
+  // (server: POST /document-versions/:id/detach); "whole project" deletes
+  // the file outright. Removing the pin's last photo either way leaves the
+  // pin empty (red) again.
+  async function deleteUploadedPhotoFromPin(m, v, photoCount) {
+    const choice = await confirmDeletePinPhoto(photoCount === 1);
+    if (!choice) return;
+    const documentId = m.linked_document_id;
+    try {
+      if (choice === 'pin') {
+        const result = await api('POST', `/api/document-versions/${v.id}/detach`, {
+          markup_id: m.id,
+          name: `Photo - ${formatSqliteDate(v.created_at)}`,
+        });
+        if (result.pin_unlinked) m.linked_document_id = null;
+        showToast('Photo removed from this pin - it is still in Documents.', 'success');
+      } else {
+        const result = await api('DELETE', `/api/document-versions/${v.id}`);
+        if (result.document_deleted) m.linked_document_id = null;
+        showToast('Photo deleted.', 'success');
+      }
+    } catch (err) {
+      showToast(err.status ? err.message : 'Deleting photos needs a connection - try again once back online.', 'error');
+      return;
+    }
+    photoVersionsCache.delete(documentId);
+    if (!m.linked_document_id) cacheMarkup(projectId, m).catch(() => {});
+    renderAll();
+  }
+
+  function confirmDeletePinPhoto(isLastPhoto) {
+    return new Promise((resolve) => {
+      const backdrop = openModal(`
+        <h2>Delete this photo?</h2>
+        <p class="muted">Remove it from just this pin (it stays in Documents as its own photo), or delete it from the whole project?${
+          isLastPhoto ? ' This is the pin&#39;s only photo, so the pin will be left empty.' : ''
+        }</p>
+        <div class="modal-actions">
+          <button type="button" id="pin-photo-del-cancel">Cancel</button>
+          <button type="button" id="pin-photo-del-pin">Remove from this pin</button>
+          <button type="button" class="danger" id="pin-photo-del-project">Delete from project</button>
+        </div>
+      `);
+      let finished = false;
+      function finish(value) {
+        if (finished) return;
+        finished = true;
+        closeModal();
+        resolve(value);
+      }
+      backdrop.querySelector('#pin-photo-del-cancel').addEventListener('click', () => finish(null));
+      backdrop.querySelector('#pin-photo-del-pin').addEventListener('click', () => finish('pin'));
+      backdrop.querySelector('#pin-photo-del-project').addEventListener('click', () => finish('project'));
+    });
+  }
+
+  // Full-screen view for a photo that only exists on this device so far
+  // (still in the outbox) - tap anywhere or the X to close.
+  function openPhotoLightbox(url) {
+    const overlay = document.createElement('div');
+    overlay.className = 'photo-lightbox';
+    overlay.innerHTML = `<img src="${url}" alt=""><button type="button" class="photo-lightbox-close" title="Close">&times;</button>`;
+    overlay.addEventListener('click', () => overlay.remove());
+    document.body.appendChild(overlay);
   }
 
   // Precise real-world length/width entry for a rect/line/arrow markup
