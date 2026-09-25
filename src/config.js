@@ -12,7 +12,8 @@ module.exports = {
   // Root folder of PlanSwift local-storage jobs for "New project -> Import
   // from PlanSwift" (src/lib/importers/planswift.js). On the office server
   // it's a share like \\10.0.30.22\Public\PLANSWIFT\Jobs1 (forward slashes
-  // work too). Unset = the PlanSwift importer shows as not configured.
+  // work too). Only the fallback: a folder saved from the import page wins,
+  // and with neither set the import page asks for one.
   planswiftJobsDir: process.env.PLANSWIFT_JOBS_DIR || null,
   // Defaults point at the mkcert-issued files already sitting next to
   // server.js (src/10.0.30.50-key.pem / .pem) so this works unmodified on

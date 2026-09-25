@@ -2,9 +2,11 @@
 // owns its own steps; routes/imports.routes.js only drives them:
 //
 //   id, label            shown in the source picker
-//   isConfigured()       false -> listed but disabled (e.g. its root folder env var is unset)
-//   browse(relPath)      -> { path, parent, entries: [{ name, path, kind: 'job'|'folder', ... }] }
-//   resolveJob(relPath)  -> { abs, rel, name, description }; throws (err.status 400) if not a job
+//   defaultRoot()        -> { path, from: 'app'|'env' } | null - where browsing starts
+//   setDefaultRoot(dir, userId)  save (or with empty dir, clear) the in-app default; throws 400 if unusable
+//   browse(root, relPath)  root = a typed folder or empty for the default ->
+//                        { root, path, parent, current_job, entries: [{ name, path, kind: 'job'|'folder', ... }] }
+//   resolveJob(root, relPath)  -> { abs, rel, name, description }; throws (err.status 400) if not a job
 //   convert({ jobDir, outDir, onProgress, signal })  -> Promise; writes a package into outDir;
 //                        must stop (reject) when signal aborts
 //   review(pkgDir, userId)  -> { job, defaults: { name, number }, sheets, stats, warnings }
@@ -24,7 +26,7 @@ function getImporter(id) {
 }
 
 function listImporters() {
-  return importers.map((i) => ({ id: i.id, label: i.label, configured: i.isConfigured() }));
+  return importers.map((i) => ({ id: i.id, label: i.label, default_root: i.defaultRoot() }));
 }
 
 // Conversions run into data/staging/imports/<importId>/ (meta.json +

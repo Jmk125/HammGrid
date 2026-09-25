@@ -16,6 +16,7 @@ const config = require('../../config');
 const { toPortablePath } = require('../paths');
 const { deriveDiscipline } = require('../matching');
 const { runPythonWithProgress } = require('../pyRunner');
+const { getSetting, setSetting } = require('../appSettings');
 
 const CONVERT_SCRIPT = path.join(__dirname, '..', '..', '..', 'pyproc', 'planswift2hammgrid.py');
 // Every page's TIFF is re-encoded into PDF + thumb + preview; a real
@@ -39,26 +40,61 @@ const PACKAGE_JSON = 'hammgrid-import.json';
 
 // ---------------------------------------------------------------- browse
 
-function isConfigured() {
-  return !!config.planswiftJobsDir;
+// The folder the job browser opens in: one saved from the import page
+// (app_settings), else .env's PLANSWIFT_JOBS_DIR. Admins can also type any
+// other folder on the import page for a one-off job stored elsewhere.
+const DEFAULT_ROOT_SETTING = 'planswift_jobs_dir';
+
+function defaultRoot() {
+  const saved = getSetting(DEFAULT_ROOT_SETTING);
+  if (saved) return { path: saved, from: 'app' };
+  if (config.planswiftJobsDir) return { path: config.planswiftJobsDir, from: 'env' };
+  return null;
 }
 
-function jobsRoot() {
-  if (!config.planswiftJobsDir) throw Object.assign(new Error('PLANSWIFT_JOBS_DIR is not set'), { status: 400 });
-  return path.resolve(config.planswiftJobsDir);
+// A typed folder must be an absolute path (drive or UNC) to an existing
+// folder the server can see - a path on the admin's own PC won't be.
+function checkFolder(dir) {
+  // Explorer's "Copy as path" wraps the path in quotes.
+  const d = String(dir || '').trim().replace(/^"(.*)"$/, '$1').trim();
+  const fail = (msg) => Object.assign(new Error(msg), { status: 400 });
+  if (!d) throw fail('Enter a folder path');
+  if (!path.isAbsolute(d)) throw fail('Enter a full path, e.g. \\\\server\\share\\Jobs or D:\\PlanSwift\\Jobs');
+  let stat;
+  try {
+    stat = fs.statSync(d);
+  } catch (err) {
+    throw fail(`The server can't reach ${d} (${err.code || err.message}). Check the path and that the server has access to it.`);
+  }
+  if (!stat.isDirectory()) throw fail(`${d} is not a folder`);
+  return d;
 }
 
-// Resolves a client-supplied path (relative to the jobs root) and refuses
+// Saving an empty value clears the app setting, so .env applies again.
+function setDefaultRoot(dir, userId) {
+  setSetting(DEFAULT_ROOT_SETTING, dir ? checkFolder(dir) : null, userId);
+  return defaultRoot();
+}
+
+// root = a folder typed on the import page, or empty for the default.
+function resolveRoot(root) {
+  if (root) return path.resolve(checkFolder(root));
+  const def = defaultRoot();
+  if (!def) throw Object.assign(new Error('No PlanSwift jobs folder is set - enter one'), { status: 400 });
+  return path.resolve(def.path);
+}
+
+// Resolves a client-supplied path (relative to the root) and refuses
 // anything that would land outside the root (.., absolute paths, other
 // drives/shares). Returns { abs, rel } with rel in forward slashes.
-function resolveInRoot(relPath) {
-  const root = jobsRoot();
-  const abs = path.resolve(root, relPath || '.');
-  const rel = path.relative(root, abs);
+function resolveInRoot(root, relPath) {
+  const rootAbs = resolveRoot(root);
+  const abs = path.resolve(rootAbs, relPath || '.');
+  const rel = path.relative(rootAbs, abs);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
     throw Object.assign(new Error('Path is outside the PlanSwift jobs folder'), { status: 400 });
   }
-  return { abs, rel: rel.split(path.sep).join('/') };
+  return { abs, rel: rel.split(path.sep).join('/'), root: rootAbs };
 }
 
 const XML_ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" };
@@ -100,8 +136,11 @@ function readJobInfo(dir) {
 
 // One level of the jobs tree: job folders (Data.xml Type=Job) can be picked;
 // other folders can be browsed into (jobs are sometimes grouped by year etc.).
-function browse(relPath) {
-  const { abs, rel } = resolveInRoot(relPath);
+// If the folder itself is a job (someone typed a job's own folder),
+// current_job says so and it can be picked directly.
+function browse(root, relPath) {
+  const { abs, rel, root: rootAbs } = resolveInRoot(root, relPath);
+  const self = readJobInfo(abs);
   let dirents;
   try {
     dirents = fs.readdirSync(abs, { withFileTypes: true });
@@ -132,17 +171,20 @@ function browse(relPath) {
   }
   entries.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
   return {
+    root: rootAbs,
     path: rel,
     parent: rel ? rel.split('/').slice(0, -1).join('/') : null,
-    entries,
+    current_job: self && self.isJob ? { path: rel, name: self.name, description: self.description } : null,
+    // A job folder's own subfolders (Pages, Takeoff, ...) aren't worth browsing.
+    entries: self && self.isJob ? [] : entries,
   };
 }
 
 // Validates a picked job; throws (400) unless it's a real job under the root.
-function resolveJob(relPath) {
-  const { abs, rel } = resolveInRoot(relPath);
+function resolveJob(root, relPath) {
+  const { abs, rel } = resolveInRoot(root, relPath);
   const info = readJobInfo(abs);
-  if (!rel || !info || !info.isJob) {
+  if (!info || !info.isJob) {
     throw Object.assign(new Error('Not a PlanSwift job folder'), { status: 400 });
   }
   return { abs, rel, name: info.name, description: info.description };
@@ -456,7 +498,8 @@ function importPackage({ pkgDir, name, number, userId, dryRun = false }) {
 module.exports = {
   id: 'planswift',
   label: 'PlanSwift',
-  isConfigured,
+  defaultRoot,
+  setDefaultRoot,
   browse,
   resolveJob,
   convert,

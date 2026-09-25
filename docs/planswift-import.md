@@ -9,20 +9,28 @@ plus the original CLI. Tested on real jobs 1234, 5713 - SD Hilltop and 5713 Bryd
 | File | What it does |
 |---|---|
 | `pyproc/planswift2hammgrid.py` | Reads a PlanSwift job folder, writes a *package* folder: `hammgrid-import.json`, `takeoff.csv`, `sheets/<pageGUID>.pdf` + `_thumb.webp` + `_preview.webp` (same sizes as `burst.py`), optional `preview/` PNGs with take-off drawn on. Needs Pillow + PyMuPDF (already in requirements.txt). `--json` = server mode: stdout is **only** a final JSON summary (`out_dir`, `job`, counts); log lines and `PROGRESS n/m` (one per page, like `burst.py`) go to stderr. |
-| `src/lib/importers/planswift.js` | The importer: `browse` / `resolveJob` (jobs under `PLANSWIFT_JOBS_DIR`), `convert` (runs the converter via `runPythonWithProgress`, 60 min timeout, abortable), `review` (sheet list + counts via a dry-run import), `importPackage({pkgDir, name, number, userId, dryRun})` — creates a new project + one published revision "PlanSwift import", sheets/versions (files copied into `data/projects/<id>/sheets/<sheetId>/v<rev>_planswift*`), take_off_folders, take_off_items, take_off_instances. One DB transaction; copied files removed on failure; logs `planswift_import` to activity_log. |
-| `src/lib/importers/index.js` | Importer registry (`{id, label, isConfigured, browse, resolveJob, convert, review, sheetThumbPath, importPackage}` — see the comment at the top for the contract), staging dir helpers, `cleanupStaleImports()` (run at server start; removes `data/staging/imports/*` older than a day). |
-| `src/routes/imports.routes.js` | `/api/imports` — admin only. `GET /sources`, `GET /sources/:source/browse?path=`, `POST /sources/:source/convert {path}` → `import_id` (queued on `lib/queue.js`), `GET /:importId` (status/progress; review data once ready), `GET /:importId/sheets/:key/thumb`, `POST /:importId/import {name, number}`, `DELETE /:importId` (cancel: kills a running conversion, deletes staging), `GET /` (unfinished imports to resume). |
-| `public/import.html` + `js/import.js` | Browse → progress → review page. `?source=planswift` = browse, `?importId=…` = progress/review (so reload/come-back works). |
+| `src/lib/importers/planswift.js` | The importer: `defaultRoot` / `setDefaultRoot` (jobs folder: saved in the app's `app_settings`, else `.env` `PLANSWIFT_JOBS_DIR`), `browse` / `resolveJob` (jobs under the default or a typed folder), `convert` (runs the converter via `runPythonWithProgress`, 60 min timeout, abortable), `review` (sheet list + counts via a dry-run import), `importPackage({pkgDir, name, number, userId, dryRun})` — creates a new project + one published revision "PlanSwift import", sheets/versions (files copied into `data/projects/<id>/sheets/<sheetId>/v<rev>_planswift*`), take_off_folders, take_off_items, take_off_instances. One DB transaction; copied files removed on failure; logs `planswift_import` to activity_log. |
+| `src/lib/importers/index.js` | Importer registry (`{id, label, defaultRoot, setDefaultRoot, browse, resolveJob, convert, review, sheetThumbPath, importPackage}` — see the comment at the top for the contract), staging dir helpers, `cleanupStaleImports()` (run at server start; removes `data/staging/imports/*` older than a day). |
+| `src/routes/imports.routes.js` | `/api/imports` — admin only. `GET /sources` (includes each source's `default_root`), `GET /sources/:source/browse?root=&path=` (`root` empty = default), `PUT /sources/:source/default-root {root}` (save; empty clears → `.env`), `POST /sources/:source/convert {root, path}` → `import_id` (queued on `lib/queue.js`), `GET /:importId` (status/progress; review data once ready), `GET /:importId/sheets/:key/thumb`, `POST /:importId/import {name, number}`, `DELETE /:importId` (cancel: kills a running conversion, deletes staging), `GET /` (unfinished imports to resume). |
+| `public/import.html` + `js/import.js` | Browse → progress → review page. `?source=planswift[&root=…]` = browse, `?importId=…` = progress/review (so reload/come-back works). |
 | `src/scripts/import-planswift.js` | CLI wrapper around `importPackage`: `npm run import-planswift -- "<package>" [--name] [--number] [--user] [--dry-run]`. |
 
 ## In-app flow
 
 1. Dashboard → **New Project** → *Import from…* → source picker (only PlanSwift for now;
-   sources come from the registry, unconfigured ones show disabled) → Continue.
-2. `import.html?source=planswift` lists folders under `PLANSWIFT_JOBS_DIR`. A folder is a
+   sources come from the registry) → Continue.
+2. `import.html?source=planswift` lists folders under the **jobs folder**. A folder is a
    **job** if its `Data.xml` has `Type=Job` (only the first 64 KB of each Data.xml is read);
-   other folders can be browsed into. Paths are always relative to the root and anything
+   other folders can be browsed into. Below the chosen folder, paths are relative and anything
    resolving outside it is rejected (400).
+   - **Jobs folder** = the default (saved in the app, else `.env`), shown with where it came
+     from. **Change folder…** takes any absolute path the *server* can reach (UNC or drive;
+     Explorer's quoted "Copy as path" works). "Make this the default jobs folder for everyone"
+     saves it to `app_settings` (validated first); unchecked = this visit only (kept in the
+     URL as `?root=`). **Back to default** / **Clear saved default** (falls back to `.env`).
+   - Typing a single job's own folder shows "This folder is a PlanSwift job" with **Select**,
+     for jobs stored outside the usual jobs folder.
+   - With no default anywhere, the page opens straight to the folder form.
 3. **Select** → server stages into `data/staging/imports/<importId>/` (`meta.json` +
    `package/`) and queues the converter; the page polls and shows `page n of m`. The admin can
    leave — unfinished imports are listed at the top of the browse page.
@@ -33,8 +41,10 @@ plus the original CLI. Tested on real jobs 1234, 5713 - SD Hilltop and 5713 Bryd
    **Cancel** deletes the staging folder.
 5. **Import** → one transaction → staging deleted → redirect to the new project.
 
-Config: `PLANSWIFT_JOBS_DIR` in `.env` (e.g. `\\10.0.30.22\Public\PLANSWIFT\Jobs1`; forward
-slashes also work). The account the server runs as needs read access to the share.
+Config: optional `PLANSWIFT_JOBS_DIR` in `.env` (e.g. `\\10.0.30.22\Public\PLANSWIFT\Jobs1`;
+forward slashes also work) is the fallback default; admins can set or override it in the app
+instead. Either way, the account the server runs as needs read access to the share. Admins
+can browse any folder that account can read (folder names + Data.xml job info only).
 
 ## PlanSwift local-storage format (what we learned)
 

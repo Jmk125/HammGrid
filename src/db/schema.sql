@@ -396,6 +396,16 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires INTEGER NOT NULL
 );
 
+-- App-wide admin settings that can be changed in the app rather than only in
+-- .env (e.g. the PlanSwift jobs folder for New project -> Import). Values
+-- are plain text; see src/lib/appSettings.js.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Ingest staging: incoming sheets sit here between upload and publish, while
 -- the user reviews/corrects OCR results and confirms sheet matching. Rows are
 -- deleted once the revision is published (their data lands in sheets/sheet_versions).

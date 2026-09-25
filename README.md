@@ -50,7 +50,8 @@ Poppler is **not** required - PyMuPDF handles all PDF rasterization.
      are already on `PATH`; otherwise a full path to each executable
    - `PLANSWIFT_JOBS_DIR` (optional) - PlanSwift jobs root for New Project →
      Import from PlanSwift, e.g. `\\10.0.30.22\Public\PLANSWIFT\Jobs1`
-     (see `docs/planswift-import.md`)
+     Admins can also set/override it from the import page (see
+     `docs/planswift-import.md`)
 4. Create the first admin user (the database and schema are created
    automatically on first run - there's no seed data otherwise):
    ```bash
