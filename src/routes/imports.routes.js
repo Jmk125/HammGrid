@@ -1,8 +1,10 @@
 // New project -> "Import from..." (dashboard). Admin only, same as creating a
 // blank project. The flow, driven by public/js/import.js:
 //   1. GET  /sources                          pick a source (importer registry)
-//   2. GET  /sources/:source/browse?path=     browse that source's jobs
-//   3. POST /sources/:source/convert {path}   queue the conversion -> import_id
+//   2. GET  /sources/:source/browse?root=&path=  browse that source's jobs (root
+//                                             empty = the default folder)
+//      PUT  /sources/:source/default-root {root}  save/clear the in-app default folder
+//   3. POST /sources/:source/convert {root, path}  queue the conversion -> import_id
 //   4. GET  /:importId                        poll progress; once ready, the review data
 //   5. POST /:importId/import {name, number}  create the project (one transaction)
 //      DELETE /:importId                      cancel - deletes the staging folder
@@ -102,25 +104,35 @@ router.get('/sources', requireAdmin, (req, res) => {
   res.json({ sources: listImporters() });
 });
 
+// Admins can browse any folder the server can reach (typed on the import
+// page), not only the default one - jobs aren't always where they should be.
 router.get('/sources/:source/browse', requireAdmin, (req, res) => {
   const importer = getImporter(req.params.source);
   if (!importer) return res.status(404).json({ error: 'Unknown import source' });
-  if (!importer.isConfigured()) return res.status(400).json({ error: `${importer.label} import is not configured on this server` });
   try {
-    res.json(importer.browse(req.query.path || ''));
+    res.json(importer.browse(req.query.root || '', req.query.path || ''));
   } catch (err) {
     sendError(res, err, 'Browse failed');
+  }
+});
+
+router.put('/sources/:source/default-root', requireAdmin, (req, res) => {
+  const importer = getImporter(req.params.source);
+  if (!importer) return res.status(404).json({ error: 'Unknown import source' });
+  try {
+    res.json({ default_root: importer.setDefaultRoot((req.body && req.body.root) || '', req.session.user.id) });
+  } catch (err) {
+    sendError(res, err, 'Could not save the folder');
   }
 });
 
 router.post('/sources/:source/convert', requireAdmin, (req, res) => {
   const importer = getImporter(req.params.source);
   if (!importer) return res.status(404).json({ error: 'Unknown import source' });
-  if (!importer.isConfigured()) return res.status(400).json({ error: `${importer.label} import is not configured on this server` });
 
   let job;
   try {
-    job = importer.resolveJob(req.body && req.body.path);
+    job = importer.resolveJob((req.body && req.body.root) || '', req.body && req.body.path);
   } catch (err) {
     return sendError(res, err, 'Invalid job');
   }
@@ -131,7 +143,7 @@ router.post('/sources/:source/convert', requireAdmin, (req, res) => {
   const meta = {
     id: importId,
     source: importer.id,
-    job_path: job.rel,
+    job_path: job.abs,
     job_name: job.name,
     job_description: job.description,
     created_by: req.session.user.id,

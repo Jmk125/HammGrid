@@ -17,9 +17,31 @@
         <table><tbody id="resume-rows"></tbody></table>
       </div>
       <div class="card">
+        <div class="row import-folder-bar">
+          <span class="muted">Jobs folder:</span>
+          <strong id="folder-current">&mdash;</strong>
+          <span class="muted" id="folder-from"></span>
+          <button type="button" id="folder-change-btn">Change folder&hellip;</button>
+          <button type="button" id="folder-default-btn" style="display:none;">Back to default</button>
+        </div>
+        <div id="folder-form" class="import-folder-form" style="display:none;">
+          <div class="field" style="max-width:640px;">
+            <label>Folder on the server &mdash; a folder of jobs, or one job's own folder</label>
+            <input id="folder-input" placeholder="\\10.0.30.22\Public\PLANSWIFT\Jobs1" spellcheck="false" autocomplete="off">
+          </div>
+          <p class="muted">The server opens this path, not your PC: use the full share path
+            (\\server\share\&hellip;), not a mapped drive letter that only exists on your computer.</p>
+          <label class="row" style="margin:8px 0;"><input type="checkbox" id="folder-save"> Make this the default jobs folder for everyone</label>
+          <div class="row">
+            <button type="button" id="folder-cancel">Cancel</button>
+            <button type="button" class="primary" id="folder-open">Open</button>
+            <button type="button" id="folder-clear" style="display:none;">Clear saved default</button>
+          </div>
+        </div>
+        <div class="import-current-job" id="current-job" style="display:none;"></div>
         <div class="row import-crumbs" id="browse-crumbs"></div>
         <input id="browse-filter" type="search" placeholder="Filter jobs" style="margin:10px 0; max-width:320px;">
-        <table>
+        <table id="browse-table">
           <thead><tr><th>Job</th><th>Description</th><th>Modified</th><th></th></tr></thead>
           <tbody id="browse-rows"></tbody>
         </table>

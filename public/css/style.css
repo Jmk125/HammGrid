@@ -1975,3 +1975,6 @@ tr.doc-selected { background: var(--accent-light); }
 .import-stat-value { font-size: 22px; font-weight: 700; }
 .import-warnings { margin: 10px 0 0; padding-left: 20px; max-height: 320px; overflow: auto; font-size: 13px; }
 .import-warnings li { margin: 2px 0; }
+.import-folder-bar { margin-bottom: 10px; }
+.import-folder-form { padding: 12px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.import-current-job { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--accent-light); }

@@ -76,35 +76,109 @@ async function loadResumable() {
   }
 }
 
-async function browse(source, relPath) {
+// Which folder the browser is looking at: '' = the default (saved in the app,
+// else .env), or a folder the admin typed for a job stored somewhere else.
+// Kept in the URL (?root=) so a reload stays in the same place.
+let source = null;
+let defaultRoot = null; // { path, from: 'app' | 'env' } | null
+let currentRoot = params.get('root') || '';
+
+function folderName(p) {
+  return String(p || '').split(/[\\/]/).filter(Boolean).pop() || p;
+}
+
+function syncUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.set('source', source);
+  if (currentRoot) url.searchParams.set('root', currentRoot);
+  else url.searchParams.delete('root');
+  window.history.replaceState(null, '', url);
+}
+
+function renderFolderBar() {
+  const shown = currentRoot || (defaultRoot && defaultRoot.path);
+  document.getElementById('folder-current').textContent = shown || 'not set';
+  document.getElementById('folder-from').textContent = currentRoot
+    ? '(this visit only)'
+    : !defaultRoot
+      ? ''
+      : defaultRoot.from === 'app'
+        ? '(default, saved in the app)'
+        : '(default, from the server .env)';
+  document.getElementById('folder-default-btn').style.display = currentRoot && defaultRoot ? '' : 'none';
+  document.getElementById('folder-clear').style.display = defaultRoot && defaultRoot.from === 'app' ? '' : 'none';
+}
+
+function showFolderForm(show) {
+  document.getElementById('folder-form').style.display = show ? '' : 'none';
+  document.getElementById('folder-change-btn').style.display = show ? 'none' : '';
+  if (show) {
+    const input = document.getElementById('folder-input');
+    input.value = currentRoot || (defaultRoot && defaultRoot.path) || '';
+    document.getElementById('folder-save').checked = !defaultRoot;
+    input.focus();
+    input.select();
+  }
+}
+
+function clearListing() {
+  browseEntries = [];
+  document.getElementById('browse-crumbs').innerHTML = '';
+  document.getElementById('current-job').style.display = 'none';
+  renderBrowseRows();
+  // No folder open at all - an empty table / "No job folders here." would
+  // wrongly suggest one was opened and found empty.
+  for (const id of ['browse-filter', 'browse-table', 'browse-empty']) document.getElementById(id).style.display = 'none';
+}
+
+// Returns true if the folder could be listed.
+async function browse(relPath) {
   showError('');
   let data;
   try {
-    data = await api('GET', `/api/imports/sources/${encodeURIComponent(source)}/browse?path=${encodeURIComponent(relPath || '')}`);
+    const q = `root=${encodeURIComponent(currentRoot)}&path=${encodeURIComponent(relPath || '')}`;
+    data = await api('GET', `/api/imports/sources/${encodeURIComponent(source)}/browse?${q}`);
   } catch (err) {
     showError(err.message);
-    return;
+    return false;
   }
   browseEntries = data.entries;
 
   const crumbs = document.getElementById('browse-crumbs');
   const parts = data.path ? data.path.split('/') : [];
   crumbs.innerHTML =
-    `<a href="#" data-path="">Jobs</a>` +
+    `<a href="#" data-path="">${escapeHtml(folderName(data.root))}</a>` +
     parts
       .map((p, i) => ` <span class="muted">/</span> <a href="#" data-path="${escapeHtml(parts.slice(0, i + 1).join('/'))}">${escapeHtml(p)}</a>`)
       .join('');
   for (const a of crumbs.querySelectorAll('a')) {
     a.addEventListener('click', (e) => {
       e.preventDefault();
-      browse(source, a.dataset.path);
+      browse(a.dataset.path);
     });
   }
+
+  // The opened folder is itself a job (someone typed a job's own folder) -
+  // offer it directly instead of listing its Pages/Takeoff internals.
+  const jobEl = document.getElementById('current-job');
+  jobEl.style.display = data.current_job ? '' : 'none';
+  if (data.current_job) {
+    const job = data.current_job;
+    jobEl.innerHTML = `<span>This folder is a PlanSwift job:</span>
+      <strong>${escapeHtml(job.name)}</strong> <span class="muted">${escapeHtml(job.description || '')}</span>
+      <button type="button" class="primary" id="current-job-pick">Select</button>`;
+    const btn = document.getElementById('current-job-pick');
+    btn.addEventListener('click', () => startConversion(job, btn));
+  }
   document.getElementById('browse-filter').value = '';
-  renderBrowseRows(source);
+  renderBrowseRows();
+  return true;
 }
 
-function renderBrowseRows(source) {
+function renderBrowseRows() {
+  const isJob = document.getElementById('current-job').style.display !== 'none';
+  document.getElementById('browse-filter').style.display = isJob ? 'none' : '';
+  document.getElementById('browse-table').style.display = isJob ? 'none' : '';
   const filter = document.getElementById('browse-filter').value.trim().toLowerCase();
   const rows = browseEntries.filter(
     (e) => !filter || `${e.name} ${e.job_name || ''} ${e.description || ''}`.toLowerCase().includes(filter)
@@ -121,25 +195,28 @@ function renderBrowseRows(source) {
     )
     .join('');
   const empty = document.getElementById('browse-empty');
-  empty.style.display = rows.length ? 'none' : '';
+  empty.style.display = rows.length || isJob ? 'none' : '';
   empty.textContent = browseEntries.length ? 'No jobs match the filter.' : 'No job folders here.';
 
   for (const a of tbody.querySelectorAll('.browse-folder')) {
     a.addEventListener('click', (ev) => {
       ev.preventDefault();
-      browse(source, rows[Number(a.dataset.i)].path);
+      browse(rows[Number(a.dataset.i)].path);
     });
   }
   for (const btn of tbody.querySelectorAll('.browse-pick')) {
-    btn.addEventListener('click', () => startConversion(source, rows[Number(btn.dataset.i)], btn));
+    btn.addEventListener('click', () => startConversion(rows[Number(btn.dataset.i)], btn));
   }
 }
 
-async function startConversion(source, entry, btn) {
+async function startConversion(entry, btn) {
   btn.disabled = true;
   showError('');
   try {
-    const { import_id } = await api('POST', `/api/imports/sources/${encodeURIComponent(source)}/convert`, { path: entry.path });
+    const { import_id } = await api('POST', `/api/imports/sources/${encodeURIComponent(source)}/convert`, {
+      root: currentRoot,
+      path: entry.path,
+    });
     window.history.replaceState(null, '', `/import.html?importId=${encodeURIComponent(import_id)}`);
     openImport(import_id);
   } catch (err) {
@@ -148,7 +225,60 @@ async function startConversion(source, entry, btn) {
   }
 }
 
-async function initBrowse(source) {
+async function openFolder() {
+  // Explorer's "Copy as path" wraps the path in quotes.
+  const typed = document.getElementById('folder-input').value.trim().replace(/^"(.*)"$/, '$1').trim();
+  const save = document.getElementById('folder-save').checked;
+  if (!typed) return showError('Enter a folder path.');
+  const btn = document.getElementById('folder-open');
+  btn.disabled = true;
+  try {
+    if (save) {
+      // The server validates before saving, so a bad path never becomes the default.
+      try {
+        ({ default_root: defaultRoot } = await api('PUT', `/api/imports/sources/${encodeURIComponent(source)}/default-root`, { root: typed }));
+      } catch (err) {
+        showError(err.message);
+        return;
+      }
+      currentRoot = '';
+    } else {
+      const previous = currentRoot;
+      currentRoot = typed;
+      if (!(await browse(''))) {
+        currentRoot = previous; // keep the form open with the bad path to fix
+        return;
+      }
+    }
+    syncUrl();
+    renderFolderBar();
+    showFolderForm(false);
+    if (save) await browse('');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function clearSavedDefault() {
+  try {
+    ({ default_root: defaultRoot } = await api('PUT', `/api/imports/sources/${encodeURIComponent(source)}/default-root`, { root: '' }));
+  } catch (err) {
+    return showError(err.message);
+  }
+  currentRoot = '';
+  syncUrl();
+  renderFolderBar();
+  if (defaultRoot) {
+    showFolderForm(false);
+    await browse('');
+  } else {
+    clearListing();
+    showFolderForm(true);
+  }
+}
+
+async function initBrowse(sourceId) {
+  source = sourceId;
   let sources;
   try {
     ({ sources } = await api('GET', '/api/imports/sources'));
@@ -158,12 +288,37 @@ async function initBrowse(source) {
   }
   const src = sources.find((s) => s.id === source);
   if (!src) return showError(`Unknown import source "${source}".`);
+  defaultRoot = src.default_root;
   document.getElementById('import-heading').textContent = `Import from ${src.label}`;
-  if (!src.configured) return showError(`${src.label} import is not configured on this server.`);
   showStep('browse-step');
-  document.getElementById('browse-filter').addEventListener('input', () => renderBrowseRows(source));
+
+  document.getElementById('browse-filter').addEventListener('input', () => renderBrowseRows());
+  document.getElementById('folder-change-btn').addEventListener('click', () => showFolderForm(true));
+  document.getElementById('folder-cancel').addEventListener('click', () => {
+    showError('');
+    showFolderForm(false);
+  });
+  document.getElementById('folder-open').addEventListener('click', openFolder);
+  document.getElementById('folder-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') openFolder();
+  });
+  document.getElementById('folder-clear').addEventListener('click', clearSavedDefault);
+  document.getElementById('folder-default-btn').addEventListener('click', async () => {
+    currentRoot = '';
+    syncUrl();
+    renderFolderBar();
+    await browse('');
+  });
+
+  renderFolderBar();
   loadResumable();
-  await browse(source, '');
+  if (!currentRoot && !defaultRoot) {
+    // Nothing configured anywhere yet - go straight to "enter a folder".
+    clearListing();
+    showFolderForm(true);
+    return;
+  }
+  if (!(await browse(''))) clearListing();
 }
 
 // ---------- Steps 2 + 3: progress, then review ----------

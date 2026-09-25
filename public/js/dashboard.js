@@ -74,12 +74,9 @@ function openNewProjectModal() {
     const select = document.getElementById('np-source');
     try {
       const { sources } = await api('GET', '/api/imports/sources');
-      select.innerHTML = sources
-        .map((s) => `<option value="${s.id}" ${s.configured ? '' : 'disabled'}>${s.label}${s.configured ? '' : ' (not configured)'}</option>`)
-        .join('');
-      const firstEnabled = sources.find((s) => s.configured);
-      if (firstEnabled) select.value = firstEnabled.id;
-      else showError('No import source is configured on this server.');
+      // Every source is usable: with no default folder set, the import page
+      // just asks for one.
+      select.innerHTML = sources.map((s) => `<option value="${s.id}">${s.label}</option>`).join('');
     } catch (err) {
       select.innerHTML = '';
       showError(`Couldn't load import sources: ${err.message}`);
