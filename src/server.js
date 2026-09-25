@@ -41,6 +41,8 @@ const exportsRoutes = require('./routes/exports.routes');
 const activityRoutes = require('./routes/activity.routes');
 const compositesRoutes = require('./routes/composites.routes');
 const compositeFragmentsRoutes = require('./routes/compositeFragments.routes');
+const importsRoutes = require('./routes/imports.routes');
+const { cleanupStaleImports } = require('./lib/importers');
 const https = require('https');
 const fs = require('fs');
 
@@ -70,6 +72,7 @@ app.use(
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/projects', projectsRoutes);
+app.use('/api/imports', importsRoutes);
 app.use('/api/projects/:projectId/revisions', revisionsRoutes);
 app.use('/api/staged-sheets', stagedSheetsRoutes);
 app.use('/api/projects/:projectId/sheets', sheetsRoutes);
@@ -146,6 +149,11 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (err) => {
   console.error('Unhandled promise rejection (server staying up):', err);
 });
+
+// "Import from..." conversions the user walked away from (never imported or
+// cancelled) - see lib/importers/index.js.
+const staleImports = cleanupStaleImports();
+if (staleImports) console.log(`Removed ${staleImports} stale import staging folder(s)`);
 
 const httpsOptions = {
   key: fs.readFileSync(config.tlsKeyPath),

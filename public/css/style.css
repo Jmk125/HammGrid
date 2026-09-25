@@ -1866,3 +1866,12 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .shared-doc-row:hover { background: var(--accent-light); }
 .shared-doc-file a { font-weight: 600; text-decoration: none; }
 .shared-doc-icon { width: 22px; text-align: center; flex: 0 0 auto; }
+
+/* ---------- New project -> Import from... (import.html) ---------- */
+.import-crumbs a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.import-crumbs a:hover { text-decoration: underline; }
+.import-stats { display: flex; flex-wrap: wrap; gap: 10px; }
+.import-stat { min-width: 110px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.import-stat-value { font-size: 22px; font-weight: 700; }
+.import-warnings { margin: 10px 0 0; padding-left: 20px; max-height: 320px; overflow: auto; font-size: 13px; }
+.import-warnings li { margin: 2px 0; }

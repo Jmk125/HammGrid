@@ -32,9 +32,12 @@ const PROGRESS_LINE = /^PROGRESS (\d+)\/(\d+)$/;
 // while the process is still running, so this uses spawn + streamed stdio
 // instead. stdout is still buffered in full and only parsed as JSON once
 // the process closes, exactly like runPython() - non-progress stderr lines
-// are collected for the error message but otherwise ignored.
-function runPythonWithProgress(scriptPath, args, onProgress, { timeout = 120000 } = {}) {
+// are collected for the error message but otherwise ignored. An optional
+// AbortSignal kills the process (rejecting with err.aborted = true) - used to
+// cancel a long import conversion so it stops holding the processing queue.
+function runPythonWithProgress(scriptPath, args, onProgress, { timeout = 120000, signal } = {}) {
   return new Promise((resolve, reject) => {
+    if (signal && signal.aborted) return reject(Object.assign(new Error('Cancelled'), { aborted: true }));
     const child = spawn(config.pythonPath, [scriptPath, ...args]);
     let stdout = '';
     let stderr = '';
@@ -49,6 +52,20 @@ function runPythonWithProgress(scriptPath, args, onProgress, { timeout = 120000 
           reject(new Error(`Timed out after ${timeout}ms`));
         }, timeout)
       : null;
+
+    if (signal) {
+      signal.addEventListener(
+        'abort',
+        () => {
+          if (settled) return;
+          settled = true;
+          if (timer) clearTimeout(timer);
+          child.kill();
+          reject(Object.assign(new Error('Cancelled'), { aborted: true }));
+        },
+        { once: true }
+      );
+    }
 
     child.stdout.on('data', (chunk) => {
       stdout += chunk;
