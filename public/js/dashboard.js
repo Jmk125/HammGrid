@@ -37,25 +37,77 @@ function renderTopbar() {
 function openNewProjectModal() {
   openModal(`
     <h2>New project</h2>
-    <div class="field"><label>Name</label><input id="np-name" placeholder="e.g. Lincoln Elementary"></div>
-    <div class="field"><label>Job number (optional)</label><input id="np-number"></div>
-    <div class="field"><label>Location (optional)</label><input id="np-location" placeholder="e.g. Columbus, OH"></div>
-    <div class="field"><label>Size (optional)</label><input id="np-size" placeholder="e.g. 45,000 SF"></div>
+    <div class="segmented" id="np-mode" style="margin-bottom:14px;">
+      <button type="button" data-mode="blank" class="active">Blank project</button>
+      <button type="button" data-mode="import">Import from&hellip;</button>
+    </div>
+    <div id="np-blank">
+      <div class="field"><label>Name</label><input id="np-name" placeholder="e.g. Lincoln Elementary"></div>
+      <div class="field"><label>Job number (optional)</label><input id="np-number"></div>
+      <div class="field"><label>Location (optional)</label><input id="np-location" placeholder="e.g. Columbus, OH"></div>
+      <div class="field"><label>Size (optional)</label><input id="np-size" placeholder="e.g. 45,000 SF"></div>
+    </div>
+    <div id="np-import" style="display:none;">
+      <div class="field">
+        <label>Import from</label>
+        <select id="np-source"><option value="">Loading&hellip;</option></select>
+      </div>
+      <p class="muted">Creates a new project with the source job's sheets and take-offs. You'll pick the job and
+        review what will be imported before anything is created.</p>
+    </div>
     <p class="error" id="np-error" style="display:none;"></p>
     <div class="modal-actions">
       <button type="button" id="np-cancel">Cancel</button>
       <button class="primary" type="button" id="np-create">Create</button>
     </div>
   `);
+  const errEl = document.getElementById('np-error');
+  const showError = (msg) => {
+    errEl.textContent = msg;
+    errEl.style.display = msg ? 'block' : 'none';
+  };
+  let mode = 'blank';
+  let sourcesLoaded = false;
+
+  async function loadSources() {
+    sourcesLoaded = true;
+    const select = document.getElementById('np-source');
+    try {
+      const { sources } = await api('GET', '/api/imports/sources');
+      select.innerHTML = sources
+        .map((s) => `<option value="${s.id}" ${s.configured ? '' : 'disabled'}>${s.label}${s.configured ? '' : ' (not configured)'}</option>`)
+        .join('');
+      const firstEnabled = sources.find((s) => s.configured);
+      if (firstEnabled) select.value = firstEnabled.id;
+      else showError('No import source is configured on this server.');
+    } catch (err) {
+      select.innerHTML = '';
+      showError(`Couldn't load import sources: ${err.message}`);
+    }
+  }
+
+  for (const btn of document.querySelectorAll('#np-mode button')) {
+    btn.addEventListener('click', () => {
+      mode = btn.dataset.mode;
+      for (const b of document.querySelectorAll('#np-mode button')) b.classList.toggle('active', b === btn);
+      document.getElementById('np-blank').style.display = mode === 'blank' ? '' : 'none';
+      document.getElementById('np-import').style.display = mode === 'import' ? '' : 'none';
+      document.getElementById('np-create').textContent = mode === 'blank' ? 'Create' : 'Continue';
+      showError('');
+      if (mode === 'import' && !sourcesLoaded) loadSources();
+    });
+  }
+
   document.getElementById('np-cancel').addEventListener('click', closeModal);
   document.getElementById('np-create').addEventListener('click', async () => {
-    const name = document.getElementById('np-name').value.trim();
-    if (!name) {
-      const err = document.getElementById('np-error');
-      err.textContent = 'Name is required.';
-      err.style.display = 'block';
+    if (mode === 'import') {
+      const source = document.getElementById('np-source').value;
+      if (!source) return showError('Pick an import source.');
+      window.location.href = `/import.html?source=${encodeURIComponent(source)}`;
       return;
     }
+    const name = document.getElementById('np-name').value.trim();
+    if (!name) return showError('Name is required.');
     const { project } = await api('POST', '/api/projects', {
       name,
       number: document.getElementById('np-number').value || null,
@@ -66,7 +118,6 @@ function openNewProjectModal() {
     window.location.href = `/viewer.html?projectId=${project.id}`;
   });
 }
-
 
 function syncLabel(info) {
   if (!navigator.onLine) return { status: 'offline', text: info.cachedSheetCount ? 'Offline · cached' : 'Offline · not synced' };

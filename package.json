@@ -8,7 +8,8 @@
     "create-admin": "node src/scripts/create-admin.js",
     "fix-path-separators": "node src/scripts/fix-path-separators.js",
     "migrate-flag-tags": "node src/scripts/migrate-flag-tags.js",
-    "set-password": "node src/scripts/set-password.js"
+    "set-password": "node src/scripts/set-password.js",
+    "import-planswift": "node src/scripts/import-planswift.js"
   },
   "keywords": [],
   "author": "",

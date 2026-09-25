@@ -9,6 +9,11 @@ module.exports = {
   storageDir: process.env.STORAGE_DIR || path.join(__dirname, '..', 'data'),
   pythonPath: process.env.PYTHON_PATH || 'python',
   tesseractPath: process.env.TESSERACT_PATH || 'tesseract',
+  // Root folder of PlanSwift local-storage jobs for "New project -> Import
+  // from PlanSwift" (src/lib/importers/planswift.js). On the office server
+  // it's a share like \\10.0.30.22\Public\PLANSWIFT\Jobs1 (forward slashes
+  // work too). Unset = the PlanSwift importer shows as not configured.
+  planswiftJobsDir: process.env.PLANSWIFT_JOBS_DIR || null,
   // Defaults point at the mkcert-issued files already sitting next to
   // server.js (src/10.0.30.50-key.pem / .pem) so this works unmodified on
   // the current box - override via env if the cert ever moves, gets
