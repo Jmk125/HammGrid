@@ -285,6 +285,27 @@ CREATE TABLE IF NOT EXISTS scale_zones (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Saved manual overlay alignment for a pair of sheet versions, so dragging
+-- the demo plan into line with the floor plan once sticks the next time
+-- anyone overlays that same pair. Keyed by the unordered version pair
+-- (version_lo < version_hi); sheet_lo/sheet_hi are the owning sheets of
+-- those versions, kept so a pair of DIFFERENT sheets can fall back to the
+-- most recent alignment between those same two sheets after either one is
+-- revised. `layers` is JSON: [{version_id, sheet_id, tx, ty, rotation}],
+-- tx/ty as fractions of the composite's width/height (resolution-independent).
+CREATE TABLE IF NOT EXISTS overlay_alignments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_lo INTEGER NOT NULL REFERENCES sheet_versions(id) ON DELETE CASCADE,
+  version_hi INTEGER NOT NULL REFERENCES sheet_versions(id) ON DELETE CASCADE,
+  sheet_lo INTEGER NOT NULL,
+  sheet_hi INTEGER NOT NULL,
+  layers TEXT NOT NULL,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (version_lo, version_hi)
+);
+CREATE INDEX IF NOT EXISTS idx_overlay_alignments_sheets ON overlay_alignments(sheet_lo, sheet_hi);
+
 -- A composite drawing is an ordinary sheets/sheet_versions row
 -- (sheets.is_composite = 1, see addColumnIfMissing in db/index.js) whose PDF/
 -- thumb/preview are baked by pyproc/compose.py from these fragments instead

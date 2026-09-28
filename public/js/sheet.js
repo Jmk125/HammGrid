@@ -1996,7 +1996,11 @@ function setupOverlayAlignDrag() {
     scheduleOverlayRecompute();
   }
   function endAlignDrag() {
+    if (!overlayDrag) return;
+    const t = overlayTransform[overlayAlignTarget];
+    const moved = t.tx !== overlayDrag.origTx || t.ty !== overlayDrag.origTy;
     overlayDrag = null;
+    if (moved) saveOverlayAlignment();
   }
   wrapEl.addEventListener('mousedown', startAlignDrag);
   window.addEventListener('mousemove', moveAlignDrag);
@@ -2055,6 +2059,7 @@ function wireOverlayControls() {
       overlayTransform[overlayAlignTarget].rotation = Number(btn.dataset.rotation);
       rotateGroup.querySelectorAll('button').forEach((b) => b.classList.toggle('active', b === btn));
       computeOverlay();
+      saveOverlayAlignment();
     });
   });
 
@@ -2069,6 +2074,7 @@ function wireOverlayControls() {
     overlayTransform[overlayAlignTarget] = { tx: 0, ty: 0, rotation: 0 };
     syncOverlayRotateGroup();
     computeOverlay();
+    saveOverlayAlignment();
   });
 
   document.getElementById('overlay-exit-btn').addEventListener('click', () => exitOverlay(true));
@@ -2171,8 +2177,67 @@ async function enterOverlay(aVersionId, bVersionId) {
 
   const statusEl = document.getElementById('pdf-status');
   statusEl.textContent = 'Loading overlay...';
-  await loadOverlayImages();
+  const [, saved] = await Promise.all([loadOverlayImages(), loadOverlayAlignment(aVersionId, bVersionId)]);
+  // Exited or switched to a different pair while loading - don't clobber it.
+  if (!overlayActive || overlayLayers.a !== aVersionId || overlayLayers.b !== bVersionId) return;
+  if (saved) {
+    overlayTransform = { a: saved[aVersionId], b: saved[bVersionId] };
+    syncOverlayRotateGroup();
+  }
   computeOverlay({ fit: true });
+  if (saved && [saved[aVersionId], saved[bVersionId]].some((t) => t.tx || t.ty || t.rotation)) {
+    showToast('Applied saved alignment. Use Reset to clear it.');
+  }
+}
+
+// ---------- Saved overlay alignment ----------
+// Every drag/rotate/reset is saved per version pair (server-side, shared by
+// everyone, see overlay_alignments in schema.sql) so re-overlaying the same
+// two drawings comes back already lined up. tx/ty are stored as fractions of
+// the composite's size so they survive a different render resolution.
+// localStorage mirrors it for offline use on the iPad.
+function overlayAlignmentStorageKey(idA, idB) {
+  return `overlayAlignment:${Math.min(idA, idB)}:${Math.max(idA, idB)}`;
+}
+
+function normalizedTransform(t) {
+  return { tx: t.tx / overlayCanonicalWidth, ty: t.ty / overlayCanonicalHeight, rotation: t.rotation };
+}
+
+function canonicalTransform(t) {
+  return {
+    tx: (Number(t && t.tx) || 0) * overlayCanonicalWidth,
+    ty: (Number(t && t.ty) || 0) * overlayCanonicalHeight,
+    rotation: Number(t && t.rotation) || 0,
+  };
+}
+
+// Returns { [versionId]: {tx, ty, rotation} } in canonical units, or null.
+async function loadOverlayAlignment(idA, idB) {
+  let transforms = null;
+  try {
+    ({ transforms } = await api('GET', `/api/sheet-versions/${idA}/alignment?with=${idB}`));
+  } catch (err) {
+    try {
+      transforms = JSON.parse(localStorage.getItem(overlayAlignmentStorageKey(idA, idB)));
+    } catch (e) {
+      transforms = null;
+    }
+  }
+  if (!transforms) return null;
+  return { [idA]: canonicalTransform(transforms[idA]), [idB]: canonicalTransform(transforms[idB]) };
+}
+
+function saveOverlayAlignment() {
+  if (!overlayActive || !overlayCanonicalWidth || !overlayCanonicalHeight) return;
+  const { a, b } = overlayLayers;
+  const transforms = { [a]: normalizedTransform(overlayTransform.a), [b]: normalizedTransform(overlayTransform.b) };
+  try {
+    localStorage.setItem(overlayAlignmentStorageKey(a, b), JSON.stringify(transforms));
+  } catch (e) {
+    // storage blocked/full - the server copy still works online
+  }
+  api('PUT', `/api/sheet-versions/${a}/alignment?with=${b}`, { transforms }).catch(() => {});
 }
 
 function exitOverlay(rerender) {
