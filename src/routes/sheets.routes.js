@@ -98,7 +98,16 @@ router.patch('/:sheetId', requireRole('admin', 'editor'), (req, res) => {
     .get(req.params.sheetId, req.params.projectId);
   if (!sheet) return res.status(404).json({ error: 'Not found' });
 
-  const { scale_feet_per_inch, sheet_number, discipline } = req.body;
+  const { scale_feet_per_inch, sheet_number, discipline, title, version_id } = req.body;
+
+  // The title lives on the version, not the sheet. Defaults to the current
+  // version; the revision "Modify" table passes the specific version it lists.
+  let titleVersionId = null;
+  if (title !== undefined) {
+    titleVersionId = version_id !== undefined ? Number(version_id) : sheet.current_version_id;
+    const owned = db.prepare('SELECT id FROM sheet_versions WHERE id = ? AND sheet_id = ?').get(titleVersionId, sheet.id);
+    if (!owned) return res.status(400).json({ error: 'Version does not belong to this sheet' });
+  }
 
   let nextNumber = sheet.sheet_number;
   if (sheet_number !== undefined) {
@@ -120,7 +129,17 @@ router.patch('/:sheetId', requireRole('admin', 'editor'), (req, res) => {
     scale_feet_per_inch === undefined ? sheet.scale_feet_per_inch : scale_feet_per_inch,
     sheet.id
   );
+  if (titleVersionId !== null) {
+    db.prepare('UPDATE sheet_versions SET title = ? WHERE id = ?').run(String(title).trim(), titleVersionId);
+  }
   const updated = db.prepare('SELECT * FROM sheets WHERE id = ?').get(sheet.id);
+  const currentVersion = updated.current_version_id
+    ? db.prepare('SELECT title, revision_id FROM sheet_versions WHERE id = ?').get(updated.current_version_id)
+    : null;
+  if (currentVersion) {
+    updated.current_title = currentVersion.title;
+    updated.current_revision_id = currentVersion.revision_id;
+  }
   res.json({ sheet: updated });
 });
 

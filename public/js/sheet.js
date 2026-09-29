@@ -630,6 +630,10 @@ function openEditSheetModal() {
       <input id="edit-sheet-number" autocomplete="off">
     </div>
     <div class="field">
+      <label>Name</label>
+      <input id="edit-sheet-title" autocomplete="off">
+    </div>
+    <div class="field">
       <label>Discipline</label>
       <input id="edit-sheet-discipline" placeholder="e.g. Architectural" autocomplete="off">
     </div>
@@ -645,6 +649,8 @@ function openEditSheetModal() {
   // attribute-escaping concern entirely.
   document.getElementById('edit-sheet-number').value = currentSheet.sheet_number;
   document.getElementById('edit-sheet-discipline').value = currentSheet.discipline || '';
+  const labelTitleEl = document.querySelector('.sheet-label .title');
+  document.getElementById('edit-sheet-title').value = labelTitleEl ? labelTitleEl.textContent : '';
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
   if (isAdmin) {
     document.getElementById('edit-sheet-delete').addEventListener('click', deleteCurrentSheet);
@@ -656,12 +662,12 @@ function openEditSheetModal() {
       const { sheet } = await api('PATCH', `/api/projects/${projectId}/sheets/${sheetId}`, {
         sheet_number: document.getElementById('edit-sheet-number').value,
         discipline: document.getElementById('edit-sheet-discipline').value.trim(),
+        title: document.getElementById('edit-sheet-title').value,
       });
       currentSheet.sheet_number = sheet.sheet_number;
       currentSheet.discipline = sheet.discipline;
       await updateCachedSheetMetadata(projectId, sheet);
-      const titleEl = document.querySelector('.sheet-label .title');
-      insertSheetLabel(currentSheet, titleEl ? titleEl.textContent : '');
+      insertSheetLabel(currentSheet, sheet.current_title || '');
       closeModal();
       showToast('Sheet updated.', 'success');
     } catch (err) {

@@ -106,6 +106,23 @@ router.get('/:revisionId', requireAuth, (req, res) => {
   res.json({ revision });
 });
 
+// Sheets already published in this revision (publishing clears staged_sheets,
+// so the Modify page needs these to show what the revision contains).
+router.get('/:revisionId/published-sheets', requireAuth, (req, res) => {
+  const revision = getRevisionOr404(req, res);
+  if (!revision) return;
+  const sheets = db
+    .prepare(
+      `SELECT sv.id AS version_id, s.id AS sheet_id, s.sheet_number, s.discipline, sv.title,
+              (s.current_version_id = sv.id) AS is_current
+       FROM sheet_versions sv JOIN sheets s ON s.id = sv.sheet_id
+       WHERE sv.revision_id = ?
+       ORDER BY natsort_key(s.sheet_number)`
+    )
+    .all(revision.id);
+  res.json({ sheets });
+});
+
 // Destructive and unrecoverable (like project delete), so it requires the
 // caller to echo back the revision's exact title - same defense-in-depth
 // reasoning as projects.routes.js's delete route.

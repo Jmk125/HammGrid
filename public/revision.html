@@ -64,6 +64,31 @@
             </div>
           </div>
 
+          <div class="pane-section" id="section-published" style="display:none;">
+            <button class="pane-section-header" type="button">
+              <span>Published sheets in this revision</span>
+              <span class="chevron">&#9662;</span>
+            </button>
+            <div class="pane-section-body">
+              <p class="muted">Edits save as you leave each field. Tick rows and use "Set discipline" to change many at once.</p>
+              <div class="row" style="margin-bottom:8px;">
+                <input id="pub-bulk-discipline" placeholder="Discipline" style="width:160px">
+                <button type="button" id="pub-bulk-apply">Set discipline on selected</button>
+              </div>
+              <table id="published-table">
+                <thead>
+                  <tr>
+                    <th><input type="checkbox" id="pub-select-all"></th>
+                    <th>Number</th>
+                    <th>Title</th>
+                    <th>Discipline</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
           <div class="pane-section" id="section-review">
             <button class="pane-section-header" type="button" data-section="review">
               <span>3. Review</span>
