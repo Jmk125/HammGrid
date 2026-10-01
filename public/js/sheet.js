@@ -3508,6 +3508,8 @@ function buildFreezePaneEl({ id, contentEl, left, top, pinState, label, collapse
     handle.addEventListener('mousedown', startResize);
     handle.addEventListener('touchstart', startResize, { passive: false });
   });
+
+  return { setPinState };
 }
 
 function createFreezePane(rect) {
@@ -3538,7 +3540,9 @@ function createFreezePane(rect) {
   // coding whenever overlay compare is (re)entered later.
   const versionId = overlayActive ? overlayLayers[freezeOverlaySourceLayer] : displayedVersionId;
 
-  buildFreezePaneEl({
+  // New panes start pinned to this drawing so they survive switching sheets;
+  // the pin button can still unpin or widen to every drawing.
+  const pane = buildFreezePaneEl({
     id: `${Date.now()}-${++freezePaneIdCounter}`,
     contentEl: captureCanvas,
     left: screenX,
@@ -3546,6 +3550,7 @@ function createFreezePane(rect) {
     pinState: 'off',
     versionId,
   });
+  pane.setPinState('sheet');
 }
 
 // A "sheet"-scoped entry only comes back on the sheet it was pinned from;
