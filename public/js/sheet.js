@@ -5136,6 +5136,32 @@ function distanceToSegment(p, a, b) {
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
+// True when any part of the instance's outline falls inside rect ({x0,x1,y0,y1}):
+// a vertex inside, or a segment crossing one of the rect's edges.
+function takeoffInstanceTouchesRect(inst, rect) {
+  const inRect = (p) => p.x >= rect.x0 && p.x <= rect.x1 && p.y >= rect.y0 && p.y <= rect.y1;
+  const ccw = (a, b, c) => (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+  const cross = (a, b, c, d) => ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
+  const corners = [
+    { x: rect.x0, y: rect.y0 },
+    { x: rect.x1, y: rect.y0 },
+    { x: rect.x1, y: rect.y1 },
+    { x: rect.x0, y: rect.y1 },
+  ];
+  const rings = [{ pts: inst.geometry.points, closed: inst.item_type === 'area' }];
+  for (const h of inst.geometry.holes || []) rings.push({ pts: h, closed: true });
+  for (const { pts, closed } of rings) {
+    if (pts.some(inRect)) return true;
+    const segCount = closed ? pts.length : pts.length - 1;
+    for (let i = 0; i < segCount; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      for (let k = 0; k < 4; k++) if (cross(a, b, corners[k], corners[(k + 1) % 4])) return true;
+    }
+  }
+  return false;
+}
+
 function hitTestTakeoffEditPoint(pt, radiusPx = 10) {
   if (!editingInstance) return null;
   const scale = zoomPan ? zoomPan.state.scale : 1;
@@ -5391,7 +5417,12 @@ function setupTakeoffEditInteraction() {
     // below) exits edit mode instead. With NEITHER tool armed (the default
     // on entering edit mode - see enterTakeoffEditMode), empty space has
     // nothing to interpret a drag as, so it just exits right away.
-    if (takeoffEditSelectMode === 'brush') {
+    if (!e.touches && (e.ctrlKey || e.metaKey)) {
+      // Ctrl+drag on empty space rubber-bands more pieces of this item into
+      // the selection (see finishTakeoffEditGesture) - never exits edit mode.
+      takeoffMarquee = { startPt: pt, currentPt: null, pieces: true };
+      renderTakeoffEditOverlay();
+    } else if (takeoffEditSelectMode === 'brush') {
       takeoffBrushStroke = { touchedAny: brushSelectPointsAt(pt, e.shiftKey) };
       takeoffEditDefaultSelection = false;
       renderTakeoffEditOverlay();
@@ -5464,6 +5495,26 @@ function setupTakeoffEditInteraction() {
       // than starting a technically-non-empty but practically-useless marquee.
       const scale = zoomPan ? zoomPan.state.scale : 1;
       const draggedEnough = currentPt && Math.hypot(currentPt.x - startPt.x, currentPt.y - startPt.y) > 3 / scale;
+      if (takeoffMarquee.pieces) {
+        takeoffMarquee = null;
+        if (draggedEnough && editingInstance) {
+          const rect = {
+            x0: Math.min(startPt.x, currentPt.x),
+            x1: Math.max(startPt.x, currentPt.x),
+            y0: Math.min(startPt.y, currentPt.y),
+            y1: Math.max(startPt.y, currentPt.y),
+          };
+          for (const inst of sheetTakeoffInstances) {
+            if (inst.id === editingInstance.id || inst.item_id !== editingInstance.item_id) continue;
+            if (hiddenTakeoffItemIds.has(inst.item_id)) continue;
+            if (takeoffInstanceTouchesRect(inst, rect)) extraSelectedInstanceIds.add(inst.id);
+          }
+          renderTakeoffInstances();
+          updateSelectedPiecesReadout();
+        }
+        renderTakeoffEditOverlay(); // clears the rubber band
+        return;
+      }
       if (draggedEnough && editingInstance) {
         const x0 = Math.min(startPt.x, currentPt.x);
         const x1 = Math.max(startPt.x, currentPt.x);
