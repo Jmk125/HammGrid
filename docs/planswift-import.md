@@ -36,6 +36,30 @@ plus the original CLI. Tested on real jobs 1234, 5713 - SD Hilltop and 5713 Bryd
 Config: `PLANSWIFT_JOBS_DIR` in `.env` (e.g. `\\10.0.30.22\Public\PLANSWIFT\Jobs1`; forward
 slashes also work). The account the server runs as needs read access to the share.
 
+## Refreshing an imported project from PlanSwift
+
+Project Settings → **PlanSwift link** (admin, imported projects only) → *Check for changes*.
+The job is re-converted with `--images none` (no TIFF→PDF re-encode, so much faster than an
+import), compared with the project, and a preview is shown; *Apply changes* runs the same code
+for real (`refreshPackage` in `planswift.js`; the preview is a rolled-back transaction).
+Routes: `GET /api/imports/link/:projectId`, `POST /api/imports/refresh`, `POST /api/imports/:id/refresh`.
+
+- **Links:** `projects.external_*` (job path, last synced), `sheets.external_id` (+`external_scale`),
+  `take_off_items.external_id/external_hash`, `take_off_instances.external_id/external_hash/local_hash`.
+  `external_id` is the PlanSwift GUID; NULL = created in HammGrid and never touched by a refresh.
+  A count shape's points are several instances sharing one shape GUID.
+- **Rules:** PlanSwift wins for linked shapes unless the HammGrid copy was edited since the last
+  sync (`local_hash` mismatch) — then it is kept and listed as a conflict. A shape deleted in
+  PlanSwift is deleted here unless edited (then it becomes HammGrid-only). Items take the
+  PlanSwift name/color/folder/properties only when those changed in PlanSwift. A page scale is
+  taken only when it changed in PlanSwift (or HammGrid had none). Sheets/items are never deleted.
+- **Older imports** (no links) are linked on their first refresh: sheets by sheet number, items by
+  name + type + folder, shapes by identical geometry. The job path comes from the `planswift_import`
+  activity-log row. Check the preview's "added" count before applying that first refresh.
+- **Not done:** pages added in PlanSwift are reported, not imported (needs images for just those
+  pages); a shape you delete in HammGrid that still exists in PlanSwift comes back on the next
+  refresh; HammGrid → PlanSwift is not implemented (option B/C in the feasibility review).
+
 ## PlanSwift local-storage format (what we learned)
 
 - A job is a folder tree; **every node is a folder with a `Data.xml`**:
