@@ -7,6 +7,11 @@
 //   5. POST /:importId/import {name, number}  create the project (one transaction)
 //      DELETE /:importId                      cancel - deletes the staging folder
 //      GET  /                                 unfinished imports, to resume one
+// Refreshing an already-imported project from its source job (Project Settings):
+//   GET  /link/:projectId                     is it linked? job path, last synced
+//   POST /refresh {project_id}                re-convert (no sheet images) -> import_id
+//   GET  /:importId                           poll; once ready, `refresh` = the preview of changes
+//   POST /:importId/refresh                   apply them (one transaction)
 // Each import stages into data/staging/imports/<importId>/ (meta.json +
 // package/); see lib/importers/index.js for cleanup of abandoned ones.
 const express = require('express');
@@ -81,7 +86,7 @@ router.get('/', requireAdmin, (req, res) => {
   for (const name of names) {
     const dir = importDir(name);
     const meta = dir && readMeta(dir);
-    if (!meta || !['converting', 'ready', 'error'].includes(meta.status)) continue;
+    if (!meta || meta.kind === 'refresh' || !['converting', 'ready', 'error'].includes(meta.status)) continue;
     const importer = getImporter(meta.source);
     const job = jobStore.getJob(meta.id);
     imports.push({
@@ -174,6 +179,84 @@ router.post('/sources/:source/convert', requireAdmin, (req, res) => {
   })();
 });
 
+router.get('/link/:projectId', requireAdmin, (req, res) => {
+  const projectId = Number(req.params.projectId);
+  const out = { linked_source: null };
+  for (const importer of listImporters()) {
+    const full = getImporter(importer.id);
+    const info = full.linkInfo && full.linkInfo(projectId);
+    if (info) {
+      out.linked_source = { id: full.id, label: full.label, configured: full.isConfigured(), job_path: info.sourcePath, synced_at: info.synced_at, linked: info.linked };
+      break;
+    }
+  }
+  res.json(out);
+});
+
+router.post('/refresh', requireAdmin, (req, res) => {
+  const projectId = Number(req.body && req.body.project_id);
+  const importer = getImporter('planswift');
+  if (!projectId || !importer || !importer.refreshPackage) return res.status(400).json({ error: 'project_id is required' });
+  if (!importer.isConfigured()) return res.status(400).json({ error: `${importer.label} import is not configured on this server` });
+  let job;
+  try {
+    job = importer.resolveLinkedJob(projectId);
+  } catch (err) {
+    return sendError(res, err, 'Cannot refresh');
+  }
+
+  const importId = jobStore.createJob();
+  const dir = importDir(importId);
+  fs.mkdirSync(dir, { recursive: true });
+  const meta = {
+    id: importId,
+    kind: 'refresh',
+    source: importer.id,
+    project_id: projectId,
+    job_path: job.rel,
+    job_name: job.name,
+    job_description: job.description,
+    created_by: req.session.user.id,
+    created_at: new Date().toISOString(),
+    status: 'converting',
+    error: null,
+  };
+  writeMeta(dir, meta);
+  res.status(202).json({ import_id: importId });
+
+  const controller = new AbortController();
+  running.set(importId, controller);
+  (async () => {
+    try {
+      // images: 'none' - a refresh only needs geometry/scale/names, not the
+      // minutes of TIFF -> PDF re-encoding a full import does.
+      await queue.enqueue(() =>
+        importer.convert({
+          jobDir: job.abs,
+          outDir: path.join(dir, 'package'),
+          images: 'none',
+          onProgress: (current, total) => jobStore.updateProgress(importId, current, total),
+          signal: controller.signal,
+        })
+      );
+      writeMeta(dir, { ...meta, status: 'ready' });
+      jobStore.completeJob(importId);
+    } catch (err) {
+      if (controller.signal.aborted) {
+        jobStore.failJob(importId, 'Cancelled');
+        return;
+      }
+      console.error('Refresh conversion failed', err);
+      const message = `Conversion failed: ${String(err.message).trim().split('\n').slice(-3).join(' ')}`;
+      writeMeta(dir, { ...meta, status: 'error', error: message });
+      jobStore.failJob(importId, message);
+    } finally {
+      running.delete(importId);
+      if (controller.signal.aborted) removeStaging(dir);
+    }
+  })();
+});
+
 router.get('/:importId', requireAdmin, (req, res) => {
   const found = getImportOr404(req, res);
   if (!found) return;
@@ -200,7 +283,14 @@ router.get('/:importId', requireAdmin, (req, res) => {
       progress: job ? job.progress : null,
     },
   };
-  if (status === 'ready') {
+  if (status === 'ready' && meta.kind === 'refresh') {
+    try {
+      // Preview only (rolled back) - Apply runs the same code for real.
+      payload.refresh = importer.refreshPackage({ pkgDir, projectId: meta.project_id, userId: req.session.user.id, apply: false });
+    } catch (err) {
+      return sendError(res, err, 'Could not compare with the PlanSwift job');
+    }
+  } else if (status === 'ready') {
     try {
       payload.review = importer.review(pkgDir, req.session.user.id);
     } catch (err) {
@@ -238,6 +328,27 @@ router.delete('/:importId', requireAdmin, (req, res) => {
   }
   removeStaging(dir);
   res.json({ ok: true });
+});
+
+router.post('/:importId/refresh', requireAdmin, (req, res) => {
+  const found = getImportOr404(req, res);
+  if (!found) return;
+  const { dir, meta, importer, pkgDir } = found;
+  if (meta.kind !== 'refresh') return res.status(400).json({ error: 'Not a refresh' });
+  if (meta.status !== 'ready') return res.status(409).json({ error: 'This refresh is not ready yet' });
+  if (importing.has(meta.id)) return res.status(409).json({ error: 'This refresh is already running' });
+
+  importing.add(meta.id);
+  try {
+    const result = importer.refreshPackage({ pkgDir, projectId: meta.project_id, userId: req.session.user.id, apply: true });
+    writeMeta(dir, { ...meta, status: 'imported' });
+    removeStaging(dir);
+    res.json({ plan: result.plan });
+  } catch (err) {
+    sendError(res, err, 'Refresh failed');
+  } finally {
+    importing.delete(meta.id);
+  }
 });
 
 router.post('/:importId/import', requireAdmin, (req, res) => {

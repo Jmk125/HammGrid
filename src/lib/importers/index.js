@@ -10,6 +10,9 @@
 //   review(pkgDir, userId)  -> { job, defaults: { name, number }, sheets, stats, warnings }
 //   sheetThumbPath(pkgDir, key)  -> file path or null
 //   importPackage({ pkgDir, name, number, userId, dryRun })  -> { projectId, projectName, stats, warnings }
+//   (optional, for "Refresh from source" in Project Settings:)
+//   linkInfo(projectId) -> null | { sourcePath, synced_at, linked };  resolveLinkedJob(projectId) -> like resolveJob;
+//   refreshPackage({ pkgDir, projectId, userId, apply }) -> { plan, warnings }  (apply=false = preview, rolled back)
 //
 // To add a source: write src/lib/importers/<source>.js with that shape and
 // list it here.

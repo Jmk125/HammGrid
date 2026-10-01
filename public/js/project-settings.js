@@ -357,6 +357,120 @@ document.getElementById('settings-form').addEventListener('submit', async (e) =>
   }
 });
 
+// ---- PlanSwift link (admin, imported projects only) --------------------------
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function setupPlanswiftLink() {
+  const card = document.getElementById('planswift-card');
+  const infoEl = document.getElementById('planswift-info');
+  const btn = document.getElementById('planswift-check-btn');
+  const statusEl = document.getElementById('planswift-status');
+  const resultEl = document.getElementById('planswift-result');
+  let link;
+  try {
+    ({ linked_source: link } = await api('GET', `/api/imports/link/${projectId}`));
+  } catch (err) {
+    return; // not available - leave the card hidden
+  }
+  if (!link) return;
+  card.style.display = '';
+  const renderInfo = (l) => {
+    infoEl.textContent = `Job: ${l.job_path || 'unknown'} · ${l.synced_at ? `last refreshed ${l.synced_at} UTC` : 'never refreshed'}`;
+  };
+  renderInfo(link);
+  if (!link.configured) {
+    btn.disabled = true;
+    statusEl.textContent = 'PlanSwift jobs folder is not configured on this server.';
+    return;
+  }
+
+  let importId = null;
+  const reset = () => { importId = null; btn.disabled = false; resultEl.style.display = 'none'; resultEl.innerHTML = ''; };
+
+  const list = (items) => `<ul style="margin:4px 0 0 18px;">${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`;
+  function renderPlan({ plan, warnings }) {
+    const { sheets, items, shapes } = plan;
+    const changes = shapes.added + shapes.changed + shapes.removed + items.added + items.updated + sheets.scaleChanged + shapes.linked + items.linked + sheets.linked;
+    const lines = [];
+    if (sheets.linked || items.linked || shapes.linked) {
+      lines.push(`<p><b>First refresh of this project.</b> Matched ${sheets.linked} sheets, ${items.linked} items and ${shapes.linked} shapes already here to the PlanSwift job. If "added" below is far more than you expect, something here was edited since import — cancel and check before applying.</p>`);
+    }
+    lines.push(`<table style="width:auto;"><tbody>
+      <tr><td>Shapes added</td><td><b>${shapes.added}</b></td></tr>
+      <tr><td>Shapes changed in PlanSwift</td><td><b>${shapes.changed}</b></td></tr>
+      <tr><td>Shapes removed in PlanSwift</td><td><b>${shapes.removed}</b></td></tr>
+      <tr><td>Shapes unchanged</td><td>${shapes.unchanged}</td></tr>
+      <tr><td>Take-off items added / updated</td><td><b>${items.added}</b> / <b>${items.updated}</b></td></tr>
+      <tr><td>Page scales changed</td><td><b>${sheets.scaleChanged}</b></td></tr>
+    </tbody></table>`);
+    if (!changes && !shapes.conflicts.length && !shapes.keptLocal.length) lines.push('<p>Already up to date.</p>');
+    if (shapes.conflicts.length) {
+      lines.push(`<p><b>${shapes.conflicts.length} shape(s) changed in both places</b> — your edit here is kept, PlanSwift's change is not applied:${list(shapes.conflicts.slice(0, 15).map((c) => `${c.item} on ${c.sheet}`))}${shapes.conflicts.length > 15 ? `<span class="muted">…and ${shapes.conflicts.length - 15} more</span>` : ''}</p>`);
+    }
+    if (shapes.keptLocal.length) {
+      lines.push(`<p><b>${shapes.keptLocal.length} shape(s) deleted in PlanSwift but edited here</b> — kept as HammGrid-only shapes.</p>`);
+    }
+    if (sheets.newPages.length) {
+      lines.push(`<p class="muted">${sheets.newPages.length} PlanSwift page(s) are not in this project and were not added (take-offs on them are skipped): ${esc(sheets.newPages.slice(0, 12).join(', '))}${sheets.newPages.length > 12 ? '…' : ''}</p>`);
+    }
+    if (sheets.missing.length) {
+      lines.push(`<p class="muted">${sheets.missing.length} sheet(s) here no longer exist in PlanSwift (left alone): ${esc(sheets.missing.slice(0, 12).join(', '))}</p>`);
+    }
+    if (warnings.length) {
+      lines.push(`<details><summary class="muted">${warnings.length} warning(s)</summary>${list(warnings.slice(0, 50))}</details>`);
+    }
+    lines.push('<div class="row" style="margin-top:8px;"><button class="primary" type="button" id="planswift-apply-btn">Apply changes</button><button type="button" id="planswift-cancel-btn">Cancel</button></div>');
+    resultEl.innerHTML = lines.join('');
+    resultEl.style.display = '';
+    document.getElementById('planswift-cancel-btn').addEventListener('click', async () => {
+      try { await api('DELETE', `/api/imports/${importId}`); } catch (err) { /* staging cleanup is best effort */ }
+      statusEl.textContent = '';
+      reset();
+    });
+    document.getElementById('planswift-apply-btn').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      statusEl.textContent = 'Applying…';
+      try {
+        const out = await api('POST', `/api/imports/${importId}/refresh`);
+        const p = out.plan;
+        showToast(`PlanSwift refresh applied: ${p.shapes.added} added, ${p.shapes.changed} changed, ${p.shapes.removed} removed.`, 'success');
+        statusEl.textContent = 'Refreshed.';
+        reset();
+        ({ linked_source: link } = await api('GET', `/api/imports/link/${projectId}`));
+        if (link) renderInfo(link);
+      } catch (err) {
+        statusEl.textContent = `Failed: ${err.message}`;
+        e.target.disabled = false;
+      }
+    });
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    resultEl.style.display = 'none';
+    statusEl.textContent = 'Starting…';
+    try {
+      ({ import_id: importId } = await api('POST', '/api/imports/refresh', { project_id: Number(projectId) }));
+      for (;;) {
+        const data = await api('GET', `/api/imports/${importId}`);
+        const imp = data.import;
+        if (imp.status === 'error' || imp.status === 'cancelled') throw new Error(imp.error || 'Cancelled');
+        if (imp.status === 'ready') {
+          statusEl.textContent = 'Compared with PlanSwift.';
+          renderPlan(data.refresh);
+          return;
+        }
+        statusEl.textContent = imp.progress ? `Reading PlanSwift job… page ${imp.progress.current} of ${imp.progress.total}` : 'Reading PlanSwift job…';
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    } catch (err) {
+      statusEl.textContent = `Failed: ${err.message}`;
+      if (importId) { try { await api('DELETE', `/api/imports/${importId}`); } catch (e) { /* best effort */ } }
+      reset();
+    }
+  });
+}
+
 (async function init() {
   const me = await requireSession();
   if (!me) return;
@@ -376,5 +490,6 @@ document.getElementById('settings-form').addEventListener('submit', async (e) =>
   if (me.role === 'admin') {
     document.getElementById('danger-zone').style.display = '';
     document.getElementById('delete-project-btn').addEventListener('click', openDeleteConfirm);
+    setupPlanswiftLink();
   }
 })();
