@@ -20,6 +20,11 @@
               <select id="flags-tag-filter"><option value="">All</option></select>
             </label>
           </div>
+          <div class="row">
+            <button type="button" id="flags-export-btn" title="Download the flags shown below as a spreadsheet (CSV)">Export to spreadsheet</button>
+            <button type="button" id="flags-import-btn" title="Update or add flags from a spreadsheet exported here">Import from spreadsheet</button>
+            <input type="file" id="flags-import-file" accept=".csv,text/csv" style="display:none;">
+          </div>
         </div>
 
         <p class="muted" id="flags-offline-note" style="display:none;">Offline - showing flags saved on this device at the last sync.</p>
