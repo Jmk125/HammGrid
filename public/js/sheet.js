@@ -2565,6 +2565,10 @@ let arcThroughPoint = null; // set once - next click is the arc's endpoint and c
 // committed instance is selected; edits apply to it live and PATCH to the
 // server on drop/delete, only diverging from the server copy mid-drag.
 let editingInstance = null;
+// Extra pieces of editingInstance's item Ctrl+clicked into the selection, so
+// their combined quantity can be read off the bottom bar. Selection only -
+// vertex edits still apply to editingInstance alone (see renderTakeoffInstances).
+const extraSelectedInstanceIds = new Set();
 let editSelectedPointIndices = new Set();
 let takeoffEditDrag = null; // { startPt, moved }
 let takeoffMarquee = null; // { startPt, currentPt }
@@ -4410,6 +4414,14 @@ function renderTakeoffInstances() {
   layer.innerHTML = '';
   layer.classList.toggle('edit-enabled', !takeoffTool);
   const scale = zoomPan ? zoomPan.state.scale : 1;
+  // Drop selected pieces that were deleted, moved to another item, or are no
+  // longer in the item being edited.
+  for (const id of [...extraSelectedInstanceIds]) {
+    const inst = sheetTakeoffInstances.find((i) => i.id === id);
+    if (!editingInstance || !inst || inst.item_id !== editingInstance.item_id || inst.id === editingInstance.id) {
+      extraSelectedInstanceIds.delete(id);
+    }
+  }
   for (const inst of sheetTakeoffInstances) {
     if (editingInstance && inst.id === editingInstance.id) continue; // drawn by the edit overlay instead
     if (hiddenTakeoffItemIds.has(inst.item_id)) continue; // per-sheet visual hide, not a delete
@@ -4451,6 +4463,15 @@ function renderTakeoffInstances() {
       if (markupsController && markupsController.isToolActive()) return;
       if (takeoffLongPressSuppressClick) return; // long-press just opened the menu - don't also enter edit mode
       e.stopPropagation();
+      // Ctrl/Cmd+click adds or removes another piece of the item already being
+      // edited; anything else (different item, no edit yet) starts fresh.
+      if ((e.ctrlKey || e.metaKey) && editingInstance && editingInstance.item_id === inst.item_id) {
+        if (extraSelectedInstanceIds.has(inst.id)) extraSelectedInstanceIds.delete(inst.id);
+        else extraSelectedInstanceIds.add(inst.id);
+        renderTakeoffInstances();
+        updateSelectedPiecesReadout();
+        return;
+      }
       enterTakeoffEditMode(inst);
     });
     el.addEventListener('contextmenu', (e) => {
@@ -4472,8 +4493,41 @@ function renderTakeoffInstances() {
     el.addEventListener('mousemove', positionTakeoffTooltip);
     el.addEventListener('mouseleave', hideTakeoffTooltip);
     layer.appendChild(el);
+    if (extraSelectedInstanceIds.has(inst.id)) {
+      // Same green selected-point handles edit mode uses, but display-only.
+      const rings = [pts, ...(inst.geometry.holes || [])];
+      for (const ring of rings) {
+        for (const p of ring) {
+          const c = measureSvgNs('circle');
+          c.setAttribute('cx', p.x);
+          c.setAttribute('cy', p.y);
+          c.setAttribute('r', 7 / scale);
+          c.setAttribute('fill', '#16a34a');
+          c.setAttribute('stroke', '#16a34a');
+          c.setAttribute('stroke-width', 2 / scale);
+          c.style.pointerEvents = 'none';
+          layer.appendChild(c);
+        }
+      }
+    }
   }
   renderTakeoffLegend();
+}
+
+// Combined quantity of the piece being edited plus any Ctrl+clicked extras,
+// shown in the bottom bar's quantity slot next to the item name.
+function updateSelectedPiecesReadout() {
+  const el = document.getElementById('takeoff-item-actions-live-qty');
+  if (!el || activeTakeoffItemId) return; // armed placement owns this slot (see updateLiveTakeoffQuantity)
+  const item = editingInstance && takeoffItems.find((i) => i.id === editingInstance.item_id);
+  if (!item) return;
+  let total = editingInstance.quantity;
+  for (const id of extraSelectedInstanceIds) {
+    const inst = sheetTakeoffInstances.find((i) => i.id === id);
+    if (inst) total += inst.quantity;
+  }
+  const n = extraSelectedInstanceIds.size + 1;
+  el.textContent = `${n > 1 ? `${n} pieces: ` : ''}${formatTakeoffQuantity(item, total)}`;
 }
 
 // ---------- Take-off legend overlay (Reference pane's toggle button) ----------
@@ -4900,6 +4954,7 @@ function ensureTakeoffEditLayer() {
 
 function enterTakeoffEditMode(instance) {
   if (editingInstance && editingInstance.id === instance.id) return;
+  extraSelectedInstanceIds.clear();
   if (freezeArmed) disarmFreezePane();
   // Deep-ish copy of geometry so live drag edits don't mutate the shared
   // sheetTakeoffInstances array until they're actually persisted.
@@ -4930,6 +4985,7 @@ function enterTakeoffEditMode(instance) {
 function exitTakeoffEditMode() {
   if (!editingInstance) return;
   editingInstance = null;
+  extraSelectedInstanceIds.clear();
   editSelectedPointIndices = new Set();
   takeoffBrushStroke = null;
   takeoffBrushCursorPt = null;
@@ -5262,6 +5318,9 @@ function setupTakeoffEditInteraction() {
   function handleTakeoffEditPointerDown(e) {
     if (!editingInstance) return;
     if (!e.touches && e.button !== 0) return;
+    // Ctrl/Cmd+mousedown on another committed piece is the multi-select click
+    // (handled by that piece's click listener) - don't treat it as empty space.
+    if (!e.touches && (e.ctrlKey || e.metaKey) && e.target.closest && e.target.closest('#takeoff-instances-layer')) return;
     e.stopPropagation();
     const pt = getMeasureSvgPoint(e);
     // Touch gets a bigger hit radius than mouse - a fingertip is nowhere
@@ -7700,6 +7759,7 @@ function showTakeoffItemActionsBar(item, isArmed) {
   document.getElementById('takeoff-item-actions-delete').style.display = isMulti ? 'none' : '';
   document.getElementById('takeoff-item-actions-stop').textContent = isArmed ? 'Stop' : 'Start';
   group.style.display = 'flex';
+  updateSelectedPiecesReadout();
 }
 
 // Assemblies reuse the exact same group DOM as an item's - just a different
