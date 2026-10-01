@@ -23,6 +23,16 @@ def draw_markup(page, m):
     elif t in ('rect','cloud'):
         rect=fitz.Rect(g.get('x',0)*w,g.get('y',0)*h,(g.get('x',0)+g.get('w',0))*w,(g.get('y',0)+g.get('h',0))*h)
         page.draw_rect(rect,color=c,width=width)
+    elif t=='text' and (g.get('w') or 0)>0 and (g.get('h') or 0)>0:
+        # Text box: wrapped text in a white bordered box. Font size is in on-screen
+        # sheet units (the sheet is rendered ~ page-width px), so scale by page width.
+        rect=fitz.Rect(g.get('x',0)*w,g.get('y',0)*h,(g.get('x',0)+g.get('w',0))*w,(g.get('y',0)+g.get('h',0))*h)
+        page.draw_rect(rect,color=c,fill=(1,1,1),width=width)
+        fs=14
+        inner=fitz.Rect(rect.x0+4,rect.y0+3,rect.x1-4,rect.y1-3)
+        # Shrink until the text fits the drawn box (insert_textbox returns <0 on overflow).
+        while fs>=5 and page.insert_textbox(inner,str(g.get('text','')),color=c,fontsize=fs,fontname='helv')<0:
+            fs-=1
     elif t=='text':
         page.insert_text(fitz.Point(g.get('x',0)*w,g.get('y',0)*h), str(g.get('text','')), color=c, fontsize=14)
 

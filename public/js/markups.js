@@ -1,5 +1,6 @@
 import { getCachedMarkupsForSheet, cacheMarkup } from '/js/offline-store.js';
 import { openDocPicker } from '/js/docPicker.js';
+import { isTextbox, textboxLayout, buildTextboxNode } from '/js/textbox.js';
 import { confirmModal, promptModal, showToast, openModal, closeModal } from '/js/shell.js';
 import { getDefaultPhotoFolderId, setDefaultPhotoFolderId } from '/js/photoPinDefaultFolder.js';
 import {
@@ -26,6 +27,8 @@ const TOOL_ICONS = {
   cloud:
     '<svg viewBox="0 0 20 20"><path d="M5 14c-1.7 0-3-1.3-3-3 0-1.5 1.1-2.7 2.5-3-0.1-0.3-0.1-0.6-0.1-0.9 0-1.9 1.6-3.5 3.5-3.5 1.2 0 2.3 0.6 2.9 1.6 0.4-0.2 0.9-0.3 1.4-0.3 1.7 0 3.1 1.3 3.2 3 1.5 0.3 2.6 1.6 2.6 3.1 0 1.7-1.3 3-3 3H5z" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linejoin="round"/></svg>',
   text: '<svg viewBox="0 0 20 20"><text x="4" y="15" font-size="14" font-weight="700" fill="currentColor" font-family="sans-serif">T</text></svg>',
+  textbox:
+    '<svg viewBox="0 0 20 20"><rect x="2.5" y="4" width="15" height="12" stroke="currentColor" stroke-width="1.6" fill="none"/><line x1="5.5" y1="8" x2="14.5" y2="8" stroke="currentColor" stroke-width="1.4"/><line x1="5.5" y1="11.5" x2="11.5" y2="11.5" stroke="currentColor" stroke-width="1.4"/></svg>',
   flag: '<svg viewBox="0 0 20 20"><path d="M5 17V3h11l-3 4 3 4H5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
   // Facing-direction pin: a dot with a wedge pointing "up", matching how a
   // placed photo pin renders on the sheet (see photoConePathD) before the
@@ -364,6 +367,10 @@ export function initMarkups({
       const y2 = m.geometry.y2 * h;
       return { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) };
     }
+    if (isTextbox(m)) {
+      const L = textboxLayout(m, w, h);
+      return { x: L.x, y: L.y, w: L.w, h: L.h };
+    }
     if (m.type === 'text') {
       return { x: m.geometry.x * w, y: m.geometry.y * h - 16, w: 10, h: 16 };
     }
@@ -410,6 +417,9 @@ export function initMarkups({
       node.setAttribute('stroke-width', strokeWidth);
       node.setAttribute('fill', '#ffffff');
       node.setAttribute('fill-opacity', '0.001');
+      node.style.pointerEvents = 'all';
+    } else if (isTextbox(m)) {
+      node = buildTextboxNode(m, w, h, { color, strokeWidth });
       node.style.pointerEvents = 'all';
     } else if (m.type === 'text') {
       node = el('text');
@@ -517,7 +527,7 @@ export function initMarkups({
         m.geometry.x2 = pt.x / w;
         m.geometry.y2 = pt.y / h;
       });
-    } else if (m.type === 'rect' || m.type === 'cloud' || m.type === 'flag') {
+    } else if (m.type === 'rect' || m.type === 'cloud' || m.type === 'flag' || isTextbox(m)) {
       const corners = [
         ['x', 'y'],
         ['x2', 'y'],
@@ -772,6 +782,20 @@ export function initMarkups({
         renderAll();
       });
       buttonRow.appendChild(editBtn);
+    }
+
+    if (m.type === 'text' && perm.canEdit) {
+      const textBtn = document.createElement('button');
+      textBtn.type = 'button';
+      textBtn.textContent = 'Edit text';
+      textBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const text = await textboxModal({ title: 'Edit text', defaultValue: m.geometry.text || '', multiline: isTextbox(m) });
+        if (text == null) return;
+        await patchMarkup(m, { geometry: { ...m.geometry, text } });
+        renderAll();
+      });
+      buttonRow.appendChild(textBtn);
     }
 
     if (perm.canDelete) {
@@ -1573,6 +1597,33 @@ export function initMarkups({
     });
   }
 
+  // promptModal is single-line; a text box comment wants real line breaks.
+  function textboxModal({ title, defaultValue = '', multiline = true }) {
+    return new Promise((resolve) => {
+      openModal(`
+        <h2>${escapeHtml(title)}</h2>
+        <div class="field">
+          <textarea id="textbox-modal-input" rows="${multiline ? 6 : 2}" style="width:100%;" placeholder="Comment">${escapeHtml(defaultValue)}</textarea>
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="modal-cancel">Cancel</button>
+          <button class="primary" type="button" id="modal-confirm">OK</button>
+        </div>
+      `);
+      const input = document.getElementById('textbox-modal-input');
+      input.focus();
+      let done = false;
+      const finish = (v) => {
+        if (done) return;
+        done = true;
+        closeModal();
+        resolve(v);
+      };
+      document.getElementById('modal-cancel').addEventListener('click', () => finish(null));
+      document.getElementById('modal-confirm').addEventListener('click', () => finish(input.value.trim()));
+    });
+  }
+
   function activateTool(tool) {
     // Drawing with markups hidden would place one you can't see.
     if (tool !== 'select' && markupsHidden) {
@@ -1595,6 +1646,7 @@ export function initMarkups({
     { tool: 'cloud-small', icon: TOOL_ICONS.cloud, badge: 'S', title: 'Cloud (small)' },
     { tool: 'cloud-large', icon: TOOL_ICONS.cloud, badge: 'L', title: 'Cloud (large)' },
     { tool: 'text', icon: TOOL_ICONS.text, title: 'Text' },
+    { tool: 'textbox', icon: TOOL_ICONS.textbox, title: 'Text box - drag a box, type a comment' },
     { tool: 'flag', icon: TOOL_ICONS.flag, title: 'Flag (F)' },
     // Placing one uploads a photo (POST /documents), which the server
     // restricts to admin/editor (documents.routes.js) same as any other
@@ -1813,6 +1865,14 @@ export function initMarkups({
         return true;
       }
       geometry = { x: x0 / w, y: y0 / h, w: bw / w, h: bh / h };
+    }
+    if (type === 'textbox') {
+      activateTool('select');
+      const text = await textboxModal({ title: 'Add text box', multiline: true });
+      if (!text) return true;
+      const markup = await createMarkup('text', { ...geometry, text }, { fontSize: 20 });
+      if (markup) selectMarkup(markup.id);
+      return true;
     }
     if (type === 'flag') {
       geometry.description = '';
