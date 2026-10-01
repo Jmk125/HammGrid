@@ -268,7 +268,91 @@ function setSort(column) {
   renderTable();
 }
 
+function csvCell(value) {
+  const s = String(value ?? '');
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// Exports what the table currently shows (so search/tag filters apply).
+// The ID column is what lets a re-import update these same flags in place.
+function exportFlags() {
+  const flags = visibleFlags().filter((f) => !f.pending);
+  if (!flags.length) {
+    showToast('No flags to export.', 'error');
+    return;
+  }
+  const header = ['ID', ...(combinedMode ? ['Project'] : []), 'Location', 'Type', 'Page', 'Description', 'Comment', 'Tags', 'Visibility', 'Author', 'Created'];
+  const lines = [header.map(csvCell).join(',')];
+  for (const f of flags) {
+    lines.push(
+      [
+        f.id,
+        ...(combinedMode ? [f.project_name || ''] : []),
+        f.location,
+        f.location_type === 'document' ? 'Document' : 'Sheet',
+        f.location_type === 'document' ? f.geometry.page || 1 : '',
+        f.geometry.description || '',
+        f.geometry.comment || '',
+        (f.geometry.tags || []).join(', '),
+        f.visibility,
+        f.author_name,
+        f.created_at ? f.created_at.slice(0, 10) : '',
+      ]
+        .map(csvCell)
+        .join(',')
+    );
+  }
+  // BOM so Excel reads it as UTF-8.
+  const blob = new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `flags-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function importFlags(file) {
+  if (loadedOffline) {
+    showToast('Importing flags needs a connection.', 'error');
+    return;
+  }
+  const csv = await file.text();
+  try {
+    const r = await api('POST', `/api/projects/${projectId}/flags/import`, { csv });
+    await loadFlags();
+    const summary = `Imported: ${r.updated} updated, ${r.created} added, ${r.unchanged} unchanged` + (r.skipped.length ? `, ${r.skipped.length} skipped.` : '.');
+    if (r.skipped.length) {
+      const details = r.skipped
+        .slice(0, 8)
+        .map((s) => `Row ${s.row}: ${s.reason}`)
+        .join('\n');
+      alert(`${summary}\n\n${details}${r.skipped.length > 8 ? `\n...and ${r.skipped.length - 8} more` : ''}`);
+    } else {
+      showToast(summary, 'success');
+    }
+  } catch (err) {
+    showToast(err.message || 'Import failed.', 'error');
+  }
+}
+
 function setupControls() {
+  document.getElementById('flags-export-btn').addEventListener('click', exportFlags);
+  const importBtn = document.getElementById('flags-import-btn');
+  const importFile = document.getElementById('flags-import-file');
+  if (combinedMode) {
+    // Import targets one project's sheets/documents by name, which is
+    // ambiguous across several - do it from a single project's flags page.
+    importBtn.style.display = 'none';
+  } else {
+    importBtn.addEventListener('click', () => importFile.click());
+    importFile.addEventListener('change', async () => {
+      const file = importFile.files[0];
+      importFile.value = '';
+      if (file) await importFlags(file);
+    });
+  }
   document.getElementById('flags-search').addEventListener('input', (e) => {
     searchTerm = e.target.value.trim().toLowerCase();
     renderTable();
