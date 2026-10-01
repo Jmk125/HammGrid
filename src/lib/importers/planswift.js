@@ -8,6 +8,7 @@
 //
 // Used by routes/imports.routes.js (New project -> Import from PlanSwift) and
 // by the CLI, src/scripts/import-planswift.js.
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
@@ -194,8 +195,9 @@ function resolveJob(root, relPath) {
 
 // Runs the converter into outDir. Returns the converter's summary JSON.
 // Aborting signal kills the converter (cancel).
-function convert({ jobDir, outDir, onProgress, signal }) {
-  return runPythonWithProgress(CONVERT_SCRIPT, ['--json', jobDir, '-o', outDir], onProgress || (() => {}), {
+function convert({ jobDir, outDir, onProgress, signal, images }) {
+  const args = ['--json', jobDir, '-o', outDir, ...(images ? ['--images', images] : [])];
+  return runPythonWithProgress(CONVERT_SCRIPT, args, onProgress || (() => {}), {
     timeout: CONVERT_TIMEOUT_MS,
     signal,
   });
@@ -291,6 +293,74 @@ function areaFeet(ptsPt, fpi) {
 
 const KIND_TO_TYPE = { area: 'area', linear: 'linear', count: 'count' };
 
+const sha = (s) => crypto.createHash('sha1').update(String(s)).digest('hex');
+const upper = (s) => String(s || '').toUpperCase();
+
+// Fingerprint of one stored instance row. Recorded when import/refresh writes
+// a row and compared later: a mismatch means somebody edited it in HammGrid.
+const localHash = (sheetId, geometry, quantity, perimeter) =>
+  sha(`${sheetId}|${geometry}|${quantity}|${perimeter == null ? '' : perimeter}`);
+
+// The shapes of an item that can become instances: the first drawable kind's
+// shapes only (a mixed item is imported as its first kind, as before).
+function planItem(item) {
+  const shapes = (item.shapes || []).filter((sh) => KIND_TO_TYPE[sh.kind] && sh.points_pt && sh.points_pt.length);
+  if (!shapes.length) return null;
+  const kinds = [...new Set(shapes.map((sh) => sh.kind))];
+  return { type: KIND_TO_TYPE[kinds[0]], kind: kinds[0], mixed: kinds.length > 1 ? kinds : null, shapes };
+}
+
+// What an item looks like in HammGrid, plus a hash of it so a refresh can tell
+// whether the PlanSwift side changed since the last import/refresh.
+function itemFields(item, type, itemById) {
+  const chain = [];
+  let p = item.parent_id ? itemById.get(item.parent_id) : null;
+  while (p) {
+    chain.unshift(p.name);
+    if (!p.parent_id) { chain.unshift(...(p.folder || [])); break; }
+    p = itemById.get(p.parent_id);
+  }
+  const folderNames = item.parent_id ? chain : item.folder || [];
+  const fields = {
+    name: item.name || 'PlanSwift item',
+    color: item.color || '#2563eb',
+    properties: JSON.stringify(item.numeric_properties || []),
+    folderNames,
+  };
+  return { ...fields, type, hash: sha(JSON.stringify([fields, type])) };
+}
+
+// One PlanSwift shape -> the instance rows HammGrid stores for it (a count
+// shape becomes one row per point). Returns { rows, cutouts, hash } or
+// { skip, warn } (warn = worth telling the user, not just a degenerate shape).
+function shapeToRows(type, sh, sheet, hgSheetId) {
+  if (!sheet || !hgSheetId) return { skip: 'a missing sheet', warn: true };
+  const fpi = sheet.scale && sheet.scale.feet_per_inch;
+  if (!fpi && type !== 'count') return { skip: `unscaled sheet ${sheet.sheet_number}`, warn: true };
+  const k = renderScaleFor(sheet);
+  const toPx = ([x, y]) => ({ x: x * k, y: y * k });
+  const rows = [];
+  let cutouts = 0;
+  if (type === 'count') {
+    // HammGrid stores one instance (quantity 1) per counted click.
+    for (const p of sh.points_pt) rows.push({ geometry: JSON.stringify({ points: [toPx(p)] }), quantity: 1, perimeter: null });
+  } else if (type === 'area') {
+    if (sh.points_pt.length < 3) return { skip: 'a degenerate shape', warn: false };
+    // Cutouts (PlanSwift Subtract Sections) -> geometry.holes, same shape
+    // sheet.js writes; net area = outer - holes (netAreaFeet), perimeter =
+    // outer boundary only (polygonPerimeterFeet).
+    const holes = (sh.holes_pt || []).filter((h) => h && h.length >= 3);
+    const quantity = Math.max(0, areaFeet(sh.points_pt, fpi) - holes.reduce((t, h) => t + areaFeet(h, fpi), 0));
+    const geometry = { points: sh.points_pt.map(toPx) };
+    if (holes.length) { geometry.holes = holes.map((h) => h.map(toPx)); cutouts = holes.length; }
+    rows.push({ geometry: JSON.stringify(geometry), quantity, perimeter: lengthFeet(sh.points_pt, fpi, true) });
+  } else {
+    if (sh.points_pt.length < 2) return { skip: 'a degenerate shape', warn: false };
+    rows.push({ geometry: JSON.stringify({ points: sh.points_pt.map(toPx) }), quantity: lengthFeet(sh.points_pt, fpi, false), perimeter: null });
+  }
+  return { rows, cutouts, sheetId: hgSheetId, hash: sha(JSON.stringify([hgSheetId, rows])) };
+}
+
 // Imports a converted package as a new, published project. Everything is
 // inserted in one transaction (same end state as upload -> review ->
 // publish); copied files are removed again if it fails. dryRun runs the whole
@@ -334,8 +404,11 @@ function importPackage({ pkgDir, name, number, userId, dryRun = false }) {
   const run = db.transaction(() => {
     const prefixMap = DEFAULT_DISCIPLINE_MAP;
     projectId = db
-      .prepare('INSERT INTO projects (name, number, discipline_prefix_map) VALUES (?, ?, ?)')
-      .run(projectName, projectNumber, JSON.stringify(prefixMap)).lastInsertRowid;
+      .prepare(
+        `INSERT INTO projects (name, number, discipline_prefix_map, external_source, external_path, external_synced_at)
+         VALUES (?, ?, ?, 'planswift', ?, datetime('now'))`
+      )
+      .run(projectName, projectNumber, JSON.stringify(prefixMap), job.source_folder || null).lastInsertRowid;
 
     const revisionId = db
       .prepare(
@@ -347,7 +420,7 @@ function importPackage({ pkgDir, name, number, userId, dryRun = false }) {
     // ---- sheets
     const hgSheetId = new Map(); // planswift page guid -> sheets.id
     const insSheet = db.prepare(
-      'INSERT INTO sheets (project_id, sheet_number, discipline, scale_feet_per_inch) VALUES (?, ?, ?, ?)'
+      'INSERT INTO sheets (project_id, sheet_number, discipline, scale_feet_per_inch, external_id, external_scale) VALUES (?, ?, ?, ?, ?, ?)'
     );
     const insVersion = db.prepare(
       `INSERT INTO sheet_versions (sheet_id, revision_id, title, pdf_path, thumb_path, preview_path, extraction_status)
@@ -355,7 +428,7 @@ function importPackage({ pkgDir, name, number, userId, dryRun = false }) {
     );
     for (const s of sheets) {
       const fpi = s.scale && s.scale.feet_per_inch ? s.scale.feet_per_inch : null;
-      const sheetId = insSheet.run(projectId, s.sheet_number, deriveDiscipline(s.sheet_number, prefixMap), fpi)
+      const sheetId = insSheet.run(projectId, s.sheet_number, deriveDiscipline(s.sheet_number, prefixMap), fpi, upper(s.id), fpi)
         .lastInsertRowid;
       const destDir = path.join(config.storageDir, 'projects', String(projectId), 'sheets', String(sheetId));
       const base = `v${revisionId}_planswift`;
@@ -388,80 +461,40 @@ function importPackage({ pkgDir, name, number, userId, dryRun = false }) {
       return parent;
     };
     const itemById = new Map(pkg.takeoff_items.map((i) => [i.id, i]));
-    const pathOf = (item) => {
-      const chain = [];
-      let p = item.parent_id ? itemById.get(item.parent_id) : null;
-      while (p) {
-        chain.unshift(p.name);
-        if (!p.parent_id) { chain.unshift(...(p.folder || [])); break; }
-        p = itemById.get(p.parent_id);
-      }
-      return item.parent_id ? chain : item.folder || [];
-    };
 
     // ---- items + instances
     const insItem = db.prepare(
-      `INSERT INTO take_off_items (project_id, name, type, shape, color, properties, folder_id, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO take_off_items (project_id, name, type, shape, color, properties, folder_id, created_by, external_id, external_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const insInst = db.prepare(
-      `INSERT INTO take_off_instances (item_id, sheet_id, geometry, quantity, perimeter, created_by)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO take_off_instances (item_id, sheet_id, geometry, quantity, perimeter, created_by, external_id, external_hash, local_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     for (const item of pkg.takeoff_items) {
-      const shapes = (item.shapes || []).filter((sh) => KIND_TO_TYPE[sh.kind] && sh.points_pt && sh.points_pt.length);
-      if (!shapes.length) continue;
-      const kinds = [...new Set(shapes.map((sh) => sh.kind))];
-      if (kinds.length > 1) warnings.push(`"${item.name}" mixes ${kinds.join('/')} shapes; imported as ${kinds[0]}`);
-      const type = KIND_TO_TYPE[kinds[0]];
+      const plan = planItem(item);
+      if (!plan) continue;
+      if (plan.mixed) warnings.push(`"${item.name}" mixes ${plan.mixed.join('/')} shapes; imported as ${plan.kind}`);
+      const f = itemFields(item, plan.type, itemById);
       const itemId = insItem
-        .run(
-          projectId,
-          item.name || 'PlanSwift item',
-          type,
-          type === 'count' ? 'circle' : null,
-          item.color || '#2563eb',
-          JSON.stringify(item.numeric_properties || []),
-          folderFor(pathOf(item)),
-          user.id
-        ).lastInsertRowid;
+        .run(projectId, f.name, plan.type, plan.type === 'count' ? 'circle' : null, f.color, f.properties,
+          folderFor(f.folderNames), user.id, item.id, f.hash)
+        .lastInsertRowid;
       stats.items++;
 
-      for (const sh of shapes) {
-        if (sh.kind !== kinds[0]) { stats.skippedShapes++; continue; }
-        const sheet = sheetByGuid.get(String(sh.sheet_id || '').toUpperCase());
-        const sheetId = sheet && hgSheetId.get(String(sheet.id).toUpperCase());
-        const fpi = sheet && sheet.scale && sheet.scale.feet_per_inch;
-        if (!sheetId) { warnings.push(`"${item.name}" shape on a missing sheet - skipped`); stats.skippedShapes++; continue; }
-        if (!fpi && type !== 'count') {
-          warnings.push(`"${item.name}" on unscaled sheet ${sheet.sheet_number} - skipped`);
+      for (const sh of plan.shapes) {
+        if (sh.kind !== plan.kind) { stats.skippedShapes++; continue; }
+        const sheet = sheetByGuid.get(upper(sh.sheet_id));
+        const res = shapeToRows(plan.type, sh, sheet, sheet && hgSheetId.get(upper(sheet.id)));
+        if (res.skip) {
+          if (res.warn) warnings.push(`"${item.name}" shape on ${res.skip} - skipped`);
           stats.skippedShapes++;
           continue;
         }
-        const k = renderScaleFor(sheet);
-        const toPx = ([x, y]) => ({ x: x * k, y: y * k });
-        if (type === 'count') {
-          // HammGrid stores one instance (quantity 1) per counted click.
-          for (const p of sh.points_pt) {
-            insInst.run(itemId, sheetId, JSON.stringify({ points: [toPx(p)] }), 1, null, user.id);
-            stats.instances++;
-          }
-        } else if (type === 'area') {
-          if (sh.points_pt.length < 3) { stats.skippedShapes++; continue; }
-          // Cutouts (PlanSwift Subtract Sections) -> geometry.holes, same
-          // shape sheet.js writes; net area = outer - holes (netAreaFeet),
-          // perimeter = outer boundary only (polygonPerimeterFeet).
-          const holes = (sh.holes_pt || []).filter((h) => h && h.length >= 3);
-          const qty = Math.max(0, areaFeet(sh.points_pt, fpi) - holes.reduce((t, h) => t + areaFeet(h, fpi), 0));
-          const perim = lengthFeet(sh.points_pt, fpi, true);
-          const geometry = { points: sh.points_pt.map(toPx) };
-          if (holes.length) { geometry.holes = holes.map((h) => h.map(toPx)); stats.cutouts += holes.length; }
-          insInst.run(itemId, sheetId, JSON.stringify(geometry), qty, perim, user.id);
-          stats.instances++;
-        } else {
-          if (sh.points_pt.length < 2) { stats.skippedShapes++; continue; }
-          const qty = lengthFeet(sh.points_pt, fpi, false);
-          insInst.run(itemId, sheetId, JSON.stringify({ points: sh.points_pt.map(toPx) }), qty, null, user.id);
+        stats.cutouts += res.cutouts;
+        for (const r of res.rows) {
+          insInst.run(itemId, res.sheetId, r.geometry, r.quantity, r.perimeter, user.id, sh.id, res.hash,
+            localHash(res.sheetId, r.geometry, r.quantity, r.perimeter));
           stats.instances++;
         }
       }
@@ -495,6 +528,271 @@ function importPackage({ pkgDir, name, number, userId, dryRun = false }) {
   };
 }
 
+// ---------------------------------------------------------------- refresh
+
+// The PlanSwift job a project was imported from: projects.external_path, or
+// (projects imported before links were recorded) the source path in the
+// import's activity_log row. Returns null for projects not from PlanSwift.
+function linkInfo(projectId) {
+  const project = db.prepare('SELECT id, external_source, external_path, external_synced_at FROM projects WHERE id = ?').get(projectId);
+  if (!project) return null;
+  let sourcePath = project.external_source === 'planswift' ? project.external_path : null;
+  let imported = project.external_source === 'planswift';
+  if (!sourcePath) {
+    const row = db
+      .prepare("SELECT detail FROM activity_log WHERE project_id = ? AND action = 'planswift_import' ORDER BY id LIMIT 1")
+      .get(projectId);
+    if (row) {
+      imported = true;
+      try { sourcePath = JSON.parse(row.detail).source || null; } catch (err) { /* unreadable detail */ }
+    }
+  }
+  if (!imported) return null;
+  const linked = !!db.prepare('SELECT 1 FROM sheets WHERE project_id = ? AND external_id IS NOT NULL LIMIT 1').get(projectId);
+  return { sourcePath, synced_at: project.external_synced_at, linked };
+}
+
+// Resolves the project's stored job path to a job under the jobs root (the
+// converter input), or throws a user-facing 400/404.
+function resolveLinkedJob(projectId) {
+  const info = linkInfo(projectId);
+  if (!info) throw Object.assign(new Error('This project was not imported from PlanSwift'), { status: 400 });
+  if (!info.sourcePath) throw Object.assign(new Error('The PlanSwift job path for this project is unknown'), { status: 400 });
+  const rel = path.relative(jobsRoot(), path.resolve(info.sourcePath));
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw Object.assign(new Error(`The job (${info.sourcePath}) is outside the configured PlanSwift jobs folder`), { status: 400 });
+  }
+  if (!fs.existsSync(path.resolve(info.sourcePath))) {
+    throw Object.assign(new Error(`The PlanSwift job folder no longer exists: ${info.sourcePath}`), { status: 404 });
+  }
+  return resolveJob(rel.split(path.sep).join('/'));
+}
+
+// Re-reads a freshly converted package and brings the linked project in line
+// with it. PlanSwift is the source of truth for things that came from it
+// (matched by PlanSwift GUID); anything created in HammGrid is left alone, and
+// a linked shape someone has edited in HammGrid is kept (reported as a
+// conflict) instead of overwritten. Never deletes sheets or items.
+//
+// Projects imported before links were recorded are linked on the first run:
+// sheets by sheet number, items by name + folder, shapes by identical geometry.
+//
+// apply=false runs everything and rolls back, so the preview is exactly what
+// Apply will do. Returns { plan, warnings }.
+function refreshPackage({ pkgDir, projectId, userId, apply = false }) {
+  pkgDir = path.resolve(pkgDir);
+  const pkg = readPackage(pkgDir);
+  const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+  if (!project) throw Object.assign(new Error('Project not found'), { status: 404 });
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  if (!user) throw new Error(`No user with id ${userId}`);
+
+  const warnings = [];
+  const plan = {
+    sheets: { linked: 0, newPages: [], missing: [], scaleChanged: 0 },
+    items: { added: 0, updated: 0, linked: 0 },
+    shapes: { added: 0, changed: 0, removed: 0, unchanged: 0, linked: 0, keptLocal: [], conflicts: [], skipped: 0 },
+    instances: { added: 0, removed: 0 },
+  };
+  const srcSheets = pkg.sheets.filter((s) => s.width_pt && s.height_pt);
+  const sheetByGuid = new Map(srcSheets.map((s) => [upper(s.id), s]));
+
+  const run = db.transaction(() => {
+    // ---- sheets: match by GUID, else (first refresh) by sheet number
+    const hgSheets = db.prepare('SELECT id, sheet_number, scale_feet_per_inch, external_id, external_scale FROM sheets WHERE project_id = ?').all(projectId);
+    const byExternal = new Map(hgSheets.filter((s) => s.external_id).map((s) => [upper(s.external_id), s]));
+    const byNumber = new Map(hgSheets.filter((s) => !s.external_id).map((s) => [upper(s.sheet_number), s]));
+    const hgSheetId = new Map(); // planswift page guid -> sheets.id
+    const updSheet = db.prepare('UPDATE sheets SET external_id = ?, external_scale = ?, scale_feet_per_inch = ? WHERE id = ?');
+    for (const s of srcSheets) {
+      const guid = upper(s.id);
+      let hg = byExternal.get(guid);
+      let isNewLink = false;
+      if (!hg) {
+        hg = byNumber.get(upper(s.sheet_number));
+        if (hg) { byNumber.delete(upper(s.sheet_number)); isNewLink = true; }
+      }
+      if (!hg) { plan.sheets.newPages.push(s.sheet_number); continue; }
+      hgSheetId.set(guid, hg.id);
+      const fpi = s.scale && s.scale.feet_per_inch ? s.scale.feet_per_inch : null;
+      // Take the PlanSwift scale only when it changed there since the last
+      // sync (or, first link, when HammGrid has none) - a scale corrected in
+      // HammGrid isn't clobbered.
+      const sourceChanged = hg.external_scale == null
+        ? hg.scale_feet_per_inch == null && fpi != null
+        : Math.abs((hg.external_scale || 0) - (fpi || 0)) > 1e-9;
+      const scale = sourceChanged ? fpi : hg.scale_feet_per_inch;
+      if (sourceChanged && !isNewLink) plan.sheets.scaleChanged++;
+      if (isNewLink) plan.sheets.linked++;
+      updSheet.run(guid, fpi, scale, hg.id);
+    }
+    const seen = new Set(srcSheets.map((s) => upper(s.id)));
+    for (const hg of hgSheets) if (hg.external_id && !seen.has(upper(hg.external_id))) plan.sheets.missing.push(hg.sheet_number);
+
+    // ---- folders (find-or-create by name path)
+    const folders = db.prepare('SELECT id, name, parent_folder_id FROM take_off_folders WHERE project_id = ?').all(projectId);
+    const insFolder = db.prepare('INSERT INTO take_off_folders (project_id, name, parent_folder_id, created_by) VALUES (?, ?, ?, ?)');
+    const folderFor = (names) => {
+      let parent = null;
+      for (const n of names) {
+        let f = folders.find((x) => x.name === n && (x.parent_folder_id || null) === parent);
+        if (!f) {
+          f = { id: insFolder.run(projectId, n, parent, user.id).lastInsertRowid, name: n, parent_folder_id: parent };
+          folders.push(f);
+        }
+        parent = f.id;
+      }
+      return parent;
+    };
+    const folderPath = (id) => {
+      const out = [];
+      for (let f = folders.find((x) => x.id === id); f; f = folders.find((x) => x.id === f.parent_folder_id)) out.unshift(f.name);
+      return out.join('/');
+    };
+
+    // ---- items: GUID, else (first refresh) name + type + folder
+    const hgItems = db.prepare('SELECT * FROM take_off_items WHERE project_id = ? ORDER BY id').all(projectId);
+    const itemByExternal = new Map(hgItems.filter((i) => i.external_id).map((i) => [upper(i.external_id), i]));
+    const legacyItems = hgItems.filter((i) => !i.external_id);
+    const hgInstances = db
+      .prepare('SELECT inst.* FROM take_off_instances inst JOIN take_off_items ti ON ti.id = inst.item_id WHERE ti.project_id = ? ORDER BY inst.id')
+      .all(projectId);
+    const groups = new Map(); // shape guid -> instance rows
+    const unlinkedByItem = new Map(); // item id -> instance rows with no link yet
+    for (const r of hgInstances) {
+      if (r.external_id) {
+        const k = upper(r.external_id);
+        if (!groups.has(k)) groups.set(k, []);
+        groups.get(k).push(r);
+      } else {
+        if (!unlinkedByItem.has(r.item_id)) unlinkedByItem.set(r.item_id, []);
+        unlinkedByItem.get(r.item_id).push(r);
+      }
+    }
+    const isEdited = (rows) => rows.some((r) => r.local_hash !== localHash(r.sheet_id, r.geometry, r.quantity, r.perimeter));
+
+    const insItem = db.prepare(
+      `INSERT INTO take_off_items (project_id, name, type, shape, color, properties, folder_id, created_by, external_id, external_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const updItem = db.prepare('UPDATE take_off_items SET name = ?, color = ?, properties = ?, folder_id = ?, external_hash = ? WHERE id = ?');
+    const linkItem = db.prepare('UPDATE take_off_items SET external_id = ?, external_hash = ? WHERE id = ?');
+    const insInst = db.prepare(
+      `INSERT INTO take_off_instances (item_id, sheet_id, geometry, quantity, perimeter, created_by, external_id, external_hash, local_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    const linkInst = db.prepare('UPDATE take_off_instances SET external_id = ?, external_hash = ?, local_hash = ? WHERE id = ?');
+    const delInst = db.prepare('DELETE FROM take_off_instances WHERE id = ?');
+    const unlinkInst = db.prepare('UPDATE take_off_instances SET external_id = NULL WHERE id = ?');
+
+    const itemById = new Map(pkg.takeoff_items.map((i) => [i.id, i]));
+    const sourceShapeIds = new Set(); // every PlanSwift shape that still exists, drawable or not
+    for (const item of pkg.takeoff_items) for (const sh of item.shapes || []) sourceShapeIds.add(upper(sh.id));
+    const sheetName = (id) => (hgSheets.find((s) => s.id === id) || {}).sheet_number || `#${id}`;
+
+    for (const item of pkg.takeoff_items) {
+      const ip = planItem(item);
+      if (!ip) continue;
+      const f = itemFields(item, ip.type, itemById);
+
+      let hg = itemByExternal.get(upper(item.id));
+      if (!hg) {
+        const key = `${f.name}|${ip.type}|${f.folderNames.join('/')}`;
+        const i = legacyItems.findIndex((x) => `${x.name}|${x.type}|${folderPath(x.folder_id)}` === key);
+        if (i >= 0) {
+          hg = legacyItems.splice(i, 1)[0];
+          linkItem.run(item.id, f.hash, hg.id); // first link: record, don't overwrite
+          plan.items.linked++;
+        }
+      } else if (hg.external_hash !== f.hash) {
+        updItem.run(f.name, f.color, f.properties, folderFor(f.folderNames), f.hash, hg.id);
+        plan.items.updated++;
+      }
+      if (!hg) {
+        const id = insItem.run(projectId, f.name, ip.type, ip.type === 'count' ? 'circle' : null, f.color, f.properties,
+          folderFor(f.folderNames), user.id, item.id, f.hash).lastInsertRowid;
+        hg = { id };
+        plan.items.added++;
+      }
+
+      for (const sh of ip.shapes) {
+        if (sh.kind !== ip.kind) { plan.shapes.skipped++; continue; }
+        const sheet = sheetByGuid.get(upper(sh.sheet_id));
+        const sid = sheet && hgSheetId.get(upper(sheet.id));
+        if (sheet && !sid) { plan.shapes.skipped++; continue; } // on a page not in this project yet
+        const res = shapeToRows(ip.type, sh, sheet, sid);
+        if (res.skip) {
+          plan.shapes.skipped++;
+          if (res.warn) warnings.push(`"${f.name}" shape on ${res.skip} - skipped`);
+          continue;
+        }
+        const guid = upper(sh.id);
+        const group = groups.get(guid);
+        const add = () => {
+          for (const r of res.rows) {
+            insInst.run(hg.id, res.sheetId, r.geometry, r.quantity, r.perimeter, user.id, sh.id, res.hash,
+              localHash(res.sheetId, r.geometry, r.quantity, r.perimeter));
+          }
+          plan.instances.added += res.rows.length;
+        };
+        if (!group) {
+          // Not linked yet: the first refresh of an older import claims the
+          // identical rows already there; otherwise it's a new shape.
+          const pool = unlinkedByItem.get(hg.id) || [];
+          const claimed = res.rows.map((r) => pool.find((p) => p.sheet_id === res.sheetId && p.geometry === r.geometry));
+          if (res.rows.length && claimed.every(Boolean) && new Set(claimed).size === claimed.length) {
+            for (const row of claimed) {
+              pool.splice(pool.indexOf(row), 1);
+              linkInst.run(sh.id, res.hash, localHash(res.sheetId, row.geometry, row.quantity, row.perimeter), row.id);
+            }
+            plan.shapes.linked++;
+          } else {
+            add();
+            plan.shapes.added++;
+          }
+          continue;
+        }
+        if (group[0].external_hash === res.hash) { plan.shapes.unchanged++; continue; }
+        if (isEdited(group)) {
+          plan.shapes.conflicts.push({ item: f.name, sheet: sheetName(group[0].sheet_id) });
+          continue;
+        }
+        for (const r of group) delInst.run(r.id);
+        plan.instances.removed += group.length;
+        add();
+        plan.shapes.changed++;
+      }
+    }
+
+    // ---- shapes deleted in PlanSwift
+    for (const [guid, rows] of groups) {
+      if (sourceShapeIds.has(guid)) continue;
+      if (isEdited(rows)) {
+        for (const r of rows) unlinkInst.run(r.id); // keep the edited copy as a HammGrid-owned shape
+        plan.shapes.keptLocal.push({ sheet: sheetName(rows[0].sheet_id) });
+      } else {
+        for (const r of rows) delInst.run(r.id);
+        plan.instances.removed += rows.length;
+        plan.shapes.removed++;
+      }
+    }
+
+    db.prepare("UPDATE projects SET external_source = 'planswift', external_synced_at = datetime('now') WHERE id = ?").run(projectId);
+    db.prepare('INSERT INTO activity_log (project_id, actor, action, detail) VALUES (?, ?, ?, ?)').run(
+      projectId, String(user.id), 'planswift_refresh',
+      JSON.stringify({ job: (pkg.job || {}).name || null, sheets: plan.sheets, items: plan.items, shapes: plan.shapes, instances: plan.instances })
+    );
+    if (!apply) throw Object.assign(new Error('preview'), { preview: true });
+  });
+
+  try {
+    run();
+  } catch (err) {
+    if (!err.preview) throw err;
+  }
+  return { plan, warnings: [...(pkg.warnings || []).map((w) => `converter: ${w}`), ...warnings] };
+}
+
 module.exports = {
   id: 'planswift',
   label: 'PlanSwift',
@@ -506,4 +804,7 @@ module.exports = {
   review,
   sheetThumbPath,
   importPackage,
+  linkInfo,
+  resolveLinkedJob,
+  refreshPackage,
 };

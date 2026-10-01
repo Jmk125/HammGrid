@@ -367,6 +367,24 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_sheet_links_type ON sheet_links(project_
   console.log("Rebuilt markups table to add 'photo' to the type CHECK constraint.");
 })();
 
+// Link to a PlanSwift job (see lib/importers/planswift.js, "Refresh from
+// PlanSwift"). external_id is the PlanSwift GUID of the page / take-off item /
+// shape that a row was imported from; NULL = created in HammGrid, which a
+// refresh never touches. *_hash columns record what the last import/refresh
+// wrote, so a refresh can tell "PlanSwift changed" from "someone edited it
+// here since" (those are kept, not overwritten).
+addColumnIfMissing('projects', 'external_source', 'TEXT');
+addColumnIfMissing('projects', 'external_path', 'TEXT');
+addColumnIfMissing('projects', 'external_synced_at', 'TEXT');
+addColumnIfMissing('sheets', 'external_id', 'TEXT');
+addColumnIfMissing('sheets', 'external_scale', 'REAL');
+addColumnIfMissing('take_off_items', 'external_id', 'TEXT');
+addColumnIfMissing('take_off_items', 'external_hash', 'TEXT');
+addColumnIfMissing('take_off_instances', 'external_id', 'TEXT');
+addColumnIfMissing('take_off_instances', 'external_hash', 'TEXT');
+addColumnIfMissing('take_off_instances', 'local_hash', 'TEXT');
+db.exec('CREATE INDEX IF NOT EXISTS idx_take_off_instances_external ON take_off_instances(external_id)');
+
 db.exec('CREATE INDEX IF NOT EXISTS idx_markups_sheet ON markups(sheet_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_markups_document ON markups(document_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_markups_linked_document ON markups(linked_document_id)');
