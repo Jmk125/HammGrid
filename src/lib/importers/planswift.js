@@ -293,6 +293,11 @@ function areaFeet(ptsPt, fpi) {
 
 const KIND_TO_TYPE = { area: 'area', linear: 'linear', count: 'count' };
 
+// external_hash written by a HammGrid -> PlanSwift push (planswiftPush.js). The next
+// refresh adopts it - records PlanSwift's real hash without touching the row -
+// because the PlanSwift copy was derived from the HammGrid one.
+const PUSHED = 'pushed';
+
 const sha = (s) => crypto.createHash('sha1').update(String(s)).digest('hex');
 const upper = (s) => String(s || '').toUpperCase();
 
@@ -704,6 +709,8 @@ function refreshPackage({ pkgDir, projectId, userId, apply = false }) {
           linkItem.run(item.id, f.hash, hg.id); // first link: record, don't overwrite
           plan.items.linked++;
         }
+      } else if (hg.external_hash === PUSHED) {
+        linkItem.run(item.id, f.hash, hg.id);
       } else if (hg.external_hash !== f.hash) {
         updItem.run(f.name, f.color, f.properties, folderFor(f.folderNames), f.hash, hg.id);
         plan.items.updated++;
@@ -750,6 +757,11 @@ function refreshPackage({ pkgDir, projectId, userId, apply = false }) {
             add();
             plan.shapes.added++;
           }
+          continue;
+        }
+        if (group[0].external_hash === PUSHED) {
+          for (const r of group) db.prepare('UPDATE take_off_instances SET external_hash = ? WHERE id = ?').run(res.hash, r.id);
+          plan.shapes.unchanged++;
           continue;
         }
         if (group[0].external_hash === res.hash) { plan.shapes.unchanged++; continue; }
@@ -807,4 +819,10 @@ module.exports = {
   linkInfo,
   resolveLinkedJob,
   refreshPackage,
+  // HammGrid -> PlanSwift (planswiftPush.js; required lazily - it uses this module's helpers)
+  pushPlan: (opts) => require('./planswiftPush').plan(opts),
+  pushApply: (opts) => require('./planswiftPush').apply(opts),
+  pushUndo: (opts) => require('./planswiftPush').undo(opts),
+  lastPush: (projectId) => require('./planswiftPush').lastPush(projectId),
+  helpers: { readPackage, renderScaleFor, sha, upper, localHash, PUSHED },
 };

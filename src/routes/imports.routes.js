@@ -14,6 +14,10 @@
 //   POST /refresh {project_id}                re-convert (no sheet images) -> import_id
 //   GET  /:importId                           poll; once ready, `refresh` = the preview of changes
 //   POST /:importId/refresh                   apply them (one transaction)
+// Sending HammGrid-only take-offs INTO the linked PlanSwift job (writes to the live job folder):
+//   POST /push {project_id}                   re-convert, then GET /:importId -> `push` = what would be sent
+//   POST /:importId/push {acknowledge, confirm_closed}   write it (new folders only; see planswiftPush.js)
+//   POST /push-undo {project_id, confirm_closed}         remove exactly what the last push created
 // Each import stages into data/staging/imports/<importId>/ (meta.json +
 // package/); see lib/importers/index.js for cleanup of abandoned ones.
 const express = require('express');
@@ -88,7 +92,7 @@ router.get('/', requireAdmin, (req, res) => {
   for (const name of names) {
     const dir = importDir(name);
     const meta = dir && readMeta(dir);
-    if (!meta || meta.kind === 'refresh' || !['converting', 'ready', 'error'].includes(meta.status)) continue;
+    if (!meta || meta.kind || !['converting', 'ready', 'error'].includes(meta.status)) continue;
     const importer = getImporter(meta.source);
     const job = jobStore.getJob(meta.id);
     imports.push({
@@ -198,17 +202,19 @@ router.get('/link/:projectId', requireAdmin, (req, res) => {
     const full = getImporter(importer.id);
     const info = full.linkInfo && full.linkInfo(projectId);
     if (info) {
-      out.linked_source = { id: full.id, label: full.label, job_path: info.sourcePath, synced_at: info.synced_at, linked: info.linked };
+      out.linked_source = { id: full.id, label: full.label, job_path: info.sourcePath, synced_at: info.synced_at, linked: info.linked, last_push: full.lastPush ? full.lastPush(projectId) : null };
       break;
     }
   }
   res.json(out);
 });
 
-router.post('/refresh', requireAdmin, (req, res) => {
+// Re-converts a project's linked PlanSwift job (no sheet images) so it can be compared with
+// the project: kind 'refresh' = pull changes in, kind 'push' = send HammGrid-only take-offs out.
+const startProjectConversion = (kind) => (req, res) => {
   const projectId = Number(req.body && req.body.project_id);
   const importer = getImporter('planswift');
-  if (!projectId || !importer || !importer.refreshPackage) return res.status(400).json({ error: 'project_id is required' });
+  if (!projectId || !importer || !importer.refreshPackage || !importer.pushPlan) return res.status(400).json({ error: 'project_id is required' });
   let job;
   try {
     job = importer.resolveLinkedJob(projectId);
@@ -221,7 +227,7 @@ router.post('/refresh', requireAdmin, (req, res) => {
   fs.mkdirSync(dir, { recursive: true });
   const meta = {
     id: importId,
-    kind: 'refresh',
+    kind,
     source: importer.id,
     project_id: projectId,
     job_path: job.rel,
@@ -266,7 +272,10 @@ router.post('/refresh', requireAdmin, (req, res) => {
       if (controller.signal.aborted) removeStaging(dir);
     }
   })();
-});
+};
+
+router.post('/refresh', requireAdmin, startProjectConversion('refresh'));
+router.post('/push', requireAdmin, startProjectConversion('push'));
 
 router.get('/:importId', requireAdmin, (req, res) => {
   const found = getImportOr404(req, res);
@@ -300,6 +309,13 @@ router.get('/:importId', requireAdmin, (req, res) => {
       payload.refresh = importer.refreshPackage({ pkgDir, projectId: meta.project_id, userId: req.session.user.id, apply: false });
     } catch (err) {
       return sendError(res, err, 'Could not compare with the PlanSwift job');
+    }
+  } else if (status === 'ready' && meta.kind === 'push') {
+    try {
+      // Plan only - nothing is written until /:importId/push.
+      payload.push = importer.pushPlan({ pkgDir, projectId: meta.project_id, jobDir: importer.resolveLinkedJob(meta.project_id).abs });
+    } catch (err) {
+      return sendError(res, err, 'Could not work out what to send to PlanSwift');
     }
   } else if (status === 'ready') {
     try {
@@ -359,6 +375,52 @@ router.post('/:importId/refresh', requireAdmin, (req, res) => {
     sendError(res, err, 'Refresh failed');
   } finally {
     importing.delete(meta.id);
+  }
+});
+
+router.post('/:importId/push', requireAdmin, (req, res) => {
+  const found = getImportOr404(req, res);
+  if (!found) return;
+  const { dir, meta, importer, pkgDir } = found;
+  if (meta.kind !== 'push') return res.status(400).json({ error: 'Not a push' });
+  if (meta.status !== 'ready') return res.status(409).json({ error: 'This push is not ready yet' });
+  if (!(req.body && req.body.acknowledge === true)) {
+    return res.status(400).json({ error: 'You must acknowledge that this writes into the live PlanSwift job' });
+  }
+  if (importing.has(meta.id)) return res.status(409).json({ error: 'This push is already running' });
+
+  importing.add(meta.id);
+  try {
+    const result = importer.pushApply({
+      pkgDir,
+      projectId: meta.project_id,
+      userId: req.session.user.id,
+      jobDir: importer.resolveLinkedJob(meta.project_id).abs,
+      confirmClosed: req.body.confirm_closed === true,
+    });
+    writeMeta(dir, { ...meta, status: 'imported' });
+    removeStaging(dir);
+    res.json({ plan: result.plan, written: result.written });
+  } catch (err) {
+    sendError(res, err, 'Sending to PlanSwift failed');
+  } finally {
+    importing.delete(meta.id);
+  }
+});
+
+router.post('/push-undo', requireAdmin, (req, res) => {
+  const projectId = Number(req.body && req.body.project_id);
+  const importer = getImporter('planswift');
+  if (!projectId || !importer || !importer.pushUndo) return res.status(400).json({ error: 'project_id is required' });
+  try {
+    res.json(importer.pushUndo({
+      projectId,
+      userId: req.session.user.id,
+      jobDir: importer.resolveLinkedJob(projectId).abs,
+      confirmClosed: req.body.confirm_closed === true,
+    }));
+  } catch (err) {
+    sendError(res, err, 'Undo failed');
   }
 });
 
