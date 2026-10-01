@@ -355,8 +355,23 @@ let zoomPan = null;
 let suppressInteractionFlag = false;
 
 let lastTakeoffRenderScale = null;
+// True when the last mouse press-drag-release travelled far enough to count
+// as a pan rather than a click - the take-off shapes' click/contextmenu
+// handlers check it so panning over a shape doesn't also open edit mode/menu.
+let takeoffDragMoved = false;
 function setupZoomPan() {
   const wrapEl = document.getElementById('zoom-wrap');
+  let dragStart = null;
+  wrapEl.addEventListener('mousedown', (e) => {
+    dragStart = { x: e.clientX, y: e.clientY };
+    takeoffDragMoved = false;
+  }, true);
+  window.addEventListener('mousemove', (e) => {
+    if (dragStart && Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) > 4) takeoffDragMoved = true;
+  });
+  window.addEventListener('mouseup', () => {
+    dragStart = null;
+  });
   zoomPan = setupSharedZoomPan({
     wrapEl,
     innerEl: document.getElementById('zoom-pan-inner'),
@@ -393,6 +408,14 @@ function setupZoomPan() {
       // right-click has nothing else claiming it in this mode, so it should
       // still pan like everywhere else instead of being silently dead the
       // instant the cursor is over a drawing.
+      // Committed take-off shapes sit on top of the drawing too, but they're
+      // part of the drawing surface, not chrome - dragging that starts on one
+      // should pan (a plain click/right-click still opens edit/menu, see
+      // takeoffDragMoved).
+      if (e.target.closest && e.target.closest('#takeoff-instances-layer')) {
+        if (takeoffTool) return e.button !== 2;
+        return false;
+      }
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag !== 'svg' && tag !== 'canvas' && e.target !== wrapEl) return editLayoutMode ? e.button !== 2 : true;
       if (takeoffTool) return e.button !== 2;
@@ -4450,6 +4473,7 @@ function renderTakeoffInstances() {
       // draw tool still wins over entering take-off edit mode.
       if (markupsController && markupsController.isToolActive()) return;
       if (takeoffLongPressSuppressClick) return; // long-press just opened the menu - don't also enter edit mode
+      if (takeoffDragMoved) return; // that was a pan, not a click
       e.stopPropagation();
       enterTakeoffEditMode(inst);
     });
@@ -4457,6 +4481,7 @@ function renderTakeoffInstances() {
       if (markupsController && markupsController.isToolActive()) return;
       e.preventDefault();
       e.stopPropagation();
+      if (takeoffDragMoved) return; // right-drag pan, not a right-click
       hideTakeoffTooltip();
       showTakeoffContextMenu(e.clientX, e.clientY, inst);
     });
