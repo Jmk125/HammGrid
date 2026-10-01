@@ -552,20 +552,20 @@ function linkInfo(projectId) {
   return { sourcePath, synced_at: project.external_synced_at, linked };
 }
 
-// Resolves the project's stored job path to a job under the jobs root (the
-// converter input), or throws a user-facing 400/404.
+// Resolves the project's stored job path to the job folder (the converter
+// input), or throws a user-facing 400/404. Uses the job's own parent folder as
+// the root, so it works wherever the job lives - not only under the current
+// default jobs folder (which an admin can change, and imports can be from a
+// typed one-off folder).
 function resolveLinkedJob(projectId) {
   const info = linkInfo(projectId);
   if (!info) throw Object.assign(new Error('This project was not imported from PlanSwift'), { status: 400 });
   if (!info.sourcePath) throw Object.assign(new Error('The PlanSwift job path for this project is unknown'), { status: 400 });
-  const rel = path.relative(jobsRoot(), path.resolve(info.sourcePath));
-  if (rel.startsWith('..') || path.isAbsolute(rel)) {
-    throw Object.assign(new Error(`The job (${info.sourcePath}) is outside the configured PlanSwift jobs folder`), { status: 400 });
-  }
-  if (!fs.existsSync(path.resolve(info.sourcePath))) {
+  const abs = path.resolve(info.sourcePath);
+  if (!fs.existsSync(abs)) {
     throw Object.assign(new Error(`The PlanSwift job folder no longer exists: ${info.sourcePath}`), { status: 404 });
   }
-  return resolveJob(rel.split(path.sep).join('/'));
+  return resolveJob(path.dirname(abs), path.basename(abs));
 }
 
 // Re-reads a freshly converted package and brings the linked project in line
