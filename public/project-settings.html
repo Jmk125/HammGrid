@@ -53,6 +53,17 @@
           <div id="planswift-result" style="display:none; margin-top:12px;"></div>
         </div>
 
+        <div class="card" id="planswift-push-card" style="display:none;">
+          <h2>Send take-offs to PlanSwift</h2>
+          <p class="muted">Adds take-offs that exist only in HammGrid to the linked PlanSwift job: new items go in a "From HammGrid" folder, and shapes for items PlanSwift already has are added to them. This writes directly into the live PlanSwift job. Nothing already in PlanSwift is changed or deleted, and the last push can be undone.</p>
+          <div class="row">
+            <button class="primary" type="button" id="planswift-push-check-btn">Check what would be sent</button>
+            <button type="button" id="planswift-push-undo-btn" style="display:none;">Undo last push</button>
+            <span class="muted" id="planswift-push-status"></span>
+          </div>
+          <div id="planswift-push-result" style="display:none; margin-top:12px;"></div>
+        </div>
+
         <div class="card">
           <h2>Revisions</h2>
           <table id="revisions-table">

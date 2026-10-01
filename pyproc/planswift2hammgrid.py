@@ -429,6 +429,7 @@ def convert(job_dir, out_dir, images="png", preview=False, log=print, progress=N
             "id": n.guid, "name": n.name, "class": n.cls,
             "kind": shape_kind(n) if n.cls != "Item" else "item",
             "parent_id": None,
+            "source_folder": n.rel,
             "folder": folder_path(n, "Takeoff"),
             "color": tcolor_to_hex(n.val("Color")),
             "description": n.val("Description"),
@@ -528,6 +529,13 @@ def convert(job_dir, out_dir, images="png", preview=False, log=print, progress=N
             it["qty_note"] = "PlanSwift stores Qty as a formula; 'total' is recomputed from geometry"
 
     used_sheets = sorted({s["sheet_id"] for it in items for s in it["shapes"] if s["sheet_id"]})
+    # One real node per class under Takeoff/ (relative to the job folder). A
+    # HammGrid -> PlanSwift push clones these instead of hand-writing PlanSwift's
+    # long property lists, so new nodes look exactly like ones PlanSwift made.
+    templates = {}
+    for n in nodes:
+        if n.rel.split("/")[0] == "Takeoff" and n.cls and n.cls not in templates:
+            templates[n.cls] = n.rel
     doc = {
         "format": FORMAT_ID, "version": FORMAT_VERSION,
         "converted_at": _dt.datetime.now().isoformat(timespec="seconds"),
@@ -546,6 +554,7 @@ def convert(job_dir, out_dir, images="png", preview=False, log=print, progress=N
         "sheets": sheets,
         "takeoff_sheet_ids": used_sheets,
         "takeoff_items": items,
+        "templates": templates,
         "annotations": annotations,
         "overlays": overlays,
         "warnings": warnings,

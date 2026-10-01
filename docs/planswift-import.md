@@ -70,6 +70,38 @@ Routes: `GET /api/imports/link/:projectId`, `POST /api/imports/refresh`, `POST /
   pages); a shape you delete in HammGrid that still exists in PlanSwift comes back on the next
   refresh; HammGrid → PlanSwift is not implemented (option B/C in the feasibility review).
 
+## Sending HammGrid-only take-offs INTO PlanSwift (experimental)
+
+Project Settings → **Send take-offs to PlanSwift** (`lib/importers/planswiftPush.js`). **Writes
+into the live PlanSwift job folder** — no copy. Flow: *Check what would be sent* (re-converts the
+job, shows a plan, writes nothing) → *Write to PlanSwift…* (warning dialog, must tick the
+acknowledgement) → *Undo last push* afterwards if needed. Routes: `POST /api/imports/push`,
+`POST /api/imports/:id/push`, `POST /api/imports/push-undo`.
+
+- **What is sent:** instances with no PlanSwift link (`external_id IS NULL`) on sheets that are
+  linked to a PlanSwift page (run a refresh once first so sheets are linked). New items go in a
+  `Takeoff/From HammGrid` folder; shapes for an item PlanSwift already has become new `Section`
+  subfolders of it. Area → Area Section (+ Subtract Section per cutout), Linear, Count (one Count
+  Section per item per sheet holding all its points). Coordinates: `px = renderPx / k * dpi / 72`.
+- **Never** edits or deletes anything PlanSwift wrote; it only creates folders. Each new node is a
+  clone of a real node of the same class in the same job (`templates` in the converter JSON, one
+  per class) with only name/GUIDs/colour/ordering/timestamp/page/points changed, descriptions and
+  costs blanked. If the job has no node of a needed class, those shapes are skipped (reported).
+  Files are written to `Data.xml.hgtmp` then renamed.
+- **Lock:** `JobLock.xml` present → a lock < 60 min old blocks the push; an older one (they are
+  often left over — many jobs have 2014–2023 locks) needs the "PlanSwift is closed" confirmation.
+- **Undo:** each push writes `data/planswift-push/<project>-<id>.json` listing exactly the folders
+  and GUIDs it created; undo removes only those (refuses if anything was added inside them since)
+  and unlinks the HammGrid rows.
+- **Round trip:** pushed rows get `external_hash = 'pushed'`; the next refresh adopts them
+  (records the real hash, no change) so nothing shows as changed or duplicated.
+- **Not sent:** HammGrid formulas / item properties / perimeter-type items; quantities (PlanSwift
+  recomputes them); HammGrid folders (everything lands in "From HammGrid").
+- **Verified** against a local XML-only copy of a real job: the real converter reads back the
+  written nodes with identical points, holes, colours and page, existing files are byte-identical,
+  undo restores the folder exactly. **Not verified:** that PlanSwift itself opens/accepts the new
+  nodes — test on a throwaway job first.
+
 ## PlanSwift local-storage format (what we learned)
 
 - A job is a folder tree; **every node is a folder with a `Data.xml`**:

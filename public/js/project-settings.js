@@ -378,6 +378,7 @@ async function setupPlanswiftLink() {
     infoEl.textContent = `Job: ${l.job_path || 'unknown'} · ${l.synced_at ? `last refreshed ${l.synced_at} UTC` : 'never refreshed'}`;
   };
   renderInfo(link);
+  setupPlanswiftPush(link);
 
   let importId = null;
   const reset = () => { importId = null; btn.disabled = false; resultEl.style.display = 'none'; resultEl.innerHTML = ''; };
@@ -464,6 +465,150 @@ async function setupPlanswiftLink() {
       reset();
     }
   });
+}
+
+// ---- Send HammGrid-only take-offs to the linked PlanSwift job -----------------
+// Writes into the live PlanSwift job folder, so: a plan is shown first, a warning
+// dialog must be confirmed, and the last push can be undone.
+function setupPlanswiftPush(initialLink) {
+  const card = document.getElementById('planswift-push-card');
+  const btn = document.getElementById('planswift-push-check-btn');
+  const undoBtn = document.getElementById('planswift-push-undo-btn');
+  const statusEl = document.getElementById('planswift-push-status');
+  const resultEl = document.getElementById('planswift-push-result');
+  card.style.display = '';
+
+  const showUndo = (lastPush) => { undoBtn.style.display = lastPush && lastPush.status === 'applied' ? '' : 'none'; };
+  showUndo(initialLink.last_push);
+  let importId = null;
+  const reset = () => { importId = null; btn.disabled = false; resultEl.style.display = 'none'; resultEl.innerHTML = ''; };
+  const list = (items) => `<ul style="margin:4px 0 0 18px;">${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`;
+  const lockText = (l) => `locked by ${esc(l.locked_by || 'unknown')} at ${esc(l.timestamp || 'unknown time')} (${l.age_minutes} minute(s) ago)`;
+
+  // The warning dialog. `lock` = the job's JobLock.xml info (or null).
+  function confirmDialog({ title, body, lock, action, onConfirm }) {
+    const blocked = lock && lock.recent;
+    openModal(`
+      <h2 style="color: var(--danger);">${esc(title)}</h2>
+      ${body}
+      ${lock ? `<p><b>This job has a lock file</b> — ${lockText(lock)}. ${blocked ? '<b>That is very recent, so PlanSwift probably has the job open. Close it in PlanSwift and try again.</b>' : 'Lock files are often left behind, but check that nobody has the job open.'}</p>` : ''}
+      <label style="display:block; margin:10px 0;"><input type="checkbox" id="push-ack"> I understand this writes directly into the live PlanSwift job, and I have confirmed that PlanSwift is closed on it.</label>
+      <p class="error" id="push-modal-error" style="display:none;"></p>
+      <div class="modal-actions">
+        <button type="button" id="push-modal-cancel">Cancel</button>
+        <button class="danger" type="button" id="push-modal-go" disabled>${esc(action)}</button>
+      </div>`);
+    const ack = document.getElementById('push-ack');
+    const go = document.getElementById('push-modal-go');
+    ack.addEventListener('change', () => { go.disabled = blocked || !ack.checked; });
+    document.getElementById('push-modal-cancel').addEventListener('click', closeModal);
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      try {
+        await onConfirm({ acknowledge: true, confirm_closed: true });
+        closeModal();
+      } catch (err) {
+        const e = document.getElementById('push-modal-error');
+        e.textContent = err.message;
+        e.style.display = 'block';
+        go.disabled = false;
+      }
+    });
+  }
+
+  function renderPlan(plan) {
+    const lines = [];
+    if (plan.problems.length) lines.push(`<p><b>Cannot send yet:</b>${list(plan.problems)}</p>`);
+    if (!plan.instances) {
+      lines.push('<p>Nothing to send — every take-off in this project is already in PlanSwift (or can\'t be sent, see below).</p>');
+    } else {
+      lines.push(`<p>Ready to add to <b>${esc(plan.job)}</b>:</p>
+        <ul style="margin:4px 0 0 18px;">
+          <li><b>${plan.new_items}</b> new take-off item(s), in a "From HammGrid" folder</li>
+          <li><b>${plan.existing_items}</b> existing PlanSwift item(s) getting new shapes</li>
+          <li><b>${plan.sections}</b> drawn shape(s) in total (${plan.instances} HammGrid take-off row(s))</li>
+        </ul>`);
+      lines.push(`<details style="margin-top:6px;"><summary class="muted">Show items</summary>${list(plan.items.map((i) => `${i.name} — ${i.type}, ${i.shapes} shape(s) on ${i.sheets.join(', ')}${i.target === 'new' ? ' (new item)' : ' (added to existing item)'}`))}${plan.new_items + plan.existing_items > plan.items.length ? '<p class="muted">…and more</p>' : ''}</details>`);
+    }
+    if (plan.skipped.length) lines.push(`<p class="muted">Not sent:${list(plan.skipped.map((s) => `${s.count} take-off row(s) ${s.reason}`))}</p>`);
+    if (plan.lock) lines.push(`<p class="muted">Lock file present on the job: ${lockText(plan.lock)}.</p>`);
+    if (plan.instances) lines.push('<div class="row" style="margin-top:8px;"><button class="danger" type="button" id="planswift-push-go-btn">Write to PlanSwift…</button><button type="button" id="planswift-push-cancel-btn">Cancel</button></div>');
+    else lines.push('<div class="row" style="margin-top:8px;"><button type="button" id="planswift-push-cancel-btn">Close</button></div>');
+    resultEl.innerHTML = lines.join('');
+    resultEl.style.display = '';
+    document.getElementById('planswift-push-cancel-btn').addEventListener('click', async () => {
+      try { await api('DELETE', `/api/imports/${importId}`); } catch (err) { /* best effort */ }
+      statusEl.textContent = '';
+      reset();
+    });
+    const go = document.getElementById('planswift-push-go-btn');
+    if (!go) return;
+    go.addEventListener('click', () => confirmDialog({
+      title: 'Write into the live PlanSwift job?',
+      body: `<p>This will create <b>${plan.sections}</b> new shape(s) and <b>${plan.new_items}</b> new item(s) directly in the PlanSwift job:</p>
+        <p class="muted">${esc(plan.job_path)}</p>
+        <ul style="margin:4px 0 8px 18px;">
+          <li>Make sure <b>nobody has this job open in PlanSwift</b>. If they do, they won't see the changes and could overwrite them.</li>
+          <li>Nothing that PlanSwift already wrote is changed or deleted. Only new folders are added.</li>
+          <li>PlanSwift users must close and reopen the job to see the new take-offs.</li>
+          <li>PlanSwift recalculates quantities itself; HammGrid formulas and item properties are not sent.</li>
+          <li>You can use "Undo last push" afterwards to remove exactly what was added.</li>
+        </ul>`,
+      lock: plan.lock,
+      action: 'Write to PlanSwift',
+      onConfirm: async (body) => {
+        statusEl.textContent = 'Writing…';
+        try {
+          const out = await api('POST', `/api/imports/${importId}/push`, body);
+          showToast(`Sent to PlanSwift: ${out.written.items} new item(s), ${out.written.sections} shape(s). Reopen the job in PlanSwift to see them.`, 'success');
+          statusEl.textContent = 'Done. Close and reopen the job in PlanSwift to see the new take-offs.';
+          reset();
+          showUndo({ status: 'applied' });
+        } catch (err) {
+          statusEl.textContent = `Failed: ${err.message}`;
+          throw err;
+        }
+      },
+    }));
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    resultEl.style.display = 'none';
+    statusEl.textContent = 'Starting…';
+    try {
+      ({ import_id: importId } = await api('POST', '/api/imports/push', { project_id: Number(projectId) }));
+      for (;;) {
+        const data = await api('GET', `/api/imports/${importId}`);
+        const imp = data.import;
+        if (imp.status === 'error' || imp.status === 'cancelled') throw new Error(imp.error || 'Cancelled');
+        if (imp.status === 'ready') {
+          statusEl.textContent = 'Compared with PlanSwift.';
+          renderPlan(data.push.plan);
+          return;
+        }
+        statusEl.textContent = imp.progress ? `Reading PlanSwift job… page ${imp.progress.current} of ${imp.progress.total}` : 'Reading PlanSwift job…';
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    } catch (err) {
+      statusEl.textContent = `Failed: ${err.message}`;
+      if (importId) { try { await api('DELETE', `/api/imports/${importId}`); } catch (e) { /* best effort */ } }
+      reset();
+    }
+  });
+
+  undoBtn.addEventListener('click', () => confirmDialog({
+    title: 'Undo the last push to PlanSwift?',
+    body: `<p>This removes exactly the folders the last push added to the PlanSwift job, and unlinks them in HammGrid (the take-offs stay in HammGrid). If anyone added something inside those folders in PlanSwift since, nothing is removed.</p>`,
+    lock: null,
+    action: 'Undo push',
+    onConfirm: async (body) => {
+      const out = await api('POST', '/api/imports/push-undo', { project_id: Number(projectId), confirm_closed: true });
+      showToast(`Removed ${out.undone.sections} shape(s) and ${out.undone.items} item(s) from PlanSwift.`, 'success');
+      statusEl.textContent = 'Undone.';
+      showUndo({ status: 'undone' });
+    },
+  }));
 }
 
 (async function init() {
