@@ -378,11 +378,6 @@ async function setupPlanswiftLink() {
     infoEl.textContent = `Job: ${l.job_path || 'unknown'} · ${l.synced_at ? `last refreshed ${l.synced_at} UTC` : 'never refreshed'}`;
   };
   renderInfo(link);
-  if (!link.configured) {
-    btn.disabled = true;
-    statusEl.textContent = 'PlanSwift jobs folder is not configured on this server.';
-    return;
-  }
 
   let importId = null;
   const reset = () => { importId = null; btn.disabled = false; resultEl.style.display = 'none'; resultEl.innerHTML = ''; };

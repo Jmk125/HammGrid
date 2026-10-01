@@ -198,7 +198,7 @@ router.get('/link/:projectId', requireAdmin, (req, res) => {
     const full = getImporter(importer.id);
     const info = full.linkInfo && full.linkInfo(projectId);
     if (info) {
-      out.linked_source = { id: full.id, label: full.label, configured: full.isConfigured(), job_path: info.sourcePath, synced_at: info.synced_at, linked: info.linked };
+      out.linked_source = { id: full.id, label: full.label, job_path: info.sourcePath, synced_at: info.synced_at, linked: info.linked };
       break;
     }
   }
@@ -209,7 +209,6 @@ router.post('/refresh', requireAdmin, (req, res) => {
   const projectId = Number(req.body && req.body.project_id);
   const importer = getImporter('planswift');
   if (!projectId || !importer || !importer.refreshPackage) return res.status(400).json({ error: 'project_id is required' });
-  if (!importer.isConfigured()) return res.status(400).json({ error: `${importer.label} import is not configured on this server` });
   let job;
   try {
     job = importer.resolveLinkedJob(projectId);
