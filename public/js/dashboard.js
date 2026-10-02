@@ -1,5 +1,5 @@
 import { getProjectSyncInfo, cacheProjectList, getCachedProjectList } from '/js/offline-store.js';
-import { openModal, closeModal, checkPendingJobs, renderNetworkIndicator, renderUserMenu, applyTheme } from '/js/shell.js';
+import { openModal, closeModal, checkPendingJobs, renderNetworkIndicator, renderUserMenu, applyTheme, renderGlobalSidebar } from '/js/shell.js';
 
 let me;
 
@@ -20,7 +20,10 @@ function renderTopbar() {
   applyTheme(me.settings);
   const topbar = document.getElementById('topbar');
   topbar.innerHTML = `
-    <a class="brand" href="/dashboard.html">HammGrid</a>
+    <div class="row" style="gap:6px;">
+      ${me.role === 'admin' ? '<button class="sidebar-toggle" id="sidebar-toggle-btn" type="button">&#9776;</button>' : ''}
+      <a class="brand" href="/dashboard.html">HammGrid</a>
+    </div>
     <div class="row topbar-actions">
       <button id="view-multiple-btn" type="button">View Multiple</button>
       ${me.role === 'admin' ? '<button id="new-project-btn" type="button">New Project</button>' : ''}
@@ -31,6 +34,16 @@ function renderTopbar() {
   renderNetworkIndicator(topbar.querySelector('.topbar-actions'));
   const newBtn = topbar.querySelector('#new-project-btn');
   if (newBtn) newBtn.addEventListener('click', openNewProjectModal);
+  const sidebarEl = document.getElementById('sidebar');
+  renderGlobalSidebar(sidebarEl, 'projects', me);
+  const toggleBtn = topbar.querySelector('#sidebar-toggle-btn');
+  if (toggleBtn) {
+    if (localStorage.getItem('sidebar-collapsed') === '1') sidebarEl.classList.add('collapsed');
+    toggleBtn.addEventListener('click', () => {
+      sidebarEl.classList.toggle('collapsed');
+      localStorage.setItem('sidebar-collapsed', sidebarEl.classList.contains('collapsed') ? '1' : '0');
+    });
+  }
   topbar.querySelector('#view-multiple-btn').addEventListener('click', () => setSelectionMode(true));
 }
 
