@@ -1870,7 +1870,7 @@ export function initMarkups({
       activateTool('select');
       const text = await textboxModal({ title: 'Add text box', multiline: true });
       if (!text) return true;
-      const markup = await createMarkup('text', { ...geometry, text }, { fontSize: 20 });
+      const markup = await createMarkup('text', { ...geometry, text });
       if (markup) selectMarkup(markup.id);
       return true;
     }

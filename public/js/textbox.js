@@ -4,7 +4,6 @@
 // `text` markups (no w) keep rendering as a single unboxed line.
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const FONT_FAMILY = 'sans-serif';
-export const TEXTBOX_DEFAULT_FONT_SIZE = 20;
 
 export function isTextbox(m) {
   return m.type === 'text' && m.geometry && m.geometry.w > 0 && m.geometry.h > 0;
@@ -46,16 +45,35 @@ function wrapLines(text, maxWidth, fontSize) {
   return lines;
 }
 
-// Box height grows to fit the text if the drawn box is too short, so
-// nothing is ever clipped - the stored h is only the minimum.
-export function textboxLayout(m, vbW, vbH) {
-  const fontSize = (m.style && m.style.fontSize) || TEXTBOX_DEFAULT_FONT_SIZE;
+// Font size is derived from the box, not stored: the user sets the width
+// (which controls wrapping) and the height, and the text is the largest size
+// that still fits inside. Growing the box taller grows the font. Only if the
+// text can't fit even at MIN_FONT_SIZE does the box grow to hold it.
+const MIN_FONT_SIZE = 4;
+function layoutAt(text, boxW, fontSize) {
   const pad = fontSize * 0.4;
   const lineH = fontSize * 1.25;
+  const lines = wrapLines(text, Math.max(boxW - pad * 2, fontSize), fontSize);
+  return { fontSize, pad, lineH, lines, needed: lines.length * lineH + pad * 2 };
+}
+
+export function textboxLayout(m, vbW, vbH) {
   const boxW = m.geometry.w * vbW;
-  const lines = wrapLines(m.geometry.text, Math.max(boxW - pad * 2, fontSize), fontSize);
-  const height = Math.max(m.geometry.h * vbH, lines.length * lineH + pad * 2);
-  return { fontSize, pad, lineH, lines, x: m.geometry.x * vbW, y: m.geometry.y * vbH, w: boxW, h: height };
+  const boxH = m.geometry.h * vbH;
+  const text = m.geometry.text;
+  let lo = MIN_FONT_SIZE;
+  let hi = Math.max(boxH, MIN_FONT_SIZE);
+  if (layoutAt(text, boxW, lo).needed > boxH) {
+    const L = layoutAt(text, boxW, lo);
+    return { ...L, x: m.geometry.x * vbW, y: m.geometry.y * vbH, w: boxW, h: L.needed };
+  }
+  for (let i = 0; i < 14; i++) {
+    const mid = (lo + hi) / 2;
+    if (layoutAt(text, boxW, mid).needed <= boxH) lo = mid;
+    else hi = mid;
+  }
+  const L = layoutAt(text, boxW, lo);
+  return { ...L, x: m.geometry.x * vbW, y: m.geometry.y * vbH, w: boxW, h: boxH };
 }
 
 export function buildTextboxNode(m, vbW, vbH, { color, strokeWidth }) {
