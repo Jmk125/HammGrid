@@ -14,6 +14,7 @@ import { setupAdvancedFields, wireNamePreview } from '/js/takeoffAdvancedFields.
 import { getDefaultTakeoffFolderId, setDefaultTakeoffFolderId } from '/js/takeoffDefaultFolder.js';
 import { computeTakeoffOutput, parseTakeoffProperties, resolveTakeoffName } from '/js/takeoffFormula.js';
 import { openFragmentPicker } from '/js/fragmentPicker.js';
+import { resolvePaneOrder } from '/js/paneOrder.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -349,6 +350,69 @@ document.querySelectorAll('.pane-section-header').forEach((header) => {
     localStorage.setItem(collapseKey, section.classList.contains('collapsed') ? '1' : '0');
   });
 });
+
+// ---------- Right pane: section order (per-user, saved to settings) ----------
+// Order comes from user settings (editable in Settings too); dragging a
+// section's grip here reorders live and saves. Composite Layout always stays
+// last - it only appears in edit-layout mode.
+function setupPaneSectionOrder(me) {
+  const body = document.getElementById('pane-body');
+  const composite = document.getElementById('section-composite');
+  const canTakeoffs = me.role === 'admin' || !!me.can_takeoff;
+  const order = resolvePaneOrder(me.settings && me.settings.paneSectionOrder, canTakeoffs);
+  for (const id of order) body.insertBefore(document.getElementById(`section-${id}`), composite);
+
+  const sections = () => order.map((id) => document.getElementById(`section-${id}`));
+  for (const id of order) {
+    const section = document.getElementById(`section-${id}`);
+    const grip = document.createElement('button');
+    grip.type = 'button';
+    grip.className = 'pane-grip';
+    grip.title = 'Drag to reorder';
+    grip.innerHTML = '&#8942;';
+    section.appendChild(grip);
+
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      section.classList.add('pane-dragging');
+      let moved = false;
+      const onMove = (ev) => {
+        for (const other of sections()) {
+          if (other === section || other.style.display === 'none') continue;
+          const r = other.getBoundingClientRect();
+          if (ev.clientY < r.top || ev.clientY > r.bottom) continue;
+          const before = ev.clientY < r.top + r.height / 2;
+          const ref = before ? other : other.nextSibling;
+          if (ref !== section && ref !== section.nextSibling) {
+            body.insertBefore(section, ref);
+            moved = true;
+          }
+          break;
+        }
+      };
+      const onEnd = async () => {
+        grip.removeEventListener('pointermove', onMove);
+        grip.removeEventListener('pointerup', onEnd);
+        grip.removeEventListener('pointercancel', onEnd);
+        section.classList.remove('pane-dragging');
+        if (!moved) return;
+        const next = [...body.children]
+          .map((el) => el.id.replace(/^section-/, ''))
+          .filter((sid) => order.includes(sid));
+        try {
+          const { user } = await api('PUT', '/api/auth/settings', { paneSectionOrder: next });
+          setCachedSessionUser(user);
+        } catch (err) {
+          showToast('Could not save pane order - it will reset on reload');
+        }
+      };
+      grip.addEventListener('pointermove', onMove);
+      grip.addEventListener('pointerup', onEnd);
+      grip.addEventListener('pointercancel', onEnd);
+    });
+  }
+}
 
 // ---------- Zoom / pan (shared module - see zoomPan.js) ----------
 let zoomPan = null;
@@ -8685,6 +8749,7 @@ async function loadSheetOffline() {
   canTakeoff = me.role === 'admin' || !!me.can_takeoff;
   isAdmin = me.role === 'admin';
   magnifierCorner = me.settings && me.settings.magnifierCorner === 'bottom-right' ? 'bottom-right' : 'bottom-left';
+  setupPaneSectionOrder(me);
 
   let sheet;
   let versions;

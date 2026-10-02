@@ -49,6 +49,7 @@ const PRECACHE_URLS = [
   '/js/textbox.js',
   '/js/zoomPan.js',
   '/js/fragmentPicker.js',
+  '/js/paneOrder.js',
   '/js/takeoffAdvancedFields.js',
   '/js/takeoffDefaultFolder.js',
   '/js/takeoffFormula.js',
