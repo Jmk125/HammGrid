@@ -7694,6 +7694,10 @@ function showTakeoffItemActionsBar(item, isArmed) {
   document.getElementById('takeoff-item-actions-name').textContent = isMulti
     ? `${multiSelectExtraItemIds.size + 1} ${item.type} items selected${assemblySuffix}`
     : `${item.name}${assemblySuffix}`;
+  const hideBtn = document.getElementById('takeoff-item-actions-hide');
+  hideBtn.style.display = isMulti ? 'none' : '';
+  hideBtn.textContent = hiddenTakeoffItemIds.has(item.id) ? 'Show' : 'Hide';
+  hideBtn.title = hiddenTakeoffItemIds.has(item.id) ? 'Show this item on this drawing' : 'Hide this item on this drawing';
   document.getElementById('takeoff-item-actions-edit').style.display = isMulti ? 'none' : '';
   document.getElementById('takeoff-item-actions-edit').title = 'Edit properties & formula'; // reset in case showAssemblyActionsBar last changed it
   document.getElementById('takeoff-item-actions-remove').style.display = isMulti ? 'none' : '';
@@ -7713,6 +7717,7 @@ function showAssemblyActionsBar(assembly, isArmed) {
   document.getElementById('takeoff-item-actions-dot').style.background = 'var(--border)';
   const linkedCount = ['area', 'top', 'bottom', 'left', 'right'].filter((k) => assembly[`${k}_item_id`]).length;
   document.getElementById('takeoff-item-actions-name').textContent = `${assembly.name} (${linkedCount}/5 linked)`;
+  document.getElementById('takeoff-item-actions-hide').style.display = 'none';
   document.getElementById('takeoff-item-actions-edit').style.display = '';
   document.getElementById('takeoff-item-actions-edit').title = 'Edit links';
   document.getElementById('takeoff-item-actions-remove').style.display = 'none';
@@ -7761,6 +7766,10 @@ function setupTakeoffItemActionsBar() {
     }
     const item = takeoffItems.find((i) => i.id === currentBarItemId());
     if (item) openTakeoffEditModal(item);
+  });
+  document.getElementById('takeoff-item-actions-hide').addEventListener('click', () => {
+    const item = takeoffItems.find((i) => i.id === currentBarItemId());
+    if (item) toggleHideTakeoffItem(item); // re-renders the pane, which refreshes this button's label
   });
   document.getElementById('takeoff-item-actions-remove').addEventListener('click', () => {
     const item = takeoffItems.find((i) => i.id === currentBarItemId());
@@ -8197,8 +8206,20 @@ function setupTakeoffToolbar() {
   });
 }
 
+// Span the bar across the drawing area (the sidebar and topbar shift it).
+function positionTakeoffToolbar() {
+  const bar = document.getElementById('takeoff-toolbar');
+  const wrap = document.getElementById('zoom-wrap');
+  if (!bar || !wrap) return;
+  const r = wrap.getBoundingClientRect();
+  bar.style.left = `${r.left}px`;
+  bar.style.right = `${Math.max(0, window.innerWidth - r.right)}px`;
+}
+window.addEventListener('resize', positionTakeoffToolbar);
+
 function updateTakeoffToolbar() {
   const bar = document.getElementById('takeoff-toolbar');
+  positionTakeoffToolbar();
   const placementActive = takeoffTool === 'linear' || takeoffTool === 'perimeter' || takeoffTool === 'area';
   // Same conditions renderTakeoffPane() resolves to an actual item/assembly
   // for showTakeoffItemActionsBar/showAssemblyActionsBar - only need "is
