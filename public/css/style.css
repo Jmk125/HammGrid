@@ -530,6 +530,25 @@ tr.ignored td { opacity: 0.5; }
    underneath, while every button/checkbox stays fully clickable. */
 #takeoff-toolbar { pointer-events: none; }
 #takeoff-toolbar > * { pointer-events: auto; }
+/* Full-width, square-cornered strip along the bottom of the drawing area,
+   items left-aligned. left/width are synced to #zoom-wrap's rect by
+   positionTakeoffToolbar in sheet.js (the sidebar shifts the drawing area),
+   these are just the fallback. */
+#takeoff-toolbar {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  transform: none;
+  border-radius: 0;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 5px 12px;
+  box-shadow: 0 -4px 14px rgba(0,0,0,0.25);
+}
+/* Name must not stretch to fill the strip, or it shoves everything else right. */
+#takeoff-toolbar .takeoff-item-actions-name { flex: 0 1 auto; max-width: 320px; }
+#takeoff-toolbar .chip-toggle { padding: 4px 12px; }
+#takeoff-toolbar button { padding-top: 4px; padding-bottom: 4px; }
 .selection-bar button { border-color: rgba(255,255,255,0.35); background: transparent; color: #fff; }
 .selection-bar button.primary { background: var(--accent); border-color: var(--accent); }
 .selection-bar button:hover:not(:disabled):not(.primary) { background: rgba(255,255,255,0.1); }
