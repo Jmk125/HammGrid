@@ -301,7 +301,7 @@ function areaFeet(ptsPt, fpi) {
   return (Math.abs(a2) / 2) * k * k;
 }
 
-const KIND_TO_TYPE = { area: 'area', linear: 'linear', count: 'count' };
+const KIND_TO_TYPE = { area: 'area', linear: 'linear', perimeter: 'perimeter', count: 'count' };
 
 // external_hash written by a HammGrid -> PlanSwift push (planswiftPush.js). The next
 // refresh adopts it - records PlanSwift's real hash without touching the row -

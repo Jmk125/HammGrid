@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Item Class="Folder" Name="Takeoff" GUID="{3CDE843C-313E-43D8-ADCD-D1E14B81CFFA}">
+  <Properties>
+    <Property Class="Number" GUID="{0D44FF3F-701F-4E1C-921C-076EFE51BE0C}" Name="OrderIndex" systemhidden="True" OrderIndex="2" DecimalPlaces="2">2</Property>
+    <Property Class="Text" GUID="" Name="Name" inheritaction="Ignore" input="True" required="True" group="Item" OrderIndex="3" DecimalPlaces="2">Takeoff</Property>
+    <Property Class="Type" GUID="{71890633-27E0-445F-A1EB-9380E437FC95}" Name="Type" group="Item" OrderIndex="4" DecimalPlaces="2">Folder</Property>
+    <Property Class="Text" GUID="{5B8E981E-FA2B-4E49-83D7-DD8696D8DEE0}" Name="Created By" inheritaction="Flatten" group="Audit Trail" OrderIndex="5" DecimalPlaces="" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Text" GUID="{E675F360-E5F4-4DBB-A3CB-4B424F3661F8}" Name="Time Stamp" inheritaction="Flatten" group="Audit Trail" OrderIndex="6" DecimalPlaces="" List="cmbList" PluginToExecute="cmbList">4/1/2024 4:33:20 PM</Property>
+    <Property Class="Color" GUID="{F14ED84E-45B5-496E-B004-397D2125B48A}" Name="Color" group="Item" OrderIndex="10" DecimalPlaces="2">536870911</Property>
+    <Property Class="Text" GUID="{38BA0756-6E1C-46F6-921C-4DDB7FD9A3D3}" Name="GUID" inheritaction="Ignore" systemlocked="True" systemhidden="True" OrderIndex="11" DecimalPlaces="2">{3CDE843C-313E-43D8-ADCD-D1E14B81CFFA}</Property>
+  </Properties>
+</Item>

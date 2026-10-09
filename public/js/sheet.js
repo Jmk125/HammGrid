@@ -14,6 +14,7 @@ import { setupAdvancedFields, wireNamePreview } from '/js/takeoffAdvancedFields.
 import { getDefaultTakeoffFolderId, setDefaultTakeoffFolderId } from '/js/takeoffDefaultFolder.js';
 import { computeTakeoffOutput, parseTakeoffProperties, resolveTakeoffName } from '/js/takeoffFormula.js';
 import { openFragmentPicker } from '/js/fragmentPicker.js';
+import { resolvePaneOrder } from '/js/paneOrder.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -350,13 +351,91 @@ document.querySelectorAll('.pane-section-header').forEach((header) => {
   });
 });
 
+// ---------- Right pane: section order (per-user, saved to settings) ----------
+// Order comes from user settings (editable in Settings too); dragging a
+// section's grip here reorders live and saves. Composite Layout always stays
+// last - it only appears in edit-layout mode.
+function setupPaneSectionOrder(me) {
+  const body = document.getElementById('pane-body');
+  const composite = document.getElementById('section-composite');
+  const canTakeoffs = me.role === 'admin' || !!me.can_takeoff;
+  const order = resolvePaneOrder(me.settings && me.settings.paneSectionOrder, canTakeoffs);
+  for (const id of order) body.insertBefore(document.getElementById(`section-${id}`), composite);
+
+  const sections = () => order.map((id) => document.getElementById(`section-${id}`));
+  for (const id of order) {
+    const section = document.getElementById(`section-${id}`);
+    const grip = document.createElement('button');
+    grip.type = 'button';
+    grip.className = 'pane-grip';
+    grip.title = 'Drag to reorder';
+    grip.innerHTML = '&#8942;';
+    section.appendChild(grip);
+
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      section.classList.add('pane-dragging');
+      let moved = false;
+      const onMove = (ev) => {
+        for (const other of sections()) {
+          if (other === section || other.style.display === 'none') continue;
+          const r = other.getBoundingClientRect();
+          if (ev.clientY < r.top || ev.clientY > r.bottom) continue;
+          const before = ev.clientY < r.top + r.height / 2;
+          const ref = before ? other : other.nextSibling;
+          if (ref !== section && ref !== section.nextSibling) {
+            body.insertBefore(section, ref);
+            moved = true;
+          }
+          break;
+        }
+      };
+      const onEnd = async () => {
+        grip.removeEventListener('pointermove', onMove);
+        grip.removeEventListener('pointerup', onEnd);
+        grip.removeEventListener('pointercancel', onEnd);
+        section.classList.remove('pane-dragging');
+        if (!moved) return;
+        const next = [...body.children]
+          .map((el) => el.id.replace(/^section-/, ''))
+          .filter((sid) => order.includes(sid));
+        try {
+          const { user } = await api('PUT', '/api/auth/settings', { paneSectionOrder: next });
+          setCachedSessionUser(user);
+        } catch (err) {
+          showToast('Could not save pane order - it will reset on reload');
+        }
+      };
+      grip.addEventListener('pointermove', onMove);
+      grip.addEventListener('pointerup', onEnd);
+      grip.addEventListener('pointercancel', onEnd);
+    });
+  }
+}
+
 // ---------- Zoom / pan (shared module - see zoomPan.js) ----------
 let zoomPan = null;
 let suppressInteractionFlag = false;
 
 let lastTakeoffRenderScale = null;
+// True when the last mouse press-drag-release travelled far enough to count
+// as a pan rather than a click - the take-off shapes' click/contextmenu
+// handlers check it so panning over a shape doesn't also open edit mode/menu.
+let takeoffDragMoved = false;
 function setupZoomPan() {
   const wrapEl = document.getElementById('zoom-wrap');
+  let dragStart = null;
+  wrapEl.addEventListener('mousedown', (e) => {
+    dragStart = { x: e.clientX, y: e.clientY };
+    takeoffDragMoved = false;
+  }, true);
+  window.addEventListener('mousemove', (e) => {
+    if (dragStart && Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) > 4) takeoffDragMoved = true;
+  });
+  window.addEventListener('mouseup', () => {
+    dragStart = null;
+  });
   zoomPan = setupSharedZoomPan({
     wrapEl,
     innerEl: document.getElementById('zoom-pan-inner'),
@@ -393,6 +472,14 @@ function setupZoomPan() {
       // right-click has nothing else claiming it in this mode, so it should
       // still pan like everywhere else instead of being silently dead the
       // instant the cursor is over a drawing.
+      // Committed take-off shapes sit on top of the drawing too, but they're
+      // part of the drawing surface, not chrome - dragging that starts on one
+      // should pan (a plain click/right-click still opens edit/menu, see
+      // takeoffDragMoved).
+      if (e.target.closest && e.target.closest('#takeoff-instances-layer')) {
+        if (takeoffTool) return e.button !== 2;
+        return false;
+      }
       const tag = (e.target.tagName || '').toLowerCase();
       if (tag !== 'svg' && tag !== 'canvas' && e.target !== wrapEl) return editLayoutMode ? e.button !== 2 : true;
       if (takeoffTool) return e.button !== 2;
@@ -2282,6 +2369,22 @@ async function openOverlayPicker() {
   function renderList(filter) {
     const listEl = document.getElementById('overlay-picker-list');
     listEl.innerHTML = '';
+    const recents = getRecentOverlaySheetIds()
+      .map((id) => sheets.find((s) => s.id === id))
+      .filter((s) => s && (!filter || `${s.sheet_number} ${s.current_title || ''}`.toLowerCase().includes(filter.toLowerCase())));
+    if (recents.length) {
+      const label = document.createElement('div');
+      label.className = 'overlay-picker-group-label';
+      label.textContent = 'Recent';
+      listEl.appendChild(label);
+      for (const s of recents) {
+        const item = document.createElement('div');
+        item.className = 'overlay-picker-item';
+        item.textContent = `${s.sheet_number} - ${s.current_title || ''}`;
+        item.addEventListener('click', () => pickOverlayTarget(s));
+        listEl.appendChild(item);
+      }
+    }
     const grouped = {};
     for (const s of sheets) {
       const hay = `${s.sheet_number} ${s.current_title || ''}`.toLowerCase();
@@ -2307,7 +2410,31 @@ async function openOverlayPicker() {
   document.getElementById('overlay-search').addEventListener('input', (e) => renderList(e.target.value));
 }
 
+// Recently overlaid sheets, per base sheet (the one being viewed), most recent first. Per-device
+// convenience only, so localStorage is fine (and may be unavailable).
+const RECENT_OVERLAY_MAX = 5;
+function recentOverlayKey() {
+  return `recentOverlaySheets:${projectId}:${sheetId}`;
+}
+function getRecentOverlaySheetIds() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(recentOverlayKey()) || '[]');
+    return Array.isArray(ids) ? ids.map(Number) : [];
+  } catch {
+    return [];
+  }
+}
+function rememberOverlaySheet(id) {
+  try {
+    const ids = [Number(id), ...getRecentOverlaySheetIds().filter((x) => x !== Number(id))];
+    localStorage.setItem(recentOverlayKey(), JSON.stringify(ids.slice(0, RECENT_OVERLAY_MAX)));
+  } catch {
+    /* storage unavailable - recents just won't persist */
+  }
+}
+
 async function pickOverlayTarget(otherSheet) {
+  rememberOverlaySheet(otherSheet.id);
   if (otherSheet.id === Number(sheetId)) {
     openModal(`
       <h2>Overlay against which version?</h2>
@@ -2565,6 +2692,10 @@ let arcThroughPoint = null; // set once - next click is the arc's endpoint and c
 // committed instance is selected; edits apply to it live and PATCH to the
 // server on drop/delete, only diverging from the server copy mid-drag.
 let editingInstance = null;
+// Extra pieces of editingInstance's item Ctrl+clicked into the selection, so
+// their combined quantity can be read off the bottom bar. Selection only -
+// vertex edits still apply to editingInstance alone (see renderTakeoffInstances).
+const extraSelectedInstanceIds = new Set();
 let editSelectedPointIndices = new Set();
 let takeoffEditDrag = null; // { startPt, moved }
 let takeoffMarquee = null; // { startPt, currentPt }
@@ -4410,6 +4541,14 @@ function renderTakeoffInstances() {
   layer.innerHTML = '';
   layer.classList.toggle('edit-enabled', !takeoffTool);
   const scale = zoomPan ? zoomPan.state.scale : 1;
+  // Drop selected pieces that were deleted, moved to another item, or are no
+  // longer in the item being edited.
+  for (const id of [...extraSelectedInstanceIds]) {
+    const inst = sheetTakeoffInstances.find((i) => i.id === id);
+    if (!editingInstance || !inst || inst.item_id !== editingInstance.item_id || inst.id === editingInstance.id) {
+      extraSelectedInstanceIds.delete(id);
+    }
+  }
   for (const inst of sheetTakeoffInstances) {
     if (editingInstance && inst.id === editingInstance.id) continue; // drawn by the edit overlay instead
     if (hiddenTakeoffItemIds.has(inst.item_id)) continue; // per-sheet visual hide, not a delete
@@ -4450,13 +4589,24 @@ function renderTakeoffInstances() {
       // draw tool still wins over entering take-off edit mode.
       if (markupsController && markupsController.isToolActive()) return;
       if (takeoffLongPressSuppressClick) return; // long-press just opened the menu - don't also enter edit mode
+      if (takeoffDragMoved) return; // that was a pan, not a click
       e.stopPropagation();
+      // Ctrl/Cmd+click adds or removes another piece of the item already being
+      // edited; anything else (different item, no edit yet) starts fresh.
+      if ((e.ctrlKey || e.metaKey) && editingInstance && editingInstance.item_id === inst.item_id) {
+        if (extraSelectedInstanceIds.has(inst.id)) extraSelectedInstanceIds.delete(inst.id);
+        else extraSelectedInstanceIds.add(inst.id);
+        renderTakeoffInstances();
+        updateSelectedPiecesReadout();
+        return;
+      }
       enterTakeoffEditMode(inst);
     });
     el.addEventListener('contextmenu', (e) => {
       if (markupsController && markupsController.isToolActive()) return;
       e.preventDefault();
       e.stopPropagation();
+      if (takeoffDragMoved) return; // right-drag pan, not a right-click
       hideTakeoffTooltip();
       showTakeoffContextMenu(e.clientX, e.clientY, inst);
     });
@@ -4472,8 +4622,41 @@ function renderTakeoffInstances() {
     el.addEventListener('mousemove', positionTakeoffTooltip);
     el.addEventListener('mouseleave', hideTakeoffTooltip);
     layer.appendChild(el);
+    if (extraSelectedInstanceIds.has(inst.id)) {
+      // Same green selected-point handles edit mode uses, but display-only.
+      const rings = [pts, ...(inst.geometry.holes || [])];
+      for (const ring of rings) {
+        for (const p of ring) {
+          const c = measureSvgNs('circle');
+          c.setAttribute('cx', p.x);
+          c.setAttribute('cy', p.y);
+          c.setAttribute('r', 7 / scale);
+          c.setAttribute('fill', '#16a34a');
+          c.setAttribute('stroke', '#16a34a');
+          c.setAttribute('stroke-width', 2 / scale);
+          c.style.pointerEvents = 'none';
+          layer.appendChild(c);
+        }
+      }
+    }
   }
   renderTakeoffLegend();
+}
+
+// Combined quantity of the piece being edited plus any Ctrl+clicked extras,
+// shown in the bottom bar's quantity slot next to the item name.
+function updateSelectedPiecesReadout() {
+  const el = document.getElementById('takeoff-item-actions-live-qty');
+  if (!el || activeTakeoffItemId) return; // armed placement owns this slot (see updateLiveTakeoffQuantity)
+  const item = editingInstance && takeoffItems.find((i) => i.id === editingInstance.item_id);
+  if (!item) return;
+  let total = editingInstance.quantity;
+  for (const id of extraSelectedInstanceIds) {
+    const inst = sheetTakeoffInstances.find((i) => i.id === id);
+    if (inst) total += inst.quantity;
+  }
+  const n = extraSelectedInstanceIds.size + 1;
+  el.textContent = `${n > 1 ? `${n} pieces: ` : ''}${formatTakeoffQuantity(item, total)}`;
 }
 
 // ---------- Take-off legend overlay (Reference pane's toggle button) ----------
@@ -4900,6 +5083,7 @@ function ensureTakeoffEditLayer() {
 
 function enterTakeoffEditMode(instance) {
   if (editingInstance && editingInstance.id === instance.id) return;
+  extraSelectedInstanceIds.clear();
   if (freezeArmed) disarmFreezePane();
   // Deep-ish copy of geometry so live drag edits don't mutate the shared
   // sheetTakeoffInstances array until they're actually persisted.
@@ -4930,6 +5114,7 @@ function enterTakeoffEditMode(instance) {
 function exitTakeoffEditMode() {
   if (!editingInstance) return;
   editingInstance = null;
+  extraSelectedInstanceIds.clear();
   editSelectedPointIndices = new Set();
   takeoffBrushStroke = null;
   takeoffBrushCursorPt = null;
@@ -5078,6 +5263,32 @@ function distanceToSegment(p, a, b) {
   if (lenSq === 0) return Math.hypot(p.x - a.x, p.y - a.y);
   const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
   return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+// True when any part of the instance's outline falls inside rect ({x0,x1,y0,y1}):
+// a vertex inside, or a segment crossing one of the rect's edges.
+function takeoffInstanceTouchesRect(inst, rect) {
+  const inRect = (p) => p.x >= rect.x0 && p.x <= rect.x1 && p.y >= rect.y0 && p.y <= rect.y1;
+  const ccw = (a, b, c) => (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
+  const cross = (a, b, c, d) => ccw(a, c, d) !== ccw(b, c, d) && ccw(a, b, c) !== ccw(a, b, d);
+  const corners = [
+    { x: rect.x0, y: rect.y0 },
+    { x: rect.x1, y: rect.y0 },
+    { x: rect.x1, y: rect.y1 },
+    { x: rect.x0, y: rect.y1 },
+  ];
+  const rings = [{ pts: inst.geometry.points, closed: inst.item_type === 'area' }];
+  for (const h of inst.geometry.holes || []) rings.push({ pts: h, closed: true });
+  for (const { pts, closed } of rings) {
+    if (pts.some(inRect)) return true;
+    const segCount = closed ? pts.length : pts.length - 1;
+    for (let i = 0; i < segCount; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % pts.length];
+      for (let k = 0; k < 4; k++) if (cross(a, b, corners[k], corners[(k + 1) % 4])) return true;
+    }
+  }
+  return false;
 }
 
 function hitTestTakeoffEditPoint(pt, radiusPx = 10) {
@@ -5262,6 +5473,9 @@ function setupTakeoffEditInteraction() {
   function handleTakeoffEditPointerDown(e) {
     if (!editingInstance) return;
     if (!e.touches && e.button !== 0) return;
+    // Ctrl/Cmd+mousedown on another committed piece is the multi-select click
+    // (handled by that piece's click listener) - don't treat it as empty space.
+    if (!e.touches && (e.ctrlKey || e.metaKey) && e.target.closest && e.target.closest('#takeoff-instances-layer')) return;
     e.stopPropagation();
     const pt = getMeasureSvgPoint(e);
     // Touch gets a bigger hit radius than mouse - a fingertip is nowhere
@@ -5332,7 +5546,12 @@ function setupTakeoffEditInteraction() {
     // below) exits edit mode instead. With NEITHER tool armed (the default
     // on entering edit mode - see enterTakeoffEditMode), empty space has
     // nothing to interpret a drag as, so it just exits right away.
-    if (takeoffEditSelectMode === 'brush') {
+    if (!e.touches && (e.ctrlKey || e.metaKey)) {
+      // Ctrl+drag on empty space rubber-bands more pieces of this item into
+      // the selection (see finishTakeoffEditGesture) - never exits edit mode.
+      takeoffMarquee = { startPt: pt, currentPt: null, pieces: true };
+      renderTakeoffEditOverlay();
+    } else if (takeoffEditSelectMode === 'brush') {
       takeoffBrushStroke = { touchedAny: brushSelectPointsAt(pt, e.shiftKey) };
       takeoffEditDefaultSelection = false;
       renderTakeoffEditOverlay();
@@ -5405,6 +5624,26 @@ function setupTakeoffEditInteraction() {
       // than starting a technically-non-empty but practically-useless marquee.
       const scale = zoomPan ? zoomPan.state.scale : 1;
       const draggedEnough = currentPt && Math.hypot(currentPt.x - startPt.x, currentPt.y - startPt.y) > 3 / scale;
+      if (takeoffMarquee.pieces) {
+        takeoffMarquee = null;
+        if (draggedEnough && editingInstance) {
+          const rect = {
+            x0: Math.min(startPt.x, currentPt.x),
+            x1: Math.max(startPt.x, currentPt.x),
+            y0: Math.min(startPt.y, currentPt.y),
+            y1: Math.max(startPt.y, currentPt.y),
+          };
+          for (const inst of sheetTakeoffInstances) {
+            if (inst.id === editingInstance.id || inst.item_id !== editingInstance.item_id) continue;
+            if (hiddenTakeoffItemIds.has(inst.item_id)) continue;
+            if (takeoffInstanceTouchesRect(inst, rect)) extraSelectedInstanceIds.add(inst.id);
+          }
+          renderTakeoffInstances();
+          updateSelectedPiecesReadout();
+        }
+        renderTakeoffEditOverlay(); // clears the rubber band
+        return;
+      }
       if (draggedEnough && editingInstance) {
         const x0 = Math.min(startPt.x, currentPt.x);
         const x1 = Math.max(startPt.x, currentPt.x);
@@ -7694,12 +7933,17 @@ function showTakeoffItemActionsBar(item, isArmed) {
   document.getElementById('takeoff-item-actions-name').textContent = isMulti
     ? `${multiSelectExtraItemIds.size + 1} ${item.type} items selected${assemblySuffix}`
     : `${item.name}${assemblySuffix}`;
+  const hideBtn = document.getElementById('takeoff-item-actions-hide');
+  hideBtn.style.display = isMulti ? 'none' : '';
+  hideBtn.textContent = hiddenTakeoffItemIds.has(item.id) ? 'Show' : 'Hide';
+  hideBtn.title = hiddenTakeoffItemIds.has(item.id) ? 'Show this item on this drawing' : 'Hide this item on this drawing';
   document.getElementById('takeoff-item-actions-edit').style.display = isMulti ? 'none' : '';
   document.getElementById('takeoff-item-actions-edit').title = 'Edit properties & formula'; // reset in case showAssemblyActionsBar last changed it
   document.getElementById('takeoff-item-actions-remove').style.display = isMulti ? 'none' : '';
   document.getElementById('takeoff-item-actions-delete').style.display = isMulti ? 'none' : '';
   document.getElementById('takeoff-item-actions-stop').textContent = isArmed ? 'Stop' : 'Start';
   group.style.display = 'flex';
+  updateSelectedPiecesReadout();
 }
 
 // Assemblies reuse the exact same group DOM as an item's - just a different
@@ -7713,6 +7957,7 @@ function showAssemblyActionsBar(assembly, isArmed) {
   document.getElementById('takeoff-item-actions-dot').style.background = 'var(--border)';
   const linkedCount = ['area', 'top', 'bottom', 'left', 'right'].filter((k) => assembly[`${k}_item_id`]).length;
   document.getElementById('takeoff-item-actions-name').textContent = `${assembly.name} (${linkedCount}/5 linked)`;
+  document.getElementById('takeoff-item-actions-hide').style.display = 'none';
   document.getElementById('takeoff-item-actions-edit').style.display = '';
   document.getElementById('takeoff-item-actions-edit').title = 'Edit links';
   document.getElementById('takeoff-item-actions-remove').style.display = 'none';
@@ -7761,6 +8006,10 @@ function setupTakeoffItemActionsBar() {
     }
     const item = takeoffItems.find((i) => i.id === currentBarItemId());
     if (item) openTakeoffEditModal(item);
+  });
+  document.getElementById('takeoff-item-actions-hide').addEventListener('click', () => {
+    const item = takeoffItems.find((i) => i.id === currentBarItemId());
+    if (item) toggleHideTakeoffItem(item); // re-renders the pane, which refreshes this button's label
   });
   document.getElementById('takeoff-item-actions-remove').addEventListener('click', () => {
     const item = takeoffItems.find((i) => i.id === currentBarItemId());
@@ -8197,8 +8446,20 @@ function setupTakeoffToolbar() {
   });
 }
 
+// Span the bar across the drawing area (the sidebar and topbar shift it).
+function positionTakeoffToolbar() {
+  const bar = document.getElementById('takeoff-toolbar');
+  const wrap = document.getElementById('zoom-wrap');
+  if (!bar || !wrap) return;
+  const r = wrap.getBoundingClientRect();
+  bar.style.left = `${r.left}px`;
+  bar.style.right = `${Math.max(0, window.innerWidth - r.right)}px`;
+}
+window.addEventListener('resize', positionTakeoffToolbar);
+
 function updateTakeoffToolbar() {
   const bar = document.getElementById('takeoff-toolbar');
+  positionTakeoffToolbar();
   const placementActive = takeoffTool === 'linear' || takeoffTool === 'perimeter' || takeoffTool === 'area';
   // Same conditions renderTakeoffPane() resolves to an actual item/assembly
   // for showTakeoffItemActionsBar/showAssemblyActionsBar - only need "is
@@ -8549,6 +8810,7 @@ async function loadSheetOffline() {
   canTakeoff = me.role === 'admin' || !!me.can_takeoff;
   isAdmin = me.role === 'admin';
   magnifierCorner = me.settings && me.settings.magnifierCorner === 'bottom-right' ? 'bottom-right' : 'bottom-left';
+  setupPaneSectionOrder(me);
 
   let sheet;
   let versions;

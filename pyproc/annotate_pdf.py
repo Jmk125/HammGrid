@@ -23,6 +23,15 @@ def draw_markup(page, m):
     elif t in ('rect','cloud'):
         rect=fitz.Rect(g.get('x',0)*w,g.get('y',0)*h,(g.get('x',0)+g.get('w',0))*w,(g.get('y',0)+g.get('h',0))*h)
         page.draw_rect(rect,color=c,width=width)
+    elif t=='text' and (g.get('w') or 0)>0 and (g.get('h') or 0)>0:
+        # Text box: font fills the box (largest size that fits), matching the on-screen
+        # auto-fit. insert_textbox returns <0 and draws nothing when text overflows.
+        rect=fitz.Rect(g.get('x',0)*w,g.get('y',0)*h,(g.get('x',0)+g.get('w',0))*w,(g.get('y',0)+g.get('h',0))*h)
+        page.draw_rect(rect,color=c,fill=(1,1,1),width=width)
+        inner=fitz.Rect(rect.x0+3,rect.y0+2,rect.x1-3,rect.y1-2)
+        fs=min(int(inner.height),150)
+        while fs>=4 and page.insert_textbox(inner,str(g.get('text','')),color=c,fontsize=fs,fontname='helv')<0:
+            fs-=1
     elif t=='text':
         page.insert_text(fitz.Point(g.get('x',0)*w,g.get('y',0)*h), str(g.get('text','')), color=c, fontsize=14)
 
