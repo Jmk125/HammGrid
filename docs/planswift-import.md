@@ -95,7 +95,14 @@ acknowledgement) → *Undo last push* afterwards if needed. Routes: `POST /api/i
   and unlinks the HammGrid rows.
 - **Round trip:** pushed rows get `external_hash = 'pushed'`; the next refresh adopts them
   (records the real hash, no change) so nothing shows as changed or duplicated.
-- **Not sent:** HammGrid formulas / item properties; quantities (PlanSwift
+- **Page scales:** a HammGrid sheet scale is written to its linked PlanSwift page only when that
+  page has **no** `ScaleX` (adds `AutoScaled`, `ScaleX`, `ScaleY`, `Scale Units`, `Measurement Type`,
+  same shape PlanSwift writes; `ScaleX = dpi / feet_per_inch`). This is the one edit to a node
+  PlanSwift wrote: the page's original `Data.xml` text is kept in the push manifest and undo
+  restores it (refuses if the file changed since). Pages scaled in PlanSwift are never overwritten.
+  Sheets scaled differently on both sides (>0.1%) are listed as mismatches in the push check **and**
+  in the refresh preview (`plan.sheets.scaleMismatch`); neither side is changed. Scale zones are not sent.
+- **Not sent:** HammGrid formulas / item properties / perimeter-type items; quantities (PlanSwift
   recomputes them); HammGrid folders (everything lands in "From HammGrid").
 - **Verified** against a local XML-only copy of a real job: the real converter reads back the
   written nodes with identical points, holes, colours and page, existing files are byte-identical,
