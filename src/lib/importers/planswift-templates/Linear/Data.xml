@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Item Class="Linear" Name="1&apos;6H Fascia System" GUID="{CBE7DA5E-3111-4684-AD61-69394F5E6BCA}">
+  <Properties>
+    <Property Class="Text" GUID="" Name="Name" inheritaction="Ignore" input="True" required="True" group="Item" OrderIndex="0" DecimalPlaces="2">1&apos;6H Fascia System</Property>
+    <Property Class="Text" GUID="{95E7B95C-B92C-49A4-9505-FFB79044517C}" Name="Description" group="Item" OrderIndex="1" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Type" GUID="{A4CA01B4-4ED2-4DED-8450-D0C0AAFAAA61}" Name="Type" group="Item" OrderIndex="2" DecimalPlaces="2">Linear</Property>
+    <Property Class="Text" GUID="{A492EAE8-B4C1-4719-8705-BA1D04EAB1F1}" Name="Item #" group="Item" OrderIndex="3" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Number" GUID="{467732D0-232A-4CAD-A7E8-EF441A3B89C4}" Name="Qty" inputunits="[Scale Units]" group="Estimating" OrderIndex="5" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">[Takeoff]</Property>
+    <Property Class="Number" GUID="{4B5868A6-25AF-4367-8CCC-566E432B79C4}" Name="Cost Each" units="[!CU]" group="Estimating" OrderIndex="6" DecimalPlaces="2" List="cmbList"/>
+    <Property Class="Number" GUID="{30DDFD19-4ABA-48C3-95C3-6C200B756FF5}" Name="Markup %" units="%" group="Estimating" OrderIndex="7" DecimalPlaces="2" List="cmbList"/>
+    <Property Class="Text" GUID="{C369B830-3E7D-40BB-9783-CFE4E2A6CE85}" Name="Cost Type" group="Estimating" OrderIndex="8" DecimalPlaces="2" SimpleList="Material
+Labor
+Equipment
+Subcontract
+Other" List="cmbList"/>
+    <Property Class="Slider" GUID="{D861B074-A142-4D1F-A9A3-25A24687D8FC}" Name="Transparency" group="Fill" OrderIndex="14" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList" Max="0" Min="0" ShowTicks="False" TickFrequency="0">[\Settings\DefaultLinearTransparency]</Property>
+    <Property Class="Color" GUID="{954CD3E7-A66C-4CC0-912C-C9C92AAE419C}" Name="Color" inheritaction="Flatten" input="True" group="Fill" OrderIndex="15" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">65535</Property>
+    <Property Class="Text" GUID="{E16327DB-099D-43A6-8C00-928AE6E650CA}" Name="Fill Type" input="True" group="Fill" OrderIndex="16" DecimalPlaces="2" SimpleList="Solid
+Hatch Pattern
+Texture" List="cmbList" PluginToExecute="cmbList">Solid</Property>
+    <Property Class="Text" GUID="{93BC66B2-005F-456F-A972-8DE23B7A8556}" Name="Hatch" input="True" inputcondition="&apos;[Fill Type]&apos; = &apos;Hatch Pattern&apos;" group="Fill" OrderIndex="17" DecimalPlaces="2" ListType="Tree List" List="cmbList" TreeList="\Hatches" ListVisibleColumnsInDropdown="Name" ListPropertiesToSet="Hatch Pattern%0D%0AHatch Pattern Scale" PluginToExecute="cmbList"/>
+    <Property Class="Number" GUID="{96FA7B2D-E87A-44CC-835B-8E0F4F02F7AC}" Name="Hatch Pattern Scale" input="True" inputcondition="&apos;[Fill Type]&apos; = &apos;Hatch Pattern&apos;" group="Fill" OrderIndex="18" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">1</Property>
+    <Property Class="Color" GUID="{82347C24-1A1D-4958-AA10-F9160863605C}" Name="Hatch Pattern Color" input="True" inputcondition="&apos;[Fill Type]&apos; = &apos;Hatch Pattern&apos;" group="Fill" OrderIndex="19" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">0</Property>
+    <Property Class="Text" GUID="{574E2188-9D43-4FC7-9C64-37E39CB5A6EE}" Name="Texture" input="True" inputcondition="&apos;[Fill Type]&apos; = &apos;Texture&apos;" group="Fill" OrderIndex="20" DecimalPlaces="2" ListType="Tree List" List="\Lists\PlanSwift" TreeList="\Textures" ListVisibleColumnsInDropdown="Name" ListPropertiesToSet="Texture Image%0D%0ATexture Width%0D%0ATexture Height" PluginToExecute="cmbList"/>
+    <Property Class="Image" GUID="{184D4C3B-4A6B-4A30-94A0-1B42C0B91F79}" Name="Texture Image" input="True" inputcondition="&apos;[Fill Type]&apos; = &apos;Texture&apos;" group="Fill" OrderIndex="21" DecimalPlaces="2" Transparent="False"/>
+    <Property Class="CheckBox" GUID="{FCEFF54F-C396-477E-B0E1-A72945E976EC}" Name="Colorize Texture" input="True" inputcondition="&apos;[Fill Type]&apos; = &apos;Texture&apos;" group="Fill" OrderIndex="22" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">False</Property>
+    <Property Class="Number" GUID="{51B9DBE1-4758-4AAE-832D-D66F61FE4564}" Name="Texture Width" units="px" inputunits="[Scale Units]" group="Fill" OrderIndex="23" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">1</Property>
+    <Property Class="Number" GUID="{714D42D8-3F41-4DAE-9464-4400D7E0E639}" Name="Texture Height" units="px" inputunits="[Scale Units]" group="Fill" OrderIndex="24" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">1</Property>
+    <Property Class="Number" GUID="{34E3E569-7BED-4EA8-9AAB-30697D41A0A4}" Name="Wall Height" inputunits="[Scale Units]" group="Takeoff Data" OrderIndex="26" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Number" GUID="{F9E1CCE3-6E39-4603-91F6-CD529774B991}" Name="# of Wall Sides" group="Takeoff Data" OrderIndex="27" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">1</Property>
+    <Property Class="Number" GUID="{EA9899F2-7F4F-4261-BECE-ACCDEF214AEA}" Name="Width" units="[Scale Units]" inputunits="[Scale Units]" group="Takeoff Data" OrderIndex="28" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Number" GUID="{956031B7-80A0-45ED-9C32-DA41B56728AE}" Name="Depth" units="[Scale Units]" group="Takeoff Data" OrderIndex="29" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Number" GUID="{37402457-C418-4C44-BF91-7F5EA5F9B863}" Name="Line Width" units="[Scale Units]" group="Takeoff Data" OrderIndex="30" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">[Width]</Property>
+    <Property Class="Text" GUID="{B4676205-1E46-4E61-94AA-BDD11F9A1BEC}" Name="Line Side" group="Takeoff Data" OrderIndex="31" DecimalPlaces="2" SimpleList="Left
+Right
+Center" List="cmbList" PluginToExecute="cmbList">Left</Property>
+    <Property Class="Text" GUID="{233FDB7E-DA01-415C-B427-A881DDF40D16}" Name="Scale Units" inheritaction="Flatten" calculatebefore="-1" group="Takeoff Data" OrderIndex="40" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">FT</Property>
+    <Property Class="Image" GUID="{6B0CD79A-82EF-4D84-83DA-996C16B7BA1C}" Name="Icon" inheritaction="Inherit Result" group="Other" OrderIndex="41" DecimalPlaces="2" Transparent="True" ImageType="TBitmap" ImageData="Qk02AwAAAAAAADYAAAAoAAAAEAAAABAAAAABABgAAAAAAAADAADCHgAAwh4AAAAAAAAAAAAAZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkmV0HmV0HmV0HZGRkZGRkZGRkZGRkZGRkZGRkZGRkmV0HmV0HmV0HZGRkZGRkZGRkmV0HmV0HmV0HmV0HmV0HmV0HmV0HmV0HmV0HmV0HmV0HmV0HmV0HZGRkZGRkZGRkmV0HmV0HmV0HZGRkZGRkZGRkZGRkZGRkZGRkZGRkmV0HmV0HmV0HZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkmV0HmV0HmV0HZGRkZGRkmV0HmV0HmV0HZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkmV0HmV0HmV0HmV0HmV0HmV0HmV0HmV0HZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkmV0HmV0HmV0HZGRkZGRkmV0HmV0HmV0HZGRkZGRkZGRkZGRkmV0HZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkmV0HmV0HmV0HZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkmV0HmV0HmV0HZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkmV0HmV0HmV0HZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRk"/>
+    <Property Class="Number" GUID="{042BD136-6F14-4C5D-918E-F9BA53067F11}" Name="OrderIndex" systemhidden="True" group="Other" OrderIndex="42" DecimalPlaces="2">37</Property>
+    <Property Class="Text" GUID="{E6AA0B60-6BDA-428C-8153-46A4568ED8A7}" Name="DoubleClickAction" inheritaction="Inherit Formula" group="Other" OrderIndex="45" DecimalPlaces="2" SimpleList="None
+Merge
+Record
+Record SubItem
+SubItem
+Section SubItem
+Run Script" List="cmbList" PluginToExecute="cmbList">Record</Property>
+    <Property Class="CheckBox" GUID="{71EA7B94-F01A-461B-864A-5EC312FD944C}" Name="ShowChildInputs" group="Other" OrderIndex="46" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">True</Property>
+    <Property Class="Text" GUID="{E8D8AC9E-F777-4FCC-9EE0-CF753DAC691C}" Name="DragDropAction" inheritaction="Inherit Formula" group="Other" OrderIndex="47" DecimalPlaces="2" SimpleList="None
+Merge
+Record
+Record SubItem
+SubItem
+Section SubItem
+Run Script" List="cmbList" PluginToExecute="cmbList">SubItem</Property>
+    <Property Class="Text" GUID="{E5D5B91B-6993-4001-BEA6-15EBBC71D319}" Name="LaunchAction" inheritaction="Inherit Formula" group="Other" OrderIndex="48" DecimalPlaces="2" SimpleList="None
+Merge
+Record
+Record SubItem
+SubItem
+Section SubItem
+Run Script" List="cmbList" PluginToExecute="cmbList">Record</Property>
+    <Property Class="Memo" GUID="{F22AB35D-6E35-440E-97C6-756ABDFC16A1}" Name="Form Layout" systemhidden="True" group="Other" OrderIndex="49" DecimalPlaces="2">&lt;?xml version=&quot;1.0&quot; encoding=&quot;iso-8859-1&quot;?&gt;
+&lt;Items&gt;
+  &lt;Item Name=&quot;Name&quot; Order=&quot;0&quot;/&gt;
+  &lt;Item Name=&quot;Color&quot; Order=&quot;1&quot;/&gt;
+  &lt;Item Name=&quot;Fill Type&quot; Order=&quot;2&quot; SameLine=&quot;-1&quot;/&gt;
+  &lt;Item Name=&quot;Location&quot; Order=&quot;3&quot; SameLine=&quot;-1&quot;/&gt;
+  &lt;Item Name=&quot;Hatch&quot; Order=&quot;3&quot;/&gt;
+  &lt;Item Name=&quot;Hatch Pattern Scale&quot; Order=&quot;4&quot; SameLine=&quot;-1&quot;/&gt;
+  &lt;Item Name=&quot;Hatch Pattern Color&quot; Order=&quot;5&quot; SameLine=&quot;-1&quot;/&gt;
+  &lt;Item Name=&quot;Texture&quot; Order=&quot;6&quot;/&gt;
+  &lt;Item Name=&quot;Texture Image&quot; Order=&quot;8&quot;/&gt;
+  &lt;Item Name=&quot;Colorize Texture&quot; Order=&quot;7&quot; SameLine=&quot;-1&quot;/&gt;
+&lt;/Items&gt;</Property>
+    <Property Class="Text" GUID="{0E92D4E8-3261-4517-8B74-9E25CA4977E0}" Name="GUID" inheritaction="Ignore" systemlocked="True" systemhidden="True" group="Other" OrderIndex="55" DecimalPlaces="2">{CBE7DA5E-3111-4684-AD61-69394F5E6BCA}</Property>
+    <Property Class="Text" GUID="{A473B6CF-38D1-4171-89D1-B3B9206FDBEA}" Name="Created By" inheritaction="Flatten" group="Audit Trail" OrderIndex="56" DecimalPlaces="" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Text" GUID="{2EF10D7C-CB8E-4DC1-BA37-9927BC70BB2F}" Name="Time Stamp" inheritaction="Flatten" group="Audit Trail" OrderIndex="57" DecimalPlaces="" List="cmbList" PluginToExecute="cmbList">4/2/2024 10:35:23 AM</Property>
+    <Property Class="Text" GUID="{73C0082B-D13F-47D8-B2BF-77D3C0212EAE}" Name="Division" group="Work Breakdown Structure" OrderIndex="58" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Text" GUID="{45D72CD9-C0FC-43B9-8A1F-825E57EC840C}" Name="SubDivision" group="Work Breakdown Structure" OrderIndex="59" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Text" GUID="{34920AD1-66F8-47C0-A022-CB56265F4558}" Name="Phase" group="Work Breakdown Structure" OrderIndex="60" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Text" GUID="{F67B6FD8-CD9D-4C11-AAC6-D481E8074185}" Name="Cost Code" group="Work Breakdown Structure" OrderIndex="61" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Text" GUID="{872E7A1E-EF2F-4F63-B741-828763AF45FE}" Name="Location" group="Work Breakdown Structure" OrderIndex="62" DecimalPlaces="2" ListType="Auto List" List="cmbList" PluginToExecute="cmbList" RememberValue="True"/>
+    <Property Class="Text" GUID="{D83086FC-069C-4A6F-8278-A364B0809FEC}" Name="Load" group="Work Breakdown Structure" OrderIndex="63" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Text" GUID="{27092523-30AB-4D58-BEDC-588A577EDFBC}" Name="Zone" group="Work Breakdown Structure" OrderIndex="64" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Number" GUID="{5A6E0BD9-4EE9-42FE-AA94-5FAF6711D341}" Name="SwiftTube VideoID" group="Videos" OrderIndex="67" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">115</Property>
+    <Property Class="Number" GUID="{91C19A56-D292-40F2-A225-0318C8903CFA}" Name="OrderIndex_{1278C35C-577B-4B07-9E3B-831502DEAC46}" systemlocked="True" systemhidden="True" OrderIndex="68" DecimalPlaces="2">7</Property>
+    <Property Class="CheckBox" GUID="{CFD771A2-2F21-4EF5-972A-049828A3C503}" Name="TakeoffSummary_Expanded" OrderIndex="69" DecimalPlaces="2">True</Property>
+  </Properties>
+</Item>

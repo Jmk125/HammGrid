@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Item Class="Area Subtract Section" Name="Subtract Section" GUID="{2388B745-2817-4DFB-AECC-0451C37A56FB}">
+  <Properties>
+    <Property Class="Text" GUID="" Name="Name" inheritaction="Ignore" input="True" required="True" group="Item" OrderIndex="0" DecimalPlaces="2">Subtract Section</Property>
+    <Property Class="Text" GUID="{2F2ABFA1-BB0F-432C-ADF0-3E373A036892}" Name="Fill Type" input="True" group="Item" OrderIndex="1" DecimalPlaces="2" SimpleList="Solid
+Hatch Pattern
+Texture" List="cmbList" PluginToExecute="cmbList">[..]</Property>
+    <Property Class="Type" GUID="{890C749D-B125-459F-B3D6-DE4726C74904}" Name="Type" group="Item" OrderIndex="2" DecimalPlaces="2">Area Subtract Section</Property>
+    <Property Class="Text" GUID="{D4CAFCA3-6205-4819-BBF5-C26A33F048A5}" Name="Page" group="Item" OrderIndex="3" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">[[PageGUID]\Name]</Property>
+    <Property Class="Text" GUID="{53D1E559-61E1-4630-A00F-6286DF0E645E}" Name="Created By" inheritaction="Flatten" group="Audit Trail" OrderIndex="5" DecimalPlaces="" List="cmbList" PluginToExecute="cmbList"/>
+    <Property Class="Text" GUID="{5D6CFC2D-6E0C-4BFD-993D-3092AE4F1256}" Name="Time Stamp" inheritaction="Flatten" group="Audit Trail" OrderIndex="6" DecimalPlaces="" List="cmbList" PluginToExecute="cmbList">4/3/2024 12:49:15 PM</Property>
+    <Property Class="Number" GUID="{72BA8B3F-926E-4F1D-B5A5-70B4FA6EC051}" Name="OrderIndex" systemhidden="True" OrderIndex="7" DecimalPlaces="2">0</Property>
+    <Property Class="Slider" GUID="{8B9742AD-6C14-42C5-93B3-0CB05A592D6E}" Name="Transparency" input="True" group="Fill" OrderIndex="8" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList" Max="255" Min="0" ShowTicks="False" TickFrequency="0">[..]</Property>
+    <Property Class="Memo" GUID="{0593DAB9-CCB1-432E-A16A-8A30A657BB44}" Name="Form Layout" systemhidden="True" OrderIndex="9" DecimalPlaces="2">&lt;?xml version=&quot;1.0&quot; encoding=&quot;iso-8859-1&quot;?&gt;
+&lt;Items&gt;
+  &lt;Item Name=&quot;Name&quot; Order=&quot;0&quot;/&gt;
+&lt;/Items&gt;</Property>
+    <Property Class="Text" GUID="{44AFCCFD-7127-4527-8596-44CEA010754D}" Name="Hatch Pattern" inputcondition="&apos;[Fill Type]&apos; = &apos;Hatch Pattern&apos;" group="Fill" OrderIndex="10" DecimalPlaces="2" ListType="Tree List" List="cmbList" TreeList="\Hatches" ListVisibleColumnsInDropdown="Name" ListPropertiesToSet="Hatch Pattern" PluginToExecute="cmbList">[..]</Property>
+    <Property Class="Number" GUID="{DE0F4802-BEA0-484C-BD3F-944372C0A337}" Name="Hatch Pattern Scale" inputcondition="&apos;[Fill Type]&apos; = &apos;Hatch Pattern&apos;" group="Fill" OrderIndex="11" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">[..]</Property>
+    <Property Class="Color" GUID="{7B6E073B-7F0A-4053-92F5-50EEBE4A3738}" Name="Hatch Pattern Color" inputcondition="&apos;[Fill Type]&apos; = &apos;Hatch Pattern&apos;" group="Fill" OrderIndex="13" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">[..]</Property>
+    <Property Class="Image" GUID="{3E0760E5-08BA-4AFC-B0F2-B9C5F0511815}" Name="Texture" group="Fill" OrderIndex="14" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList" Transparent="False">[..]</Property>
+    <Property Class="CheckBox" GUID="{372F1A31-0EC9-47CC-A3B7-CC21B0879FD6}" Name="Colorize Texture" group="Fill" OrderIndex="15" DecimalPlaces="2" List="cmbList" PluginToExecute="cmbList">[..]</Property>
+    <Property Class="Number" GUID="{12282406-F54E-4176-8BD1-D69225193C28}" Name="ZOrder" OrderIndex="28" DecimalPlaces="2">0</Property>
+    <Property Class="CheckBox" GUID="{139B23FB-F361-4FA0-8A0C-896E589A076E}" Name="Visible" OrderIndex="29" DecimalPlaces="2">True</Property>
+    <Property Class="Text" GUID="{875B485B-2DF1-4B99-8854-8E7CFFC97DEE}" Name="GUID" inheritaction="Ignore" systemlocked="True" systemhidden="True" OrderIndex="30" DecimalPlaces="2">{2388B745-2817-4DFB-AECC-0451C37A56FB}</Property>
+    <Property Class="Text" GUID="{B8F0DF62-B050-4055-B9A7-44AB1EE65438}" Name="Box Mode" OrderIndex="31" DecimalPlaces="2" SimpleList="None
+4 Point
+8 Point">4 Point</Property>
+    <Property Class="Text" GUID="{1A55F328-678B-4C02-BAC7-21E4CEE02F9B}" Name="DigitizerData" OrderIndex="32" DecimalPlaces="2">&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;
+&lt;Points&gt;&lt;Point X=&quot;1383.23718261719&quot; Y=&quot;2583.015625&quot; PointType=&quot;Normal&quot;/&gt;&lt;Point X=&quot;1532.64489746094&quot; Y=&quot;2583.015625&quot; PointType=&quot;Normal&quot;/&gt;&lt;Point X=&quot;1532.64489746094&quot; Y=&quot;2571.89697265625&quot; PointType=&quot;Normal&quot;/&gt;&lt;Point X=&quot;1383.23718261719&quot; Y=&quot;2571.89697265625&quot; PointType=&quot;Normal&quot;/&gt;&lt;/Points&gt;
+</Property>
+  </Properties>
+</Item>
