@@ -203,7 +203,13 @@ def shape_kind(node):
         return "area"
     if "count" in s:
         return "count"
-    if any(k in s for k in ("linear", "segment", "line", "length", "perimeter")):
+    # In this firm's PlanSwift usage a "Linear" take-off is a HammGrid perimeter and a
+    # "Segment" take-off is a HammGrid linear.
+    if "segment" in s:
+        return "linear"
+    if "linear" in s or "perimeter" in s:
+        return "perimeter"
+    if any(k in s for k in ("line", "length")):
         return "linear"
     return "unknown"
 
@@ -392,20 +398,20 @@ def convert(job_dir, out_dir, images="png", preview=False, log=print, progress=N
                 k = 72.0 / sheet["dpi"]
                 shp["points_pt"] = [[round(x * k, 4), round(y * k, 4)] for x, y, _ in pts]
             sc = sheet["scale"]
-            if sc and pts and kind in ("area", "linear", "count", "dimension"):
+            if sc and pts and kind in ("area", "linear", "perimeter", "count", "dimension"):
                 sx, sy, u = sc["px_per_unit_x"], sc["px_per_unit_y"], sc["units"]
                 if kind == "area":
                     shp["quantity"] = {
                         "value": round(polygon_area(pts, sx, sy), 3), "units": f"SQ {u}",
                         "perimeter": round(polyline_len(pts, sx, sy, closed=True), 3), "perimeter_units": u,
                     }
-                elif kind in ("linear", "dimension"):
+                elif kind in ("linear", "perimeter", "dimension"):
                     shp["quantity"] = {"value": round(polyline_len(pts, sx, sy), 3), "units": u}
                 elif kind == "count":
                     shp["quantity"] = {"value": len(pts), "units": "EA"}
             elif kind == "count" and pts:
                 shp["quantity"] = {"value": len(pts), "units": "EA"}
-            elif kind in ("area", "linear") and not sc:
+            elif kind in ("area", "linear", "perimeter") and not sc:
                 warnings.append(f"'{n.name}' is on unscaled sheet '{sheet['name']}'; quantity not computed")
         shp["_pts"] = pts
         shp["_sheet"] = sheet

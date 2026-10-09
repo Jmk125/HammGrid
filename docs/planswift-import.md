@@ -81,12 +81,12 @@ acknowledgement) → *Undo last push* afterwards if needed. Routes: `POST /api/i
 - **What is sent:** instances with no PlanSwift link (`external_id IS NULL`) on sheets that are
   linked to a PlanSwift page (run a refresh once first so sheets are linked). New items go in a
   `Takeoff/From HammGrid` folder; shapes for an item PlanSwift already has become new `Section`
-  subfolders of it. Area → Area Section (+ Subtract Section per cutout), Linear, Count (one Count
+  subfolders of it. Area → Area Section (+ Subtract Section per cutout), perimeter → PlanSwift Linear, linear → PlanSwift Segment (the firm's convention, same on refresh), Count (one Count
   Section per item per sheet holding all its points). Coordinates: `px = renderPx / k * dpi / 72`.
 - **Never** edits or deletes anything PlanSwift wrote; it only creates folders. Each new node is a
   clone of a real node of the same class in the same job (`templates` in the converter JSON, one
   per class) with only name/GUIDs/colour/ordering/timestamp/page/points changed, descriptions and
-  costs blanked. If the job has no node of a needed class (e.g. an empty job), the stock nodes bundled in `src/lib/importers/planswift-templates/<class>/Data.xml` are used instead; a node found in the job always wins. Perimeter items are still skipped.
+  costs blanked. If the job has no node of a needed class (e.g. an empty job), the stock nodes bundled in `src/lib/importers/planswift-templates/<class>/Data.xml` are used instead; a node found in the job always wins. 
   Files are written to `Data.xml.hgtmp` then renamed.
 - **Lock:** `JobLock.xml` present → a lock < 60 min old blocks the push; an older one (they are
   often left over — many jobs have 2014–2023 locks) needs the "PlanSwift is closed" confirmation.
@@ -95,7 +95,7 @@ acknowledgement) → *Undo last push* afterwards if needed. Routes: `POST /api/i
   and unlinks the HammGrid rows.
 - **Round trip:** pushed rows get `external_hash = 'pushed'`; the next refresh adopts them
   (records the real hash, no change) so nothing shows as changed or duplicated.
-- **Not sent:** HammGrid formulas / item properties / perimeter-type items; quantities (PlanSwift
+- **Not sent:** HammGrid formulas / item properties; quantities (PlanSwift
   recomputes them); HammGrid folders (everything lands in "From HammGrid").
 - **Verified** against a local XML-only copy of a real job: the real converter reads back the
   written nodes with identical points, holes, colours and page, existing files are byte-identical,
