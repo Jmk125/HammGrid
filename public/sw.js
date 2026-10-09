@@ -10,7 +10,7 @@
 // note install() below fails closed: cache.addAll() rejects the whole
 // install if ANY url here 404s (e.g. a renamed/deleted page), so keep this
 // list in sync with public/ or the service worker stops updating entirely.
-const CACHE_NAME = 'app-shell-v6';
+const CACHE_NAME = 'app-shell-v31';
 
 const PRECACHE_URLS = [
   '/',
@@ -23,6 +23,7 @@ const PRECACHE_URLS = [
   '/activity.html',
   '/project-settings.html',
   '/document-view.html',
+  '/flags.html',
   '/css/style.css',
   '/js/api.js',
   '/js/login.js',
@@ -38,6 +39,20 @@ const PRECACHE_URLS = [
   '/js/activity.js',
   '/js/project-settings.js',
   '/js/document-view.js',
+  '/js/flags.js',
+  // Imported (not <script>-tagged) modules the sheet viewer needs offline -
+  // without these precached, a device that hadn't happened to fetch one
+  // yet would fail the whole module graph offline, not just that feature.
+  '/js/photoOutbox.js',
+  '/js/photoPinDefaultFolder.js',
+  '/js/docPicker.js',
+  '/js/textbox.js',
+  '/js/zoomPan.js',
+  '/js/fragmentPicker.js',
+  '/js/paneOrder.js',
+  '/js/takeoffAdvancedFields.js',
+  '/js/takeoffDefaultFolder.js',
+  '/js/takeoffFormula.js',
   '/vendor/pdfjs/pdf.min.mjs',
   '/vendor/pdfjs/pdf.worker.min.mjs',
   '/manifest.webmanifest',
@@ -81,6 +96,19 @@ self.addEventListener('fetch', (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request))
+      // ignoreSearch matters a lot here: this app has no client-side
+      // router, so navigating to a *different* sheet/document/project is a
+      // real page load of e.g. /sheet.html?projectId=11&sheetId=819 - the
+      // precached entry is the bare '/sheet.html' with no query string.
+      // Cache.match()'s default (ignoreSearch: false) treats those as
+      // different cache keys, so this returned undefined for every
+      // navigation whose URL had params - i.e. every one except whichever
+      // exact page happened to already be open - and
+      // event.respondWith(undefined) is exactly what Safari surfaced as
+      // "Returned response is null." The sheet itself opening fine while
+      // online (a live fetch, unrelated to this) made it look like the
+      // drawing data just hadn't synced, when actually the app shell for
+      // that page could never even load offline in the first place.
+      .catch(() => caches.match(event.request, { ignoreSearch: true }))
   );
 });

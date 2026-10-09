@@ -6,6 +6,7 @@ const db = require('./db');
 const SqliteSessionStore = require('./db/sessionStore');
 const authRoutes = require('./routes/auth.routes');
 const usersRoutes = require('./routes/users.routes');
+const adminRoutes = require('./routes/admin.routes');
 const projectsRoutes = require('./routes/projects.routes');
 const revisionsRoutes = require('./routes/revisions.routes');
 const stagedSheetsRoutes = require('./routes/stagedSheets.routes');
@@ -16,18 +17,44 @@ const documentFilesRoutes = require('./routes/documentFiles.routes');
 const documentVersionsRoutes = require('./routes/documentVersions.routes');
 const documentFoldersRoutes = require('./routes/documentFolders.routes');
 const markupsRoutes = require('./routes/markups.routes');
+const documentMarkupsRoutes = require('./routes/documentMarkups.routes');
 const sheetLinksRoutes = require('./routes/sheetLinks.routes');
 const projectSheetLinksRoutes = require('./routes/projectSheetLinks.routes');
+const projectSheetTextRoutes = require('./routes/projectSheetText.routes');
+const takeoffItemsRoutes = require('./routes/takeoffItems.routes');
+const takeoffItemsSearchRoutes = require('./routes/takeoffItemsSearch.routes');
+const takeoffInstancesRoutes = require('./routes/takeoffInstances.routes');
+const takeoffProjectInstancesRoutes = require('./routes/takeoffProjectInstances.routes');
+const takeoffInstanceByIdRoutes = require('./routes/takeoffInstanceById.routes');
+const takeoffTemplatesRoutes = require('./routes/takeoffTemplates.routes');
+const takeoffFoldersRoutes = require('./routes/takeoffFolders.routes');
+const takeoffTemplateFoldersRoutes = require('./routes/takeoffTemplateFolders.routes');
+const scaleZonesRoutes = require('./routes/scaleZones.routes');
+const takeoffAssemblyTemplatesRoutes = require('./routes/takeoffAssemblyTemplates.routes');
+const takeoffAssembliesRoutes = require('./routes/takeoffAssemblies.routes');
 const markupByIdRoutes = require('./routes/markupById.routes');
+const flagsRoutes = require('./routes/flags.routes');
+const flagsCombinedRoutes = require('./routes/flagsCombined.routes');
 const syncRoutes = require('./routes/sync.routes');
 const sharesRoutes = require('./routes/shares.routes');
 const shareAccessRoutes = require('./routes/shareAccess.routes');
 const exportsRoutes = require('./routes/exports.routes');
 const activityRoutes = require('./routes/activity.routes');
+const compositesRoutes = require('./routes/composites.routes');
+const compositeFragmentsRoutes = require('./routes/compositeFragments.routes');
+const importsRoutes = require('./routes/imports.routes');
+const { cleanupStaleImports } = require('./lib/importers');
+const https = require('https');
+const fs = require('fs');
 
 const app = express();
 
-app.use(express.json());
+// Default 100kb is too tight for the take-off legend export payload (sheet
+// pane's POST /api/sheet-versions/:id/download) - a logistics plan with a
+// few dozen area/perimeter take-offs, each with a real vertex count, adds up
+// fast. Every other route's body is tiny by comparison, so a generous cap
+// here costs nothing.
+app.use(express.json({ limit: '5mb' }));
 app.use(
   session({
     store: new SqliteSessionStore(db),
@@ -38,30 +65,50 @@ app.use(
       maxAge: 24 * 60 * 60 * 1000,
       httpOnly: true,
       sameSite: 'lax',
+      secure: true,
     },
   })
 );
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/projects', projectsRoutes);
+app.use('/api/imports', importsRoutes);
 app.use('/api/projects/:projectId/revisions', revisionsRoutes);
 app.use('/api/staged-sheets', stagedSheetsRoutes);
 app.use('/api/projects/:projectId/sheets', sheetsRoutes);
 app.use('/api/projects/:projectId/sheets/:sheetId/links', sheetLinksRoutes);
 app.use('/api/projects/:projectId/sheet-links', projectSheetLinksRoutes);
+app.use('/api/projects/:projectId/sheet-text', projectSheetTextRoutes);
+app.use('/api/projects/:projectId/take-off-items', takeoffItemsRoutes);
+app.use('/api/projects/:projectId/sheets/:sheetId/take-off-instances', takeoffInstancesRoutes);
+app.use('/api/projects/:projectId/take-off-instances', takeoffProjectInstancesRoutes);
+app.use('/api/projects/:projectId/sheets/:sheetId/scale-zones', scaleZonesRoutes);
+app.use('/api/take-off-instances', takeoffInstanceByIdRoutes);
+app.use('/api/take-off-items', takeoffItemsSearchRoutes);
+app.use('/api/take-off-templates', takeoffTemplatesRoutes);
+app.use('/api/projects/:projectId/take-off-folders', takeoffFoldersRoutes);
+app.use('/api/take-off-template-folders', takeoffTemplateFoldersRoutes);
+app.use('/api/take-off-assembly-templates', takeoffAssemblyTemplatesRoutes);
+app.use('/api/projects/:projectId/take-off-assemblies', takeoffAssembliesRoutes);
 app.use('/api/sheet-versions', sheetVersionsRoutes);
 app.use('/api/projects/:projectId/documents', documentsRoutes);
 app.use('/api/documents', documentFilesRoutes);
 app.use('/api/document-versions', documentVersionsRoutes);
 app.use('/api/document-folders', documentFoldersRoutes);
 app.use('/api/sheets/:sheetId/markups', markupsRoutes);
+app.use('/api/documents/:documentId/markups', documentMarkupsRoutes);
 app.use('/api/markups', markupByIdRoutes);
+app.use('/api/projects/:projectId/flags', flagsRoutes);
+app.use('/api/flags/combined', flagsCombinedRoutes);
 app.use('/api/projects/:projectId/sync', syncRoutes);
 app.use('/api/projects/:projectId/shares', sharesRoutes);
 app.use('/api/share', shareAccessRoutes);
 app.use('/api/projects/:projectId/export', exportsRoutes);
 app.use('/api/projects/:projectId/activity', activityRoutes);
+app.use('/api/projects/:projectId/composites', compositesRoutes);
+app.use('/api/projects/:projectId/sheets/:sheetId/composite-fragments', compositeFragmentsRoutes);
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
@@ -105,6 +152,22 @@ process.on('unhandledRejection', (err) => {
   console.error('Unhandled promise rejection (server staying up):', err);
 });
 
-app.listen(config.port, () => {
-  console.log(`Drawing app server listening on port ${config.port}`);
+// "Import from..." conversions the user walked away from (never imported or
+// cancelled) - see lib/importers/index.js.
+const staleImports = cleanupStaleImports();
+if (staleImports) console.log(`Removed ${staleImports} stale import staging folder(s)`);
+
+const httpsOptions = {
+  key: fs.readFileSync(config.tlsKeyPath),
+  cert: fs.readFileSync(config.tlsCertPath),
+};
+
+// No host passed to listen() - binds all interfaces, same as the previous
+// app.listen(config.port) did. The printed URL is just informational (uses
+// the LAN IP the current cert was actually issued for, not necessarily the
+// only address it's reachable on) - see config.js if that cert ever moves
+// to a different host/IP.
+https.createServer(httpsOptions, app).listen(config.port, () => {
+  console.log(`Drawing app server listening on https://10.0.30.50:${config.port}`);
+  require('./lib/documentThumbs').backfillThumbs();
 });

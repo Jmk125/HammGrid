@@ -110,10 +110,15 @@ CREATE TABLE IF NOT EXISTS document_versions (
 
 CREATE TABLE IF NOT EXISTS markups (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  -- A markup belongs to exactly one of a sheet or a document (not both,
+  -- not neither) - see the CHECK below. Document-owned markups carry a
+  -- page number in geometry.page (documents aren't pre-burst per-page like
+  -- sheets are, so a page number is needed to know which page they're on).
+  sheet_id INTEGER REFERENCES sheets(id) ON DELETE CASCADE,
+  document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
   author_id INTEGER NOT NULL REFERENCES users(id),
   visibility TEXT NOT NULL CHECK (visibility IN ('private', 'published')) DEFAULT 'private',
-  type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect')),
+  type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect', 'flag', 'photo')),
   geometry TEXT NOT NULL,
   style TEXT NOT NULL DEFAULT '{}',
   -- ON DELETE SET NULL: deleting a linked document should just unlink it
@@ -121,8 +126,230 @@ CREATE TABLE IF NOT EXISTS markups (
   -- the delete outright.
   linked_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK ((sheet_id IS NOT NULL AND document_id IS NULL) OR (sheet_id IS NULL AND document_id IS NOT NULL))
+);
+
+-- A take-off item is a named, colored, project-level running total (e.g. "2x4
+-- top plate") built from multiple placed instances. type is locked per item
+-- (not per instance) since an item has one unit of measure - mixing would
+-- make the total unit-ambiguous.
+-- Project-scoped organizational grouping for the Take-offs list page (By
+-- Take-off view only - By Sheet already has its own structure). Unlike
+-- templates, folders are tied to one project's own item list.
+CREATE TABLE IF NOT EXISTS take_off_folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  -- Self-nesting (NULL = top level), shown client-side as "Base Bid/Architectural".
+  parent_folder_id INTEGER REFERENCES take_off_folders(id) ON DELETE CASCADE,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS take_off_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('linear', 'perimeter', 'area', 'count')),
+  -- Only meaningful (and required at the route level) when type = 'count' -
+  -- the marker glyph drawn at each counted click.
+  shape TEXT CHECK (shape IN ('square', 'circle', 'triangle', 'diamond')),
+  color TEXT NOT NULL,
+  -- Optional PlanSwift-style output formula: properties is a JSON array of
+  -- {name, value} numeric constants (e.g. "Wall Height" = 8), formula is a
+  -- text expression like "takeoff * Wall_Height" evaluated client-side only
+  -- (see public/js/takeoffFormula.js) against the raw measured quantity plus
+  -- these properties. NULL formula (the common case) means "just show the
+  -- raw quantity" - unchanged from before this column existed.
+  properties TEXT NOT NULL DEFAULT '[]',
+  formula TEXT,
+  output_label TEXT,
+  -- NULL = "no folder" (the default) - deleting a folder unfiles its items
+  -- rather than deleting them.
+  folder_id INTEGER REFERENCES take_off_folders(id) ON DELETE SET NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Global (not project_id-scoped) organizational grouping for templates -
+-- separate from take_off_folders, which is per-project, since templates
+-- themselves are shared across every project (e.g. "Steel", "Masonry").
+CREATE TABLE IF NOT EXISTS take_off_template_folders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Reusable item blueprints (name/type/shape/color/properties/formula) a user
+-- can pick from instead of building the same structure from scratch every
+-- time - global, not project_id-scoped, since these represent a firm's
+-- standardized assemblies (e.g. "8in CMU Wall") reused across every job.
+CREATE TABLE IF NOT EXISTS take_off_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('linear', 'perimeter', 'area', 'count')),
+  shape TEXT CHECK (shape IN ('square', 'circle', 'triangle', 'diamond')),
+  color TEXT NOT NULL,
+  properties TEXT NOT NULL DEFAULT '[]',
+  formula TEXT,
+  output_label TEXT,
+  folder_id INTEGER REFERENCES take_off_template_folders(id) ON DELETE SET NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- A box take-off's 4 edges are geometrically unambiguous (2-click opposite
+-- corners), so an assembly maps them - plus the box's own area - to real
+-- take-off items: drawing one box creates one instance per linked slot, all
+-- ordinary rows against ordinary items (this table and take_off_assemblies
+-- below never appear in reports/exports, they're purely a sheet.js
+-- authoring-time orchestrator). Global template - just the 5 slots' default
+-- labels, never linked to real items; take_off_assemblies (project-scoped)
+-- is what actually gets linked/armed/placed with.
+CREATE TABLE IF NOT EXISTS take_off_assembly_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  area_label TEXT NOT NULL DEFAULT 'Area',
+  top_label TEXT NOT NULL DEFAULT 'Head',
+  bottom_label TEXT NOT NULL DEFAULT 'Sill',
+  left_label TEXT NOT NULL DEFAULT 'Left Jamb',
+  right_label TEXT NOT NULL DEFAULT 'Right Jamb',
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The live, project-scoped, linkable assembly - shows up in the sheet pane,
+-- gets armed for box placement, and gets relinked over time. Flat *_item_id
+-- columns rather than a slots child table since there are always exactly
+-- these 5 named slots, never a variable number. ON DELETE SET NULL means
+-- deleting a linked item just quietly unlinks that slot - no special
+-- handling needed, self-healing like every other FK in this schema.
+CREATE TABLE IF NOT EXISTS take_off_assemblies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  area_label TEXT NOT NULL DEFAULT 'Area',
+  top_label TEXT NOT NULL DEFAULT 'Head',
+  bottom_label TEXT NOT NULL DEFAULT 'Sill',
+  left_label TEXT NOT NULL DEFAULT 'Left Jamb',
+  right_label TEXT NOT NULL DEFAULT 'Right Jamb',
+  area_item_id INTEGER REFERENCES take_off_items(id) ON DELETE SET NULL,
+  top_item_id INTEGER REFERENCES take_off_items(id) ON DELETE SET NULL,
+  bottom_item_id INTEGER REFERENCES take_off_items(id) ON DELETE SET NULL,
+  left_item_id INTEGER REFERENCES take_off_items(id) ON DELETE SET NULL,
+  right_item_id INTEGER REFERENCES take_off_items(id) ON DELETE SET NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- sheet_id (not sheet_version_id), same as markups above - carries forward
+-- automatically across revisions with zero publish-route special-casing.
+-- quantity is precomputed client-side at placement time (same math as the
+-- measure tool) and never recomputed server-side.
+CREATE TABLE IF NOT EXISTS take_off_instances (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  item_id INTEGER NOT NULL REFERENCES take_off_items(id) ON DELETE CASCADE,
+  sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  geometry TEXT NOT NULL,
+  quantity REAL NOT NULL,
+  -- Outer-boundary perimeter in feet, area take-offs only (NULL for
+  -- linear/perimeter/count) - same "precomputed client-side, never
+  -- recomputed server-side" rule as quantity above. Lets a flooring take-off
+  -- also answer "how much rubber base does this room need" without a second
+  -- manual perimeter trace.
+  perimeter REAL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- A sheet's scale is normally the single scale_feet_per_inch column on
+-- sheets, but a drawing with enlarged detail plans at a different scale can
+-- define zones here to override that region - a rectangle (drawing-space,
+-- same coordinate system as take_off_instances.geometry points, always
+-- axis-aligned since it's drawn via the same 2-click opposite-corners flow
+-- as take-off box mode) plus its own scale_feet_per_inch. Anything measured
+-- or taken off outside every zone still falls back to the sheet's normal
+-- scale.
+CREATE TABLE IF NOT EXISTS scale_zones (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  scale_feet_per_inch REAL NOT NULL,
+  x REAL NOT NULL,
+  y REAL NOT NULL,
+  width REAL NOT NULL,
+  height REAL NOT NULL,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Saved manual overlay alignment for a pair of sheet versions, so dragging
+-- the demo plan into line with the floor plan once sticks the next time
+-- anyone overlays that same pair. Keyed by the unordered version pair
+-- (version_lo < version_hi); sheet_lo/sheet_hi are the owning sheets of
+-- those versions, kept so a pair of DIFFERENT sheets can fall back to the
+-- most recent alignment between those same two sheets after either one is
+-- revised. `layers` is JSON: [{version_id, sheet_id, tx, ty, rotation}],
+-- tx/ty as fractions of the composite's width/height (resolution-independent).
+CREATE TABLE IF NOT EXISTS overlay_alignments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version_lo INTEGER NOT NULL REFERENCES sheet_versions(id) ON DELETE CASCADE,
+  version_hi INTEGER NOT NULL REFERENCES sheet_versions(id) ON DELETE CASCADE,
+  sheet_lo INTEGER NOT NULL,
+  sheet_hi INTEGER NOT NULL,
+  layers TEXT NOT NULL,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (version_lo, version_hi)
+);
+CREATE INDEX IF NOT EXISTS idx_overlay_alignments_sheets ON overlay_alignments(sheet_lo, sheet_hi);
+
+-- A composite drawing is an ordinary sheets/sheet_versions row
+-- (sheets.is_composite = 1, see addColumnIfMissing in db/index.js) whose PDF/
+-- thumb/preview are baked by pyproc/compose.py from these fragments instead
+-- of ingested/OCR'd - every other subsystem (take-offs, markups, viewer,
+-- search, offline sync) needs zero changes since it's just a real sheet.
+-- crop_*/mask_polygons are in the SOURCE sheet_version's own PDF-point space
+-- (72pt/in), fragment-local (mask points relative to crop_x/crop_y) so they
+-- stay put if the fragment is later repositioned. place_* are in the
+-- COMPOSITE's own PDF-point space. Masks are per-placement only (no reusable
+-- templates) - each fragment carries its own, never shared.
+CREATE TABLE IF NOT EXISTS composite_fragments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  composite_sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  source_sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+  source_version_id INTEGER NOT NULL REFERENCES sheet_versions(id) ON DELETE CASCADE,
+  crop_x REAL NOT NULL,
+  crop_y REAL NOT NULL,
+  crop_width REAL NOT NULL,
+  crop_height REAL NOT NULL,
+  mask_polygons TEXT NOT NULL DEFAULT '[]',
+  place_x REAL NOT NULL,
+  place_y REAL NOT NULL,
+  place_width REAL NOT NULL,
+  place_height REAL NOT NULL,
+  z_order INTEGER NOT NULL DEFAULT 0,
+  locked INTEGER NOT NULL DEFAULT 0,
+  visible INTEGER NOT NULL DEFAULT 1,
+  -- Degrees, clockwise-positive, applied around the center of the
+  -- (unrotated) place rect - lets a blow-up detail that's rotated relative
+  -- to the rest of the building on the overall plan get straightened out
+  -- (or vice versa) when stitched in.
+  rotation REAL NOT NULL DEFAULT 0,
+  thumb_path TEXT,
+  -- Full-resolution RGBA asset (crop+mask applied, no placement scaling or
+  -- rotation) - same render compose.py itself uses for this fragment -
+  -- fetched once client-side so Edit Layout mode can drag/rotate it live
+  -- with zero server round-trip per frame; only PATCHed to the server (and
+  -- re-flattened) once the drag/rotate actually ends.
+  preview_path TEXT,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE INDEX IF NOT EXISTS idx_composite_fragments_composite ON composite_fragments(composite_sheet_id);
 
 CREATE TABLE IF NOT EXISTS sheet_links (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,6 +362,15 @@ CREATE TABLE IF NOT EXISTS sheet_links (
   link_type TEXT NOT NULL CHECK (link_type IN ('auto', 'manual')) DEFAULT 'auto',
   created_by INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Full-text index of each sheet's drawing content (plain text extracted from
+-- the current published PDF), keyed by sheet_id as the explicit rowid so it
+-- always reflects whichever version is currently published - no separate
+-- version-scoping column needed, unlike sheet_links above.
+CREATE VIRTUAL TABLE IF NOT EXISTS sheet_text_fts USING fts5(
+  body,
+  tokenize = 'unicode61 remove_diacritics 2 tokenchars ''./'''
 );
 
 CREATE TABLE IF NOT EXISTS shares (
@@ -181,6 +417,16 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires INTEGER NOT NULL
 );
 
+-- App-wide admin settings that can be changed in the app rather than only in
+-- .env (e.g. the PlanSwift jobs folder for New project -> Import). Values
+-- are plain text; see src/lib/appSettings.js.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_by INTEGER REFERENCES users(id),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Ingest staging: incoming sheets sit here between upload and publish, while
 -- the user reviews/corrects OCR results and confirms sheet matching. Rows are
 -- deleted once the revision is published (their data lands in sheets/sheet_versions).
@@ -219,6 +465,7 @@ CREATE INDEX IF NOT EXISTS idx_document_versions_document ON document_versions(d
 -- documents-table migration adds the folder_id column - on a pre-existing
 -- DB that column doesn't exist yet at the point this file is exec'd.
 CREATE INDEX IF NOT EXISTS idx_markups_sheet ON markups(sheet_id);
+CREATE INDEX IF NOT EXISTS idx_scale_zones_sheet ON scale_zones(sheet_id);
 CREATE INDEX IF NOT EXISTS idx_sheet_links_source ON sheet_links(source_sheet_id);
 CREATE INDEX IF NOT EXISTS idx_sheet_links_project ON sheet_links(project_id);
 CREATE INDEX IF NOT EXISTS idx_markups_linked_document ON markups(linked_document_id);
@@ -230,3 +477,6 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_project ON activity_log(project_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires);
 CREATE INDEX IF NOT EXISTS idx_staged_sheets_revision ON staged_sheets(revision_id);
 CREATE INDEX IF NOT EXISTS idx_ocr_regions_scope ON ocr_regions(project_id, scope);
+CREATE INDEX IF NOT EXISTS idx_take_off_items_project ON take_off_items(project_id);
+CREATE INDEX IF NOT EXISTS idx_take_off_instances_item ON take_off_instances(item_id);
+CREATE INDEX IF NOT EXISTS idx_take_off_instances_sheet ON take_off_instances(sheet_id);

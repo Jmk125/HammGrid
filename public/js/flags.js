@@ -1,0 +1,402 @@
+import { renderShell, confirmModal, showToast } from '/js/shell.js';
+import { cacheFlags, getCachedFlags, getCachedProjectList, getCachedSheets, getOutboxPhotos } from '/js/offline-store.js';
+
+const params = new URLSearchParams(window.location.search);
+const projectId = params.get('projectId');
+// "View Multiple" (see dashboard.js) - a comma-separated set of project ids
+// instead of a single one means this is the combined-view flavor of this
+// page: flags from every listed project, merged, each still linking back
+// into its own real project (see goToUrl) rather than any of this being a
+// real merged project.
+const combinedProjectIds = params.get('projectIds');
+const combinedMode = !!combinedProjectIds;
+
+let allFlags = [];
+let searchTerm = '';
+let tagFilter = '';
+let sortState = { column: 'location', dir: 'asc' };
+let editingFlagId = null; // id of the flag row currently in edit mode, or null
+let loadedOffline = false;
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+}
+
+function goToUrl(flag) {
+  // The combined endpoint annotates every flag with its real project_id
+  // (see flagsCombined.routes.js) - the single-project endpoint doesn't
+  // bother, since there's only ever the one project this page is already
+  // scoped to, so this falls back to that.
+  const flagProjectId = flag.project_id || projectId;
+  if (flag.location_type === 'document') return `/document-view.html?documentId=${flag.target_document_id}&flagId=${flag.id}`;
+  // In combined mode, carry the origin project set along so sheet.html's own
+  // "Sheets" sidebar link (see shell.js) returns to this combined flags list
+  // instead of just the one project this particular flag's sheet is in.
+  const combinedSuffix = combinedMode ? `&combinedProjectIds=${combinedProjectIds}` : '';
+  return `/sheet.html?projectId=${flagProjectId}&sheetId=${flag.target_sheet_id}&flagId=${flag.id}${combinedSuffix}`;
+}
+
+function locationLabel(flag) {
+  const icon = flag.location_type === 'document' ? '&#128196; ' : '&#128208; ';
+  return icon + escapeHtml(flag.location);
+}
+
+function allTags() {
+  return [...new Set(allFlags.flatMap((f) => f.geometry.tags || []))].sort();
+}
+
+function ensureTagDatalist() {
+  let dl = document.getElementById('flags-tag-options');
+  if (!dl) {
+    dl = document.createElement('datalist');
+    dl.id = 'flags-tag-options';
+    document.body.appendChild(dl);
+  }
+  dl.innerHTML = allTags()
+    .map((t) => `<option value="${escapeHtml(t)}"></option>`)
+    .join('');
+}
+
+function populateTagFilter() {
+  const select = document.getElementById('flags-tag-filter');
+  const current = select.value;
+  const tags = allTags();
+  select.innerHTML = '<option value="">All</option>' + tags.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+  select.value = tags.includes(current) ? current : '';
+  tagFilter = select.value;
+}
+
+// Flags placed while offline live only in the photo outbox until they
+// upload (see photoOutbox.js) - shown here too, so a flag written at the
+// meeting is on the list right away, not only after reconnecting.
+async function queuedFlags(pid) {
+  const entries = (await getOutboxPhotos()).filter(
+    (e) => e.kind === 'markup' && !e.createdMarkup && e.projectId === Number(pid) && e.markup && e.markup.type === 'flag'
+  );
+  if (!entries.length) return [];
+  const sheets = await getCachedSheets(pid);
+  return entries
+    .map((e) => {
+      const sheetId = Number((e.url.match(/\/api\/sheets\/(\d+)\/markups/) || [])[1]);
+      const sheet = sheets.find((s) => s.sheet_id === sheetId);
+      if (!sheet) return null;
+      return {
+        ...e.markup,
+        id: -e.id,
+        pending: true,
+        location: sheet.sheet_number,
+        location_type: 'sheet',
+        target_sheet_id: sheetId,
+        target_document_id: null,
+        author_name: 'You (not uploaded yet)',
+        created_at: e.queuedAt,
+      };
+    })
+    .filter(Boolean);
+}
+
+// Offline (or the server unreachable): the list cached at the last sync
+// (offline-store.js's cacheFlags) plus anything still waiting to upload.
+async function loadCachedFlags() {
+  if (!combinedMode) return [...((await getCachedFlags(projectId)) || []), ...(await queuedFlags(projectId))];
+  const names = new Map((await getCachedProjectList()).map((p) => [String(p.id), p.name]));
+  const perProject = await Promise.all(
+    combinedProjectIds.split(',').map(async (raw) => {
+      const pid = raw.trim();
+      const flags = [...((await getCachedFlags(pid)) || []), ...(await queuedFlags(pid))];
+      return flags.map((f) => ({ ...f, project_id: Number(pid), project_name: names.get(pid) || '' }));
+    })
+  );
+  return perProject.flat();
+}
+
+async function loadFlags() {
+  try {
+    const { flags } = combinedMode
+      ? await api('GET', `/api/flags/combined?projectIds=${combinedProjectIds}`)
+      : await api('GET', `/api/projects/${projectId}/flags`);
+    allFlags = flags;
+    loadedOffline = false;
+    if (!combinedMode) cacheFlags(projectId, flags).catch(() => {});
+  } catch (err) {
+    if (err.status) throw err;
+    allFlags = await loadCachedFlags();
+    loadedOffline = true;
+  }
+  document.getElementById('flags-offline-note').style.display = loadedOffline ? '' : 'none';
+  populateTagFilter();
+  ensureTagDatalist();
+  renderTable();
+}
+
+function visibleFlags() {
+  let filtered = allFlags.slice();
+  if (searchTerm) {
+    filtered = filtered.filter(
+      (f) =>
+        (f.geometry.description || '').toLowerCase().includes(searchTerm) ||
+        (f.geometry.comment || '').toLowerCase().includes(searchTerm) ||
+        (f.geometry.tags || []).some((t) => t.toLowerCase().includes(searchTerm)) ||
+        f.location.toLowerCase().includes(searchTerm) ||
+        (combinedMode && (f.project_name || '').toLowerCase().includes(searchTerm))
+    );
+  }
+  if (tagFilter) filtered = filtered.filter((f) => (f.geometry.tags || []).includes(tagFilter));
+  filtered.sort((a, b) => {
+    let cmp;
+    if (sortState.column === 'tag') {
+      cmp = (a.geometry.tags || []).join(', ').localeCompare((b.geometry.tags || []).join(', '));
+    } else if (sortState.column === 'project') {
+      cmp = (a.project_name || '').localeCompare(b.project_name || '') || a.location.localeCompare(b.location, undefined, { numeric: true });
+    } else {
+      cmp = a.location.localeCompare(b.location, undefined, { numeric: true });
+    }
+    return sortState.dir === 'asc' ? cmp : -cmp;
+  });
+  return filtered;
+}
+
+function renderSortHeaders() {
+  document.getElementById('flags-sort-drawing').innerHTML =
+    sortState.column === 'location' ? `Location ${sortState.dir === 'asc' ? '&#9662;' : '&#9652;'}` : 'Location';
+  document.getElementById('flags-sort-tag').innerHTML = sortState.column === 'tag' ? `Tag ${sortState.dir === 'asc' ? '&#9662;' : '&#9652;'}` : 'Tag';
+  if (combinedMode) {
+    document.getElementById('flags-sort-project').innerHTML =
+      sortState.column === 'project' ? `Project ${sortState.dir === 'asc' ? '&#9662;' : '&#9652;'}` : 'Project';
+  }
+}
+
+function renderTable() {
+  const flags = visibleFlags();
+  const tbody = document.querySelector('#flags-table tbody');
+  tbody.innerHTML = '';
+  document.getElementById('flags-empty-msg').style.display = flags.length ? 'none' : '';
+  document.getElementById('flags-empty-msg').textContent =
+    searchTerm || tagFilter
+      ? 'No flags match your filters.'
+      : loadedOffline
+      ? 'No flags saved on this device yet - open this project once while online so they sync.'
+      : 'No flags yet.';
+
+  for (const flag of flags) {
+    const tr = document.createElement('tr');
+    const created = flag.created_at ? new Date(flag.created_at).toLocaleDateString() : '';
+    const editing = editingFlagId === flag.id;
+    const url = goToUrl(flag);
+
+    if (editing) {
+      tr.innerHTML = `
+        ${combinedMode ? `<td>${escapeHtml(flag.project_name || '')}</td>` : ''}
+        <td><a href="${url}">${locationLabel(flag)}</a></td>
+        <td><input type="text" class="flags-desc-input" style="width:100%;" value="${escapeHtml(flag.geometry.description || '')}"></td>
+        <td><textarea class="flags-comment-input" rows="2" style="width:100%;">${escapeHtml(flag.geometry.comment || '')}</textarea></td>
+        <td><input type="text" class="flags-tag-input" list="flags-tag-options" placeholder="Tags (comma-separated)" style="width:100%;" value="${escapeHtml((flag.geometry.tags || []).join(', '))}"></td>
+        <td>${escapeHtml(flag.author_name)}</td>
+        <td>${created}</td>
+        <td class="row" style="gap:6px;">
+          <button type="button" class="flags-save-btn">Save</button>
+          <button type="button" class="flags-cancel-btn">Cancel</button>
+          <button type="button" class="icon-btn flags-delete-btn" title="Delete flag">&#128465;</button>
+        </td>`;
+      tbody.appendChild(tr);
+
+      const descInput = tr.querySelector('.flags-desc-input');
+      const commentInput = tr.querySelector('.flags-comment-input');
+      const tagInput = tr.querySelector('.flags-tag-input');
+      tr.querySelector('.flags-save-btn').addEventListener('click', async () => {
+        const tags = [...new Set(tagInput.value.split(',').map((t) => t.trim()).filter(Boolean))];
+        const { markup } = await api('PATCH', `/api/markups/${flag.id}`, {
+          geometry: { ...flag.geometry, description: descInput.value, comment: commentInput.value, tags },
+        });
+        flag.geometry = markup.geometry;
+        editingFlagId = null;
+        populateTagFilter();
+        ensureTagDatalist();
+        renderTable();
+        showToast('Flag saved.', 'success');
+      });
+      tr.querySelector('.flags-cancel-btn').addEventListener('click', () => {
+        editingFlagId = null;
+        renderTable();
+      });
+    } else {
+      tr.innerHTML = `
+        ${combinedMode ? `<td>${escapeHtml(flag.project_name || '')}</td>` : ''}
+        <td><a href="${url}">${locationLabel(flag)}</a></td>
+        <td>${escapeHtml(flag.geometry.description || '')}</td>
+        <td>${escapeHtml(flag.geometry.comment || '')}</td>
+        <td>${(flag.geometry.tags || []).map((t) => `<span class="flags-tag-chip">${escapeHtml(t)}</span>`).join(' ')}</td>
+        <td>${escapeHtml(flag.author_name)}</td>
+        <td>${created}</td>
+        <td class="row" style="gap:6px;">
+          <button type="button" class="icon-btn flags-edit-btn" title="Edit">&#9998;</button>
+          <button type="button" class="icon-btn flags-delete-btn" title="Delete flag">&#128465;</button>
+        </td>`;
+      tbody.appendChild(tr);
+
+      tr.querySelector('.flags-edit-btn').addEventListener('click', () => {
+        if (loadedOffline) {
+          showToast('Editing flags from this list needs a connection - open the flag on its drawing, or edit it once back online.', 'error');
+          return;
+        }
+        editingFlagId = flag.id;
+        renderTable();
+      });
+    }
+
+    tr.querySelector('.flags-delete-btn').addEventListener('click', async () => {
+      if (loadedOffline) {
+        showToast("Can't delete flags offline - reconnect and try again.", 'error');
+        return;
+      }
+      const ok = await confirmModal({ title: 'Delete this flag?', confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
+      await api('DELETE', `/api/markups/${flag.id}`);
+      allFlags = allFlags.filter((f) => f.id !== flag.id);
+      if (editingFlagId === flag.id) editingFlagId = null;
+      populateTagFilter();
+      ensureTagDatalist();
+      renderTable();
+    });
+  }
+}
+
+function setSort(column) {
+  if (sortState.column === column) sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+  else sortState = { column, dir: 'asc' };
+  renderSortHeaders();
+  renderTable();
+}
+
+function csvCell(value) {
+  const s = String(value ?? '');
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// Exports what the table currently shows (so search/tag filters apply).
+// The ID column is what lets a re-import update these same flags in place.
+function exportFlags() {
+  const flags = visibleFlags().filter((f) => !f.pending);
+  if (!flags.length) {
+    showToast('No flags to export.', 'error');
+    return;
+  }
+  const header = ['ID', ...(combinedMode ? ['Project'] : []), 'Location', 'Type', 'Page', 'Description', 'Comment', 'Tags', 'Visibility', 'Author', 'Created'];
+  const lines = [header.map(csvCell).join(',')];
+  for (const f of flags) {
+    lines.push(
+      [
+        f.id,
+        ...(combinedMode ? [f.project_name || ''] : []),
+        f.location,
+        f.location_type === 'document' ? 'Document' : 'Sheet',
+        f.location_type === 'document' ? f.geometry.page || 1 : '',
+        f.geometry.description || '',
+        f.geometry.comment || '',
+        (f.geometry.tags || []).join(', '),
+        f.visibility,
+        f.author_name,
+        f.created_at ? f.created_at.slice(0, 10) : '',
+      ]
+        .map(csvCell)
+        .join(',')
+    );
+  }
+  // BOM so Excel reads it as UTF-8.
+  const blob = new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `flags-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function importFlags(file) {
+  if (loadedOffline) {
+    showToast('Importing flags needs a connection.', 'error');
+    return;
+  }
+  const csv = await file.text();
+  try {
+    const r = await api('POST', `/api/projects/${projectId}/flags/import`, { csv });
+    await loadFlags();
+    const summary = `Imported: ${r.updated} updated, ${r.created} added, ${r.unchanged} unchanged` + (r.skipped.length ? `, ${r.skipped.length} skipped.` : '.');
+    if (r.skipped.length) {
+      const details = r.skipped
+        .slice(0, 8)
+        .map((s) => `Row ${s.row}: ${s.reason}`)
+        .join('\n');
+      alert(`${summary}\n\n${details}${r.skipped.length > 8 ? `\n...and ${r.skipped.length - 8} more` : ''}`);
+    } else {
+      showToast(summary, 'success');
+    }
+  } catch (err) {
+    showToast(err.message || 'Import failed.', 'error');
+  }
+}
+
+function setupControls() {
+  document.getElementById('flags-export-btn').addEventListener('click', exportFlags);
+  const importBtn = document.getElementById('flags-import-btn');
+  const importFile = document.getElementById('flags-import-file');
+  if (combinedMode) {
+    // Import targets one project's sheets/documents by name, which is
+    // ambiguous across several - do it from a single project's flags page.
+    importBtn.style.display = 'none';
+  } else {
+    importBtn.addEventListener('click', () => importFile.click());
+    importFile.addEventListener('change', async () => {
+      const file = importFile.files[0];
+      importFile.value = '';
+      if (file) await importFlags(file);
+    });
+  }
+  document.getElementById('flags-search').addEventListener('input', (e) => {
+    searchTerm = e.target.value.trim().toLowerCase();
+    renderTable();
+  });
+  document.getElementById('flags-tag-filter').addEventListener('change', (e) => {
+    tagFilter = e.target.value;
+    renderTable();
+  });
+  document.getElementById('flags-sort-drawing').addEventListener('click', () => setSort('location'));
+  document.getElementById('flags-sort-tag').addEventListener('click', () => setSort('tag'));
+  if (combinedMode) document.getElementById('flags-sort-project').addEventListener('click', () => setSort('project'));
+  renderSortHeaders();
+}
+
+async function setupCombinedHeader() {
+  document.getElementById('flags-sort-project').style.display = '';
+  const ids = new Set(combinedProjectIds.split(',').map((s) => s.trim()));
+  try {
+    const { projects } = await api('GET', '/api/projects');
+    const names = projects.filter((p) => ids.has(String(p.id))).map((p) => p.name);
+    document.getElementById('flags-title').textContent = 'Flags — Combined view';
+    document.getElementById('flags-subtitle').textContent = names.length
+      ? `Every flagged item across: ${names.join(', ')}.`
+      : "Every flagged item across the projects you're viewing.";
+  } catch (err) {
+    document.getElementById('flags-title').textContent = 'Flags — Combined view';
+  }
+}
+
+(async function init() {
+  const me = await requireSession();
+  if (!me) return;
+  // Combined mode gets its own short sidebar (Sheets/Documents/Flags only -
+  // see renderShell's combinedProjectIds branch) instead of the normal
+  // per-project nav, which doesn't apply across several projects at once.
+  await renderShell({
+    topbarEl: document.getElementById('topbar'),
+    sidebarEl: document.getElementById('sidebar'),
+    projectId: combinedMode ? undefined : projectId,
+    combinedProjectIds: combinedMode ? combinedProjectIds : undefined,
+    active: 'flags',
+    me,
+  });
+  if (combinedMode) await setupCombinedHeader();
+  setupControls();
+  await loadFlags();
+})();

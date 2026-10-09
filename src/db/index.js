@@ -13,6 +13,14 @@ const db = new Database(config.dbPath);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 
+// Sheet numbers are sometimes pure numeric ("1".."80"), sometimes
+// alphanumeric ("A-101", "M-2.03"). Plain text ORDER BY sorts those
+// lexicographically ("10" before "2"), so ORDER BY sheet_number clauses use
+// this to sort each embedded digit run as a number instead of by character.
+db.function('natsort_key', { deterministic: true }, (value) =>
+  value == null ? '' : String(value).replace(/\d+/g, (digits) => digits.padStart(20, '0'))
+);
+
 const schema = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
 db.exec(schema);
 
@@ -32,14 +40,31 @@ db.exec(`UPDATE markups SET updated_at = created_at WHERE updated_at IS NULL`);
 
 addColumnIfMissing('projects', 'location', 'TEXT');
 addColumnIfMissing('projects', 'size', 'TEXT');
+// NULL = current, timestamp = archived. Archiving is purely a dashboard
+// visibility flag - nothing on disk or in any other table changes.
+addColumnIfMissing('projects', 'archived_at', 'TEXT');
 
 addColumnIfMissing('sheets', 'scale_feet_per_inch', 'REAL');
+addColumnIfMissing('sheets', 'is_composite', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('composite_fragments', 'rotation', 'REAL NOT NULL DEFAULT 0');
+addColumnIfMissing('composite_fragments', 'preview_path', 'TEXT');
 
 addColumnIfMissing('shares', 'name', 'TEXT');
 addColumnIfMissing('shares', 'allow_personal_markups', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('shares', 'allow_documents', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('shares', 'document_folder_ids', "TEXT NOT NULL DEFAULT '[]'");
 addColumnIfMissing('shares', 'document_ids', "TEXT NOT NULL DEFAULT '[]'");
+
+addColumnIfMissing('users', 'can_takeoff', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('users', 'settings', "TEXT NOT NULL DEFAULT '{}'");
+
+addColumnIfMissing('take_off_items', 'properties', "TEXT NOT NULL DEFAULT '[]'");
+addColumnIfMissing('take_off_items', 'formula', 'TEXT');
+addColumnIfMissing('take_off_items', 'output_label', 'TEXT');
+addColumnIfMissing('take_off_items', 'folder_id', 'INTEGER REFERENCES take_off_folders(id) ON DELETE SET NULL');
+addColumnIfMissing('take_off_folders', 'parent_folder_id', 'INTEGER REFERENCES take_off_folders(id) ON DELETE CASCADE');
+addColumnIfMissing('take_off_instances', 'perimeter', 'REAL');
+addColumnIfMissing('take_off_templates', 'folder_id', 'INTEGER REFERENCES take_off_template_folders(id) ON DELETE SET NULL');
 
 // documents used to be a rigid kind('rfi'|'submittal')/number/title/date/
 // status/pdf_path row. It's now a folder-organized entity with versioned
@@ -142,6 +167,47 @@ addColumnIfMissing('shares', 'document_ids', "TEXT NOT NULL DEFAULT '[]'");
   console.log('Rebuilt documents table to add ON DELETE SET NULL on current_version_id.');
 })();
 
+// take_off_items.type's CHECK constraint can't be widened with ALTER TABLE -
+// SQLite has no ALTER CONSTRAINT, so adding the 'count' type needs the same
+// disable-FK/rebuild/verify/re-enable procedure as the documents table above.
+// take_off_instances.item_id references this table, hence the FK dance.
+(function ensureTakeoffItemsCountType() {
+  const exists = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='take_off_items'`).get();
+  if (!exists) return; // fresh install - schema.sql above already has the right shape
+  const sql = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='take_off_items'`).get().sql;
+  if (sql.includes("'count'")) return; // already migrated
+
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE take_off_items_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('linear', 'perimeter', 'area', 'count')),
+        shape TEXT CHECK (shape IN ('square', 'circle', 'triangle', 'diamond')),
+        color TEXT NOT NULL,
+        created_by INTEGER NOT NULL REFERENCES users(id),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+    db.exec(`
+      INSERT INTO take_off_items_new (id, project_id, name, type, color, created_by, created_at)
+      SELECT id, project_id, name, type, color, created_by, created_at FROM take_off_items
+    `);
+    db.exec('DROP TABLE take_off_items');
+    db.exec('ALTER TABLE take_off_items_new RENAME TO take_off_items');
+    const violations = db.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length) {
+      throw new Error(`take_off_items rebuild left ${violations.length} dangling reference(s): ${JSON.stringify(violations)}`);
+    }
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_take_off_items_project ON take_off_items(project_id)');
+  console.log("Rebuilt take_off_items table to add the 'count' type and shape column.");
+})();
+
 db.exec('CREATE INDEX IF NOT EXISTS idx_documents_folder ON documents(folder_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_documents_current_version ON documents(current_version_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_sheet_links_source ON sheet_links(source_sheet_id)');
@@ -189,7 +255,138 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_sheet_links_type ON sheet_links(project_
   console.log('Rebuilt markups table to add ON DELETE SET NULL on linked_document_id.');
 })();
 
+(function ensureMarkupsFlagType() {
+  const cols = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='markups'").get();
+  if (!cols || cols.sql.includes("'flag'")) return;
+
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE markups_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id INTEGER NOT NULL REFERENCES sheets(id) ON DELETE CASCADE,
+        author_id INTEGER NOT NULL REFERENCES users(id),
+        visibility TEXT NOT NULL CHECK (visibility IN ('private', 'published')) DEFAULT 'private',
+        type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect', 'flag')),
+        geometry TEXT NOT NULL,
+        style TEXT NOT NULL DEFAULT '{}',
+        linked_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+    db.exec(`
+      INSERT INTO markups_new (id, sheet_id, author_id, visibility, type, geometry, style, linked_document_id, created_at, updated_at)
+      SELECT id, sheet_id, author_id, visibility, type, geometry, style, linked_document_id, created_at, updated_at FROM markups
+    `);
+    db.exec('DROP TABLE markups');
+    db.exec('ALTER TABLE markups_new RENAME TO markups');
+    const violations = db.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length) {
+      throw new Error(`markups table rebuild left ${violations.length} dangling reference(s): ${JSON.stringify(violations)}`);
+    }
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+  console.log("Rebuilt markups table to add 'flag' to the type CHECK constraint.");
+})();
+
+(function ensureMarkupsDocumentId() {
+  const hasDocumentId = db.prepare('PRAGMA table_info(markups)').all().some((c) => c.name === 'document_id');
+  if (hasDocumentId) return;
+
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE markups_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id INTEGER REFERENCES sheets(id) ON DELETE CASCADE,
+        document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+        author_id INTEGER NOT NULL REFERENCES users(id),
+        visibility TEXT NOT NULL CHECK (visibility IN ('private', 'published')) DEFAULT 'private',
+        type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect', 'flag')),
+        geometry TEXT NOT NULL,
+        style TEXT NOT NULL DEFAULT '{}',
+        linked_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK ((sheet_id IS NOT NULL AND document_id IS NULL) OR (sheet_id IS NULL AND document_id IS NOT NULL))
+      )
+    `);
+    db.exec(`
+      INSERT INTO markups_new (id, sheet_id, author_id, visibility, type, geometry, style, linked_document_id, created_at, updated_at)
+      SELECT id, sheet_id, author_id, visibility, type, geometry, style, linked_document_id, created_at, updated_at FROM markups
+    `);
+    db.exec('DROP TABLE markups');
+    db.exec('ALTER TABLE markups_new RENAME TO markups');
+    const violations = db.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length) {
+      throw new Error(`markups table rebuild left ${violations.length} dangling reference(s): ${JSON.stringify(violations)}`);
+    }
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+  console.log('Rebuilt markups table to add document_id (nullable sheet_id) so markups can attach to documents.');
+})();
+
+(function ensureMarkupsPhotoType() {
+  const cols = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='markups'").get();
+  if (!cols || cols.sql.includes("'photo'")) return;
+
+  db.pragma('foreign_keys = OFF');
+  const rebuild = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE markups_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sheet_id INTEGER REFERENCES sheets(id) ON DELETE CASCADE,
+        document_id INTEGER REFERENCES documents(id) ON DELETE CASCADE,
+        author_id INTEGER NOT NULL REFERENCES users(id),
+        visibility TEXT NOT NULL CHECK (visibility IN ('private', 'published')) DEFAULT 'private',
+        type TEXT NOT NULL CHECK (type IN ('line', 'arrow', 'cloud', 'text', 'rect', 'flag', 'photo')),
+        geometry TEXT NOT NULL,
+        style TEXT NOT NULL DEFAULT '{}',
+        linked_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK ((sheet_id IS NOT NULL AND document_id IS NULL) OR (sheet_id IS NULL AND document_id IS NOT NULL))
+      )
+    `);
+    db.exec(`
+      INSERT INTO markups_new (id, sheet_id, document_id, author_id, visibility, type, geometry, style, linked_document_id, created_at, updated_at)
+      SELECT id, sheet_id, document_id, author_id, visibility, type, geometry, style, linked_document_id, created_at, updated_at FROM markups
+    `);
+    db.exec('DROP TABLE markups');
+    db.exec('ALTER TABLE markups_new RENAME TO markups');
+    const violations = db.prepare('PRAGMA foreign_key_check').all();
+    if (violations.length) {
+      throw new Error(`markups table rebuild left ${violations.length} dangling reference(s): ${JSON.stringify(violations)}`);
+    }
+  });
+  rebuild();
+  db.pragma('foreign_keys = ON');
+  console.log("Rebuilt markups table to add 'photo' to the type CHECK constraint.");
+})();
+
+// Link to a PlanSwift job (see lib/importers/planswift.js, "Refresh from
+// PlanSwift"). external_id is the PlanSwift GUID of the page / take-off item /
+// shape that a row was imported from; NULL = created in HammGrid, which a
+// refresh never touches. *_hash columns record what the last import/refresh
+// wrote, so a refresh can tell "PlanSwift changed" from "someone edited it
+// here since" (those are kept, not overwritten).
+addColumnIfMissing('projects', 'external_source', 'TEXT');
+addColumnIfMissing('projects', 'external_path', 'TEXT');
+addColumnIfMissing('projects', 'external_synced_at', 'TEXT');
+addColumnIfMissing('sheets', 'external_id', 'TEXT');
+addColumnIfMissing('sheets', 'external_scale', 'REAL');
+addColumnIfMissing('take_off_items', 'external_id', 'TEXT');
+addColumnIfMissing('take_off_items', 'external_hash', 'TEXT');
+addColumnIfMissing('take_off_instances', 'external_id', 'TEXT');
+addColumnIfMissing('take_off_instances', 'external_hash', 'TEXT');
+addColumnIfMissing('take_off_instances', 'local_hash', 'TEXT');
+db.exec('CREATE INDEX IF NOT EXISTS idx_take_off_instances_external ON take_off_instances(external_id)');
+
 db.exec('CREATE INDEX IF NOT EXISTS idx_markups_sheet ON markups(sheet_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_markups_document ON markups(document_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_markups_linked_document ON markups(linked_document_id)');
 
 module.exports = db;

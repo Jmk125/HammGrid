@@ -20,6 +20,16 @@ def normalize_token(value):
     return re.sub(r"[^A-Z0-9]", "", (value or "").upper())
 
 
+def is_sheet_number_candidate(value):
+    # Avoid turning every detail bubble/grid bubble/room tag into a link. In
+    # real drawing sets, sheet references are normally discipline-prefixed
+    # (A101, S201, E3.01, etc.). Short numeric-only values like 1, 2, 3, 4.8,
+    # 10 appear constantly as detail numbers, grid lines, notes, dimensions,
+    # and room labels, so auto-linking them creates hotspots "everywhere".
+    # Manual links can still cover numeric-only sheet sets later if needed.
+    return len(value) >= 3 and any(ch.isalpha() for ch in value) and any(ch.isdigit() for ch in value)
+
+
 def expanded_rect(word_rect, page_rect, pad_pt=2.0):
     x0, y0, x1, y1 = word_rect
     x0 = max(page_rect.x0, x0 - pad_pt)
@@ -46,7 +56,7 @@ def main():
         if int(target["id"]) == args.source_sheet_id:
             continue
         normalized = normalize_token(target.get("sheet_number"))
-        if normalized:
+        if is_sheet_number_candidate(normalized):
             targets.append({**target, "normalized": normalized})
 
     doc = fitz.open(args.source_pdf)
@@ -61,7 +71,7 @@ def main():
     for word in page.get_text("words"):
         word_text = word[4]
         normalized_word = normalize_token(word_text)
-        if not normalized_word:
+        if not is_sheet_number_candidate(normalized_word):
             continue
         for target in targets:
             if normalized_word != target["normalized"]:

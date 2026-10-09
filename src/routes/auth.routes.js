@@ -5,6 +5,14 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
+function parseSettings(raw) {
+  try {
+    return JSON.parse(raw || '{}');
+  } catch (err) {
+    return {};
+  }
+}
+
 router.post('/login', (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -16,7 +24,14 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-  req.session.user = { id: user.id, name: user.name, username: user.username, role: user.role };
+  req.session.user = {
+    id: user.id,
+    name: user.name,
+    username: user.username,
+    role: user.role,
+    can_takeoff: !!user.can_takeoff,
+    settings: parseSettings(user.settings),
+  };
   res.json({ user: req.session.user });
 });
 
@@ -28,6 +43,37 @@ router.post('/logout', (req, res) => {
 });
 
 router.get('/me', requireAuth, (req, res) => {
+  res.json({ user: req.session.user });
+});
+
+const ALLOWED_THEMES = ['default', 'light', 'dark'];
+const ALLOWED_MAGNIFIER_CORNERS = ['bottom-left', 'bottom-right'];
+const PANE_SECTION_IDS = ['markup', 'reference', 'measure', 'takeoffs'];
+
+router.put('/settings', requireAuth, (req, res) => {
+  const { theme, darkCanvas, magnifierCorner, paneSectionOrder } = req.body || {};
+  if (
+    paneSectionOrder !== undefined &&
+    !(Array.isArray(paneSectionOrder) && paneSectionOrder.every((id) => PANE_SECTION_IDS.includes(id)))
+  ) {
+    return res.status(400).json({ error: `paneSectionOrder must be a list of: ${PANE_SECTION_IDS.join(', ')}` });
+  }
+  if (theme !== undefined && !ALLOWED_THEMES.includes(theme)) {
+    return res.status(400).json({ error: `theme must be one of: ${ALLOWED_THEMES.join(', ')}` });
+  }
+  if (magnifierCorner !== undefined && !ALLOWED_MAGNIFIER_CORNERS.includes(magnifierCorner)) {
+    return res.status(400).json({ error: `magnifierCorner must be one of: ${ALLOWED_MAGNIFIER_CORNERS.join(', ')}` });
+  }
+
+  const current = req.session.user.settings || {};
+  const next = { ...current };
+  if (theme !== undefined) next.theme = theme;
+  if (darkCanvas !== undefined) next.darkCanvas = !!darkCanvas;
+  if (magnifierCorner !== undefined) next.magnifierCorner = magnifierCorner;
+  if (paneSectionOrder !== undefined) next.paneSectionOrder = [...new Set(paneSectionOrder)];
+
+  db.prepare('UPDATE users SET settings = ? WHERE id = ?').run(JSON.stringify(next), req.session.user.id);
+  req.session.user.settings = next;
   res.json({ user: req.session.user });
 });
 

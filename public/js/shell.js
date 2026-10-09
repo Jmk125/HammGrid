@@ -144,6 +144,77 @@ export function promptModal({ title = 'Enter a value', message = '', placeholder
 
 
 
+// ---------- Theme + user menu ----------
+// Applied on top of the cached-user bootstrap snippet each page's <head> runs
+// synchronously (before first paint, reading the same hammgrid:last-user
+// localStorage key api.js already maintains) - this call just reconciles
+// against whatever /api/auth/me actually returned, in case the setting
+// changed on another device since the cached copy was written.
+export function applyTheme(settings) {
+  const theme = (settings && settings.theme) || 'default';
+  document.documentElement.dataset.theme = theme;
+  if (settings && settings.darkCanvas) {
+    document.documentElement.dataset.canvasInvert = '1';
+  } else {
+    delete document.documentElement.dataset.canvasInvert;
+  }
+}
+
+export function openSettingsWindow() {
+  const w = 440;
+  const h = 520;
+  const left = Math.round(window.screenX + (window.outerWidth - w) / 2);
+  const top = Math.round(window.screenY + (window.outerHeight - h) / 2);
+  const win = window.open(
+    '/settings.html',
+    'hammgrid-settings',
+    `width=${w},height=${h},left=${left},top=${top},resizable=yes,scrollbars=yes`
+  );
+  if (win) win.focus();
+}
+
+const CACHED_SESSION_KEY_FOR_THEME = 'hammgrid:last-user';
+
+export function renderUserMenu(container, me) {
+  container.innerHTML = `
+    <div class="user-menu" id="user-menu">
+      <button type="button" id="user-menu-btn">${escapeHtml(me.name)} <span class="chevron">&#9662;</span></button>
+      <div class="user-menu-dropdown" id="user-menu-dropdown" style="display:none;">
+        <div class="user-menu-role">${escapeHtml(me.role)}</div>
+        <button type="button" id="user-menu-settings">Settings</button>
+        <button type="button" id="user-menu-logout">Sign out</button>
+      </div>
+    </div>
+  `;
+  const dropdown = container.querySelector('#user-menu-dropdown');
+  container.querySelector('#user-menu-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+  });
+  document.addEventListener('click', () => {
+    dropdown.style.display = 'none';
+  });
+  container.querySelector('#user-menu-settings').addEventListener('click', () => {
+    dropdown.style.display = 'none';
+    openSettingsWindow();
+  });
+  container.querySelector('#user-menu-logout').addEventListener('click', async () => {
+    await api('POST', '/api/auth/logout');
+    window.location.href = '/login.html';
+  });
+
+  // Live-apply settings saved from a settings.html popup without a reload.
+  window.addEventListener('storage', (e) => {
+    if (e.key !== CACHED_SESSION_KEY_FOR_THEME) return;
+    try {
+      const user = JSON.parse(e.newValue || 'null');
+      if (user && String(user.id) === String(me.id)) applyTheme(user.settings);
+    } catch (err) {
+      // ignore malformed cache value
+    }
+  });
+}
+
 export function renderNetworkIndicator(container) {
   if (!container || container.querySelector('#network-indicator')) return;
   const indicator = document.createElement('span');
@@ -213,11 +284,12 @@ function rotateSheetHistoryTo(projectId, sheetId) {
   return rotated;
 }
 
-function sheetHref(projectId, sheetId) {
-  return `/sheet.html?projectId=${encodeURIComponent(projectId)}&sheetId=${encodeURIComponent(sheetId)}`;
+function sheetHref(projectId, sheetId, combinedProjectIds) {
+  const url = `/sheet.html?projectId=${encodeURIComponent(projectId)}&sheetId=${encodeURIComponent(sheetId)}`;
+  return combinedProjectIds ? `${url}&combinedProjectIds=${encodeURIComponent(combinedProjectIds)}` : url;
 }
 
-function renderSheetHistoryControls(topbarEl, projectId) {
+function renderSheetHistoryControls(topbarEl, projectId, combinedProjectIds) {
   if (!projectId) return;
   const history = getSheetHistory(projectId);
   const rightRow = topbarEl.querySelector('.topbar-actions');
@@ -234,7 +306,7 @@ function renderSheetHistoryControls(topbarEl, projectId) {
     if (latest.length < 2) return;
     const target = latest[1];
     saveSheetHistory(projectId, [...latest.slice(1), latest[0]].slice(0, SHEET_HISTORY_LIMIT));
-    window.location.href = sheetHref(projectId, target.sheetId);
+    window.location.href = sheetHref(projectId, target.sheetId, combinedProjectIds);
   });
 
   const wrap = document.createElement('div');
@@ -254,7 +326,7 @@ function renderSheetHistoryControls(topbarEl, projectId) {
   } else {
     for (const [idx, item] of history.entries()) {
       const a = document.createElement('a');
-      a.href = sheetHref(projectId, item.sheetId);
+      a.href = sheetHref(projectId, item.sheetId, combinedProjectIds);
       a.innerHTML = `<b>${escapeHtml(item.sheetNumber)}</b>${item.title ? `<span>${escapeHtml(item.title)}</span>` : ''}`;
       a.addEventListener('click', (e) => {
         e.preventDefault();
@@ -332,14 +404,20 @@ export function showToast(message, type = 'info') {
   }, 6000);
 }
 
+// Job "kinds" tracked here each live under their own status route - upload/OCR
+// jobs are scoped to a revision, sheet-link scans to a project. Add a case
+// here (and in project-settings.js's own live-progress poll) for any new kind.
+function jobStatusUrl(job) {
+  if (job.kind === 'sheet-link-scan') return `/api/projects/${job.projectId}/sheet-links/jobs/${job.jobId}`;
+  if (job.kind === 'search-index') return `/api/projects/${job.projectId}/sheet-text/jobs/${job.jobId}`;
+  return `/api/projects/${job.projectId}/revisions/${job.revisionId}/upload-jobs/${job.jobId}`;
+}
+
 export async function checkPendingJobs() {
   const jobs = JSON.parse(localStorage.getItem(PENDING_JOBS_KEY) || '[]');
   for (const job of jobs) {
     try {
-      const { job: status } = await api(
-        'GET',
-        `/api/projects/${job.projectId}/revisions/${job.revisionId}/upload-jobs/${job.jobId}`
-      );
+      const { job: status } = await api('GET', jobStatusUrl(job));
       if (status.status === 'done') {
         showToast(`${job.label} finished processing.`, 'success');
         untrackPendingJob(job.jobId);
@@ -407,10 +485,43 @@ function exportModal(projectId) {
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
 }
 
-export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, onOverlayClick, sheetHistoryEntry }) {
+// Sidebar for pages that sit above any single project (the projects list,
+// admin pages). Only admins have anything to put here today, so for everyone
+// else the sidebar element is removed and the page goes full-width.
+export function renderGlobalSidebar(sidebarEl, active, me) {
+  if (!sidebarEl) return;
+  if (me.role !== 'admin') {
+    sidebarEl.remove();
+    return;
+  }
+  const items = [
+    { key: 'projects', label: 'Projects', href: '/dashboard.html' },
+    { key: 'users', label: 'Users', href: '/users.html' },
+    { key: 'admin', label: 'Admin Settings', href: '/admin-settings.html' },
+  ];
+  sidebarEl.innerHTML = `
+    <nav>
+      ${items.map((i) => `<a href="${i.href}" data-key="${i.key}" class="${i.key === active ? 'active' : ''}">${i.label}</a>`).join('')}
+    </nav>
+  `;
+}
+
+export async function renderShell({
+  topbarEl,
+  sidebarEl,
+  projectId,
+  combinedProjectIds,
+  active,
+  me,
+  onOverlayClick,
+  sheetHistoryEntry,
+  viewingSheet,
+}) {
   const canManage = me.role === 'admin' || me.role === 'editor';
+  const isCombined = !!combinedProjectIds;
   if (sheetHistoryEntry) recordSheetVisit(projectId, sheetHistoryEntry);
   checkPendingJobs();
+  applyTheme(me.settings);
 
   topbarEl.innerHTML = `
     <div class="row" style="gap:6px;">
@@ -420,17 +531,12 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
     <div class="row topbar-actions">
       ${onOverlayClick ? '<button id="overlay-btn" type="button">Overlay</button>' : ''}
       ${projectId && canManage ? '<button class="primary" id="new-revision-btn" type="button">+ New Revision</button>' : ''}
-      <span id="whoami" class="muted"></span>
-      <button id="logout" type="button">Sign out</button>
+      <div id="user-menu-slot"></div>
     </div>
   `;
-  topbarEl.querySelector('#whoami').textContent = `${me.name} (${me.role})`;
-  topbarEl.querySelector('#logout').addEventListener('click', async () => {
-    await api('POST', '/api/auth/logout');
-    window.location.href = '/login.html';
-  });
+  renderUserMenu(topbarEl.querySelector('#user-menu-slot'), me);
   renderNetworkIndicator(topbarEl.querySelector('.topbar-actions'));
-  if (active === 'viewer' && projectId) renderSheetHistoryControls(topbarEl, projectId);
+  if (active === 'viewer' && projectId) renderSheetHistoryControls(topbarEl, projectId, combinedProjectIds);
   const newRevBtn = topbarEl.querySelector('#new-revision-btn');
   if (newRevBtn) newRevBtn.addEventListener('click', () => newRevisionModal(projectId));
   const overlayBtn = topbarEl.querySelector('#overlay-btn');
@@ -438,18 +544,60 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
 
   if (!sidebarEl) return;
 
-  const items = [
-    { key: 'viewer', label: 'Sheets', href: `/viewer.html?projectId=${projectId}`, show: true },
-    { key: 'documents', label: 'Documents', href: `/documents.html?projectId=${projectId}`, show: true },
-    { key: 'invite', label: 'Invite', href: `/shares.html?projectId=${projectId}`, show: canManage },
-    { key: 'activity', label: 'Activity Log', href: `/activity.html?projectId=${projectId}`, show: me.role === 'admin' },
-    { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },
-    { key: 'settings', label: 'Project Settings', href: `/project-settings.html?projectId=${projectId}`, show: canManage },
-  ];
+  if (!projectId && !isCombined) {
+    renderGlobalSidebar(sidebarEl, active, me);
+    wireSidebarToggle(topbarEl, sidebarEl);
+    return;
+  }
+
+  // "View Multiple" (see dashboard.js) - Sheets/Documents/Flags have combined
+  // flavors, so their links point back to the combined URL whenever there's
+  // a combined origin (either this page IS one of the three combined views,
+  // or it's a real single-project page - e.g. sheet.html - reached BY
+  // clicking into it FROM a combined view; see sheet.js threading
+  // combinedProjectIds through its own links for that second case). Without
+  // that second case, following "Sheets" from a sheet you reached via
+  // combined browsing would silently drop you back into a single-project
+  // grid instead of returning to the combined one you came from.
+  const viewerHref = isCombined ? `/viewer.html?projectIds=${combinedProjectIds}` : `/viewer.html?projectId=${projectId}`;
+  const documentsHref = isCombined ? `/documents.html?projectIds=${combinedProjectIds}` : `/documents.html?projectId=${projectId}`;
+  const flagsHref = isCombined ? `/flags.html?projectIds=${combinedProjectIds}` : `/flags.html?projectId=${projectId}`;
+
+  // Genuinely on one of the three combined views themselves (no real single
+  // project at all) gets just those three - Revisions/Invite/Settings/
+  // Take-offs/etc. are single-project write actions that don't apply across
+  // several projects at once. A real single-project page (projectId set)
+  // keeps the full list regardless of how it was reached.
+  // On sheet.html specifically, "Sheets" doubles as the way back to the grid
+  // one level up - labeled like a back button, and the plain "Back to
+  // projects" link below is dropped, since it sits right next to "Sheets"
+  // at exactly the nesting depth where muscle memory means to go up one
+  // level (the grid), not skip past it and leave the project entirely.
+  const viewerLabel = viewingSheet ? '← Back to Sheets' : 'Sheets';
+
+  const items =
+    isCombined && !projectId
+      ? [
+          { key: 'viewer', label: viewerLabel, href: viewerHref, show: true },
+          { key: 'documents', label: 'Documents', href: documentsHref, show: true },
+          { key: 'flags', label: 'Flags', href: flagsHref, show: true },
+        ]
+      : [
+          { key: 'viewer', label: viewerLabel, href: viewerHref, show: true },
+          { key: 'documents', label: 'Documents', href: documentsHref, show: true },
+          { key: 'flags', label: 'Flags', href: flagsHref, show: true },
+          { key: 'invite', label: 'Invite', href: `/shares.html?projectId=${projectId}`, show: canManage },
+          { key: 'activity', label: 'Activity Log', href: `/activity.html?projectId=${projectId}`, show: me.role === 'admin' },
+          { key: 'users', label: 'Users', href: `/users.html?projectId=${projectId}`, show: me.role === 'admin' },
+          { key: 'export', label: 'Export', href: '#', show: true, action: () => exportModal(projectId) },
+          { key: 'settings', label: 'Project Settings', href: `/project-settings.html?projectId=${projectId}`, show: canManage },
+          { key: 'takeoffs', label: 'Take-offs', href: `/takeoffs.html?projectId=${projectId}`, show: me.role === 'admin' || !!me.can_takeoff },
+          { key: 'help', label: 'Help', href: `/help.html?projectId=${projectId}`, show: true },
+        ];
 
   sidebarEl.innerHTML = `
     <nav>
-      <a href="/dashboard.html">&larr; Back to projects</a>
+      ${viewingSheet ? '' : '<a href="/dashboard.html">&larr; Back to projects</a>'}
       ${items
         .filter((i) => i.show)
         .map((i) => `<a href="${i.href}" data-key="${i.key}" class="${i.key === active ? 'active' : ''}">${i.label}</a>`)
@@ -465,6 +613,10 @@ export async function renderShell({ topbarEl, sidebarEl, projectId, active, me, 
     });
   }
 
+  wireSidebarToggle(topbarEl, sidebarEl);
+}
+
+function wireSidebarToggle(topbarEl, sidebarEl) {
   const toggleBtn = topbarEl.querySelector('#sidebar-toggle-btn');
   if (toggleBtn) {
     const collapsedKey = 'sidebar-collapsed';

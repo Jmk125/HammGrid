@@ -7,6 +7,9 @@ const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { toPortablePath } = require('../lib/paths');
+const { ALLOWED_DOCUMENT_EXTENSIONS, extOf, isImagePath } = require('../lib/documentFileTypes');
+const { resolveUploadedFile } = require('../lib/documentUpload');
+const { ensureThumb } = require('../lib/documentThumbs');
 
 const router = express.Router({ mergeParams: true });
 
@@ -16,9 +19,13 @@ fs.mkdirSync(docsDir, { recursive: true });
 const upload = multer({
   storage: multer.diskStorage({
     destination: docsDir,
-    filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}.pdf`),
+    // Preserves the real extension (jpg/png/etc) instead of forcing .pdf -
+    // downstream serving (documentFiles.routes.js, documentVersions.routes.js)
+    // derives Content-Type from this on disk, and it's what lets a photo
+    // download with a sane filename.
+    filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}${extOf(file.originalname)}`),
   }),
-  fileFilter: (req, file, cb) => cb(null, /\.pdf$/i.test(file.originalname)),
+  fileFilter: (req, file, cb) => cb(null, ALLOWED_DOCUMENT_EXTENSIONS.includes(extOf(file.originalname))),
   limits: { fileSize: 200 * 1024 * 1024 },
 });
 
@@ -53,10 +60,11 @@ router.post('/folders', requireRole('admin', 'editor'), (req, res) => {
 // anyway to resolve a linked_document_id to a display name regardless of
 // which folder it lives in.
 router.get('/', requireAuth, (req, res) => {
-  const documents = db
+  const rows = db
     .prepare(
       `SELECT d.id, d.folder_id, d.name, d.created_at,
               dv.id AS current_version_id, dv.revision_name, dv.issue_date, dv.created_at AS version_created_at,
+              dv.pdf_path AS current_path,
               (SELECT COUNT(DISTINCT m.sheet_id) FROM markups m WHERE m.linked_document_id = d.id) AS linked_sheet_count
        FROM documents d
        LEFT JOIN document_versions dv ON dv.id = d.current_version_id
@@ -64,14 +72,26 @@ router.get('/', requireAuth, (req, res) => {
        ORDER BY d.name`
     )
     .all(req.params.projectId);
+  // Raw file paths stay server-side - only the derived flag the table's
+  // thumbnail rendering needs (documents.js) crosses the wire.
+  const documents = rows.map(({ current_path, ...rest }) => ({ ...rest, is_image: isImagePath(current_path) }));
   res.json({ documents });
 });
 
-router.post('/', requireRole('admin', 'editor'), upload.single('file'), (req, res) => {
+router.post('/', requireRole('admin', 'editor'), upload.single('file'), async (req, res) => {
   const { name, folder_id, issue_date } = req.body;
-  if (!req.file) return res.status(400).json({ error: 'A PDF file is required' });
-  if (!name || !name.trim()) {
+  if (!req.file) return res.status(400).json({ error: 'A PDF or image file is required' });
+
+  let filePath;
+  try {
+    filePath = await resolveUploadedFile(req.file.path);
+  } catch (err) {
     fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: err.message });
+  }
+
+  if (!name || !name.trim()) {
+    fs.unlink(filePath, () => {});
     return res.status(400).json({ error: 'name is required' });
   }
   if (folder_id) {
@@ -79,7 +99,7 @@ router.post('/', requireRole('admin', 'editor'), upload.single('file'), (req, re
       .prepare('SELECT id FROM document_folders WHERE id = ? AND project_id = ?')
       .get(folder_id, req.params.projectId);
     if (!folder) {
-      fs.unlink(req.file.path, () => {});
+      fs.unlink(filePath, () => {});
       return res.status(400).json({ error: 'folder_id not found in this project' });
     }
   }
@@ -90,7 +110,7 @@ router.post('/', requireRole('admin', 'editor'), upload.single('file'), (req, re
       .run(req.params.projectId, folder_id || null, name.trim());
     const versionResult = db
       .prepare('INSERT INTO document_versions (document_id, issue_date, pdf_path, uploaded_by) VALUES (?, ?, ?, ?)')
-      .run(docResult.lastInsertRowid, issue_date || null, toPortablePath(req.file.path), req.session.user.id);
+      .run(docResult.lastInsertRowid, issue_date || null, toPortablePath(filePath), req.session.user.id);
     db.prepare('UPDATE documents SET current_version_id = ? WHERE id = ?').run(
       versionResult.lastInsertRowid,
       docResult.lastInsertRowid
@@ -99,12 +119,13 @@ router.post('/', requireRole('admin', 'editor'), upload.single('file'), (req, re
   });
 
   const document = db.prepare('SELECT * FROM documents WHERE id = ?').get(insertTxn());
+  ensureThumb(filePath);
   res.status(201).json({ document });
 });
 
 // Issue a revision - keeps every past version reachable (document_versions),
 // only current_version_id moves, same pattern as sheets/sheet_versions.
-router.post('/:id/versions', requireRole('admin', 'editor'), upload.single('file'), (req, res) => {
+router.post('/:id/versions', requireRole('admin', 'editor'), upload.single('file'), async (req, res) => {
   const document = db
     .prepare('SELECT * FROM documents WHERE id = ? AND project_id = ?')
     .get(req.params.id, req.params.projectId);
@@ -112,7 +133,15 @@ router.post('/:id/versions', requireRole('admin', 'editor'), upload.single('file
     if (req.file) fs.unlink(req.file.path, () => {});
     return res.status(404).json({ error: 'Not found' });
   }
-  if (!req.file) return res.status(400).json({ error: 'A PDF file is required' });
+  if (!req.file) return res.status(400).json({ error: 'A PDF or image file is required' });
+
+  let filePath;
+  try {
+    filePath = await resolveUploadedFile(req.file.path);
+  } catch (err) {
+    fs.unlink(req.file.path, () => {});
+    return res.status(400).json({ error: err.message });
+  }
 
   const { revision_name, issue_date } = req.body;
   const versionResult = db
@@ -120,8 +149,9 @@ router.post('/:id/versions', requireRole('admin', 'editor'), upload.single('file
       `INSERT INTO document_versions (document_id, revision_name, issue_date, pdf_path, uploaded_by)
        VALUES (?, ?, ?, ?, ?)`
     )
-    .run(document.id, revision_name || null, issue_date || null, toPortablePath(req.file.path), req.session.user.id);
+    .run(document.id, revision_name || null, issue_date || null, toPortablePath(filePath), req.session.user.id);
   db.prepare('UPDATE documents SET current_version_id = ? WHERE id = ?').run(versionResult.lastInsertRowid, document.id);
+  ensureThumb(filePath);
 
   const updated = db.prepare('SELECT * FROM documents WHERE id = ?').get(document.id);
   res.status(201).json({ document: updated });

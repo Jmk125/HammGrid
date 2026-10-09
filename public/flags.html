@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<title>Flags — HammGrid</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f2b46">
+<script src="/js/theme-boot.js"></script>
+<body>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+        <h1 id="flags-title">Flags</h1>
+        <p class="muted" id="flags-subtitle">Every flagged item across this project's drawings and documents.</p>
+
+        <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+          <div class="row">
+            <input type="text" id="flags-search" placeholder="Search flags..." style="width:320px;">
+            <label>Tag:
+              <select id="flags-tag-filter"><option value="">All</option></select>
+            </label>
+          </div>
+          <div class="row">
+            <button type="button" id="flags-export-btn" title="Download the flags shown below as a spreadsheet (CSV)">Export to spreadsheet</button>
+            <button type="button" id="flags-import-btn" title="Update or add flags from a spreadsheet exported here">Import from spreadsheet</button>
+            <input type="file" id="flags-import-file" accept=".csv,text/csv" style="display:none;">
+          </div>
+        </div>
+
+        <p class="muted" id="flags-offline-note" style="display:none;">Offline - showing flags saved on this device at the last sync.</p>
+
+        <div class="card" id="flags-view">
+          <table id="flags-table">
+            <thead>
+              <tr>
+                <th id="flags-sort-project" data-sort="project" style="cursor:pointer; display:none;">Project</th>
+                <th id="flags-sort-drawing" data-sort="location" style="cursor:pointer;">Location &#9662;</th>
+                <th>Description</th>
+                <th>Comment</th>
+                <th id="flags-sort-tag" data-sort="tag" style="cursor:pointer;">Tag</th>
+                <th>Author</th>
+                <th>Created</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+          <p class="muted" id="flags-empty-msg" style="display:none;">No flags yet.</p>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/js/api.js"></script>
+  <script type="module" src="/js/flags.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
+</body>

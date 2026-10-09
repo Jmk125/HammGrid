@@ -2,7 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
-const { deriveDiscipline } = require('../lib/matching');
+const { computeMatch, deriveDiscipline } = require('../lib/matching');
 const { streamFile } = require('../lib/streamFile');
 
 const router = express.Router();
@@ -49,12 +49,22 @@ router.patch('/:id', requireRole('admin', 'editor'), (req, res) => {
     match_sheet_id: match_sheet_id !== undefined ? match_sheet_id : staged.match_sheet_id,
   };
 
-  // If the number changed but discipline wasn't explicitly given, re-derive it
-  // rather than leaving the stale (or null) discipline from the prior number.
-  if (corrected_number !== undefined && discipline === undefined) {
-    const revision = db.prepare('SELECT project_id FROM revisions WHERE id = ?').get(staged.revision_id);
-    const project = db.prepare('SELECT discipline_prefix_map FROM projects WHERE id = ?').get(revision.project_id);
-    next.discipline = deriveDiscipline(next.corrected_number, JSON.parse(project.discipline_prefix_map));
+  const revision = db.prepare('SELECT project_id FROM revisions WHERE id = ?').get(staged.revision_id);
+  const project = db.prepare('SELECT discipline_prefix_map FROM projects WHERE id = ?').get(revision.project_id);
+  const prefixMap = JSON.parse(project.discipline_prefix_map);
+
+  // If the user corrects the sheet number/title but does not explicitly force
+  // a match status, re-run matching against the published sheet set. This keeps
+  // common OCR fixes (e.g. T101 misread as 1101) from staying stuck as "new".
+  if ((corrected_number !== undefined || corrected_title !== undefined) && match_status === undefined && match_sheet_id === undefined) {
+    const match = computeMatch(db, revision.project_id, next.corrected_number || next.ocr_number, next.corrected_title || next.ocr_title, prefixMap);
+    next.discipline = discipline !== undefined ? next.discipline : match.discipline;
+    next.match_status = match.match_status;
+    next.match_sheet_id = match.match_sheet_id;
+  } else if (corrected_number !== undefined && discipline === undefined) {
+    // If the number changed but discipline wasn't explicitly given, re-derive it
+    // rather than leaving the stale (or null) discipline from the prior number.
+    next.discipline = deriveDiscipline(next.corrected_number, prefixMap);
   }
 
   if (next.match_status === 'new' || next.match_status === 'ignored') {

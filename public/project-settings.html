@@ -3,6 +3,7 @@
 <link rel="stylesheet" href="/css/style.css">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#0f2b46">
+<script src="/js/theme-boot.js"></script>
 <body>
   <div class="topbar" id="topbar"></div>
   <div class="app-shell">
@@ -30,6 +31,37 @@
             <button class="primary" type="button" id="scan-sheet-links-btn">Scan for sheet links</button>
             <span class="muted" id="sheet-link-scan-status"></span>
           </div>
+        </div>
+
+        <div class="card" id="search-index-card" style="display:none;">
+          <h2>Search Index</h2>
+          <p class="muted">Extract text content from every published drawing so it can be found with the sheet search bar.</p>
+          <div class="row">
+            <button class="primary" type="button" id="index-search-btn">Build search index</button>
+            <span class="muted" id="search-index-status"></span>
+          </div>
+        </div>
+
+        <div class="card" id="planswift-card" style="display:none;">
+          <h2>PlanSwift link</h2>
+          <p class="muted">This project was imported from a PlanSwift job. Refresh pulls changes made in PlanSwift (take-off shapes, items, page scales) into this project. Take-offs you drew here are never touched, and a PlanSwift shape you've edited here is kept as-is.</p>
+          <p class="muted" id="planswift-info"></p>
+          <div class="row">
+            <button class="primary" type="button" id="planswift-check-btn">Check for changes</button>
+            <span class="muted" id="planswift-status"></span>
+          </div>
+          <div id="planswift-result" style="display:none; margin-top:12px;"></div>
+        </div>
+
+        <div class="card" id="planswift-push-card" style="display:none;">
+          <h2>Send take-offs to PlanSwift</h2>
+          <p class="muted">Adds take-offs that exist only in HammGrid to the linked PlanSwift job: new items go in a "From HammGrid" folder, and shapes for items PlanSwift already has are added to them. This writes directly into the live PlanSwift job. Nothing already in PlanSwift is changed or deleted, and the last push can be undone.</p>
+          <div class="row">
+            <button class="primary" type="button" id="planswift-push-check-btn">Check what would be sent</button>
+            <button type="button" id="planswift-push-undo-btn" style="display:none;">Undo last push</button>
+            <span class="muted" id="planswift-push-status"></span>
+          </div>
+          <div id="planswift-push-result" style="display:none; margin-top:12px;"></div>
         </div>
 
         <div class="card">

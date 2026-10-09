@@ -3,27 +3,90 @@
 <link rel="stylesheet" href="/css/style.css">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#0f2b46">
+<script src="/js/theme-boot.js"></script>
 <body>
   <div class="topbar" id="topbar">
     <div class="row" style="gap:6px;">
       <button id="back-btn" type="button">&larr; Back</button>
       <button id="download-doc-btn" class="icon-btn" type="button" title="Download">⬇</button>
+      <!-- Hidden until renderPdf() confirms there's actually a text layer to
+           search (a photo has none) - see the doc-search-btn display toggle
+           in document-view.js. -->
+      <button id="doc-search-btn" class="icon-btn" type="button" title="Find in document" style="display:none;">&#128269;</button>
       <a class="brand" href="/dashboard.html">HammGrid</a>
     </div>
     <div class="row">
       <span id="doc-label" class="muted"></span>
-      <span id="whoami" class="muted"></span>
-      <button id="logout" type="button">Sign out</button>
+      <div id="user-menu-slot"></div>
     </div>
   </div>
-  <main class="wide">
-    <div class="zoom-wrap" id="zoom-wrap" style="height: 88vh;">
-      <div class="zoom-pan-inner" id="zoom-pan-inner">
-        <canvas id="pdf-canvas"></canvas>
+  <div class="sheet-view-row">
+    <div class="sheet-canvas-area">
+      <div class="zoom-wrap" id="zoom-wrap" style="height: 88vh;">
+        <div class="version-badge" id="page-nav-badge" style="display:none;">
+          <button type="button" id="doc-page-prev-btn" title="Previous page">&#9664;</button>
+          <div class="version-badge-inner">
+            <span id="doc-page-label">Page 1 / 1</span>
+          </div>
+          <button type="button" id="doc-page-next-btn" title="Next page">&#9654;</button>
+        </div>
+        <!-- Mutually exclusive with page-nav-badge above (a photo is never a
+             multi-page PDF), so sharing the same corner never overlaps. -->
+        <div class="version-badge" id="gallery-nav-badge" style="display:none;">
+          <button type="button" id="doc-gallery-prev-btn" title="Previous photo">&#9664;</button>
+          <div class="version-badge-inner">
+            <span id="doc-gallery-label">Photo 1 / 1</span>
+          </div>
+          <button type="button" id="doc-gallery-next-btn" title="Next photo">&#9654;</button>
+        </div>
+        <!-- Click-or-drag jump-to-page rail for a multi-page document - only
+             shown alongside page-nav-badge (numPages > 1). See
+             setupPageScrubber() in document-view.js. -->
+        <div class="page-scrubber" id="page-scrubber" style="display:none;">
+          <div class="page-scrubber-track" id="page-scrubber-track">
+            <div class="page-scrubber-handle" id="page-scrubber-handle">1</div>
+          </div>
+        </div>
+        <div class="doc-search-bar" id="doc-search-bar" style="display:none;">
+          <input type="text" id="doc-search-input" placeholder="Find in document...">
+          <button type="button" id="doc-search-prev-btn" title="Previous match" disabled>&#9664;</button>
+          <span id="doc-search-count" class="doc-search-count"></span>
+          <button type="button" id="doc-search-next-btn" title="Next match" disabled>&#9654;</button>
+          <button type="button" id="doc-search-close-btn" title="Close search">&times;</button>
+        </div>
+        <div class="zoom-pan-inner" id="zoom-pan-inner">
+          <div class="markup-stage">
+            <canvas id="pdf-canvas"></canvas>
+            <svg id="markup-svg"></svg>
+          </div>
+        </div>
+        <div class="markup-popup" id="markup-popup" style="display:none;"></div>
+      </div>
+      <p class="muted" id="pdf-status"></p>
+    </div>
+
+    <div class="sheet-pane" id="sheet-pane" style="display:none;">
+      <div class="pane-resize-handle" id="pane-resize-handle" title="Drag to resize"></div>
+      <button class="pane-toggle" id="pane-toggle-btn" type="button">&#9656;</button>
+      <div class="pane-body" id="pane-body">
+        <div class="pane-section" id="section-markup">
+          <div class="pane-section-header-row">
+            <button class="pane-section-header" type="button" data-section="doc-markup">
+              <span>Markup Tools</span>
+              <span class="chevron">&#9662;</span>
+            </button>
+            <button type="button" class="pane-popout-btn" id="markups-visibility-btn" title="Hide all markups"></button>
+          </div>
+          <div class="pane-section-body">
+            <div class="icon-tool-grid" id="tool-grid"></div>
+            <div class="field"><label>Color</label><input type="color" id="markup-color" value="#e11d48"></div>
+            <div class="field"><label>Line width</label><input type="number" id="markup-width" value="2" min="1" max="10"></div>
+            <label id="publish-default-wrap" style="display:none;"><input type="checkbox" id="markup-publish-default"> Draw as published</label>
+          </div>
+        </div>
       </div>
     </div>
-    <p class="muted" id="pdf-status"></p>
-  </main>
+  </div>
   <script src="/js/api.js"></script>
   <script type="module" src="/js/document-view.js"></script>
   <script type="module" src="/js/pwa.js"></script>

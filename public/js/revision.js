@@ -1,4 +1,4 @@
-import { renderShell, trackPendingJob, showToast, confirmModal, alertModal } from '/js/shell.js';
+import { renderShell, trackPendingJob, showToast, confirmModal } from '/js/shell.js';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 
 const params = new URLSearchParams(window.location.search);
@@ -57,6 +57,78 @@ async function loadStaged() {
   renderStagedTable();
   renderRefSheetOptions();
 }
+
+// ---------- Already-published sheets (edit number/title/discipline in bulk) ----------
+let publishedSheets = [];
+
+async function loadPublished() {
+  const { sheets } = await api('GET', `/api/projects/${projectId}/revisions/${revisionId}/published-sheets`);
+  publishedSheets = sheets;
+  document.getElementById('section-published').style.display = sheets.length ? '' : 'none';
+  renderPublishedTable();
+}
+
+function renderPublishedTable() {
+  const tbody = document.querySelector('#published-table tbody');
+  tbody.innerHTML = '';
+  for (const s of publishedSheets) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><input type="checkbox" class="pub-check"></td>
+      <td><input class="p-number" style="width:100px"></td>
+      <td><input class="p-title" style="width:260px"></td>
+      <td><input class="p-discipline" style="width:130px"></td>`;
+    tr.querySelector('.p-number').value = s.sheet_number;
+    tr.querySelector('.p-title').value = s.title || '';
+    tr.querySelector('.p-discipline').value = s.discipline || '';
+    tr.dataset.versionId = s.version_id;
+    tr.querySelector('.pub-check').addEventListener('click', (e) => {
+      const boxes = Array.from(document.querySelectorAll('.pub-check'));
+      const idx = boxes.indexOf(e.target);
+      if (e.shiftKey && lastPubIndex !== null) {
+        for (let i = Math.min(idx, lastPubIndex); i <= Math.max(idx, lastPubIndex); i++) boxes[i].checked = e.target.checked;
+      }
+      lastPubIndex = idx;
+    });
+    for (const [cls, field] of [['.p-number', 'sheet_number'], ['.p-title', 'title'], ['.p-discipline', 'discipline']]) {
+      tr.querySelector(cls).addEventListener('change', (e) => savePublished(s, { [field]: e.target.value }));
+    }
+    tbody.appendChild(tr);
+  }
+}
+let lastPubIndex = null;
+
+async function savePublished(s, patch) {
+  try {
+    const { sheet } = await api('PATCH', `/api/projects/${projectId}/sheets/${s.sheet_id}`, { ...patch, version_id: s.version_id });
+    const row = publishedSheets.find((p) => p.version_id === s.version_id);
+    if (row) {
+      row.sheet_number = sheet.sheet_number;
+      row.discipline = sheet.discipline;
+      if (patch.title !== undefined) row.title = patch.title.trim();
+    }
+  } catch (err) {
+    showToast(`Failed to save: ${err.message}`, 'error');
+    await loadPublished();
+  }
+}
+
+document.getElementById('pub-select-all').addEventListener('change', (e) => {
+  document.querySelectorAll('.pub-check').forEach((el) => (el.checked = e.target.checked));
+});
+
+document.getElementById('pub-bulk-apply').addEventListener('click', async () => {
+  const value = document.getElementById('pub-bulk-discipline').value.trim();
+  const rows = Array.from(document.querySelectorAll('#published-table tbody tr')).filter(
+    (tr) => tr.querySelector('.pub-check').checked
+  );
+  if (rows.length === 0) return showToast('Tick the sheets to change first.', 'error');
+  for (const tr of rows) {
+    const s = publishedSheets.find((p) => String(p.version_id) === tr.dataset.versionId);
+    await savePublished(s, { discipline: value });
+  }
+  await loadPublished();
+  showToast(`Updated ${rows.length} sheet(s).`, 'success');
+});
 
 function renderRefSheetOptions() {
   const select = document.getElementById('ref-sheet-select');
@@ -597,6 +669,8 @@ async function pollJob(jobId, statusEl, fillEl, fileName) {
 }
 
 document.getElementById('publish-btn').addEventListener('click', async () => {
+  const publishBtn = document.getElementById('publish-btn');
+  if (publishBtn.disabled) return;
   const errorEl = document.getElementById('publish-error');
   errorEl.style.display = 'none';
   const alreadyPublished = revisionStatus === 'published';
@@ -606,29 +680,25 @@ document.getElementById('publish-btn').addEventListener('click', async () => {
     confirmLabel: 'Publish',
   });
   if (!ok) return;
+  publishBtn.disabled = true;
+  const originalPublishText = publishBtn.textContent;
+  publishBtn.textContent = 'Publishing...';
   try {
     const result = await api('POST', `/api/projects/${projectId}/revisions/${revisionId}/publish`);
-    const scanLinks = await confirmModal({
-      title: 'Revision published',
-      message: `Published ${result.published_sheets} sheet(s). Scan this project for clickable sheet links now? You can also run this later from Project Settings.`,
-      confirmLabel: 'Scan now',
-      cancelLabel: 'Later',
-    });
-    let scanJobId = '';
-    if (scanLinks) {
-      const scan = await api('POST', `/api/projects/${projectId}/sheet-links/scan`);
-      scanJobId = scan.job_id;
-      await alertModal({
-        title: 'Sheet-link scan started',
-        message: `Scanning ${scan.sheet_count} sheet(s) in the background. You can check progress from Project Settings.`,
-      });
-    }
-    const settingsQs = new URLSearchParams({ projectId });
-    if (scanJobId) settingsQs.set('sheetLinkJobId', scanJobId);
-    window.location.href = `/project-settings.html?${settingsQs}`;
+    // Sheet links for the newly-published sheets are rescanned automatically
+    // in the background by the publish endpoint itself - no need to prompt
+    // for (and pay the cost of) a full project-wide rescan here. That full
+    // rescan is still available on demand from Project Settings for the rarer
+    // case of picking up references to a brand-new sheet number from sheets
+    // that weren't touched by this revision.
+    showToast(`Published ${result.published_sheets} sheet(s).`, 'success');
+    window.location.href = `/project-settings.html?${new URLSearchParams({ projectId })}`;
   } catch (err) {
     errorEl.textContent = err.message;
     errorEl.style.display = 'block';
+  } finally {
+    publishBtn.disabled = false;
+    publishBtn.textContent = originalPublishText;
   }
 });
 
@@ -645,4 +715,5 @@ document.getElementById('publish-btn').addEventListener('click', async () => {
   setupBoxZoomPan();
   await loadRevision();
   await loadStaged();
+  await loadPublished();
 })();

@@ -1,9 +1,8 @@
 import { deleteCachedProject } from '/js/offline-store.js';
-import { renderShell, openModal, closeModal, showToast, getPendingJobsForProject, untrackPendingJob } from '/js/shell.js';
+import { renderShell, openModal, closeModal, showToast, trackPendingJob, getPendingJobsForProject, untrackPendingJob } from '/js/shell.js';
 
 const params = new URLSearchParams(window.location.search);
 const projectId = params.get('projectId');
-const sheetLinkJobId = params.get('sheetLinkJobId');
 let currentProject = null;
 let currentUser = null;
 // jobIds with an active poll loop already running, so a table rebuild
@@ -103,25 +102,39 @@ async function loadSheetLinkSummary() {
   }
 }
 
+// Tracked via shell.js's trackPendingJob() (same localStorage mechanism the
+// upload flow uses) so leaving project-settings.html mid-scan and coming back
+// - or even reloading - reconnects to the live progress instead of showing
+// nothing, even though the scan itself keeps running server-side regardless.
 async function pollSheetLinkScan(jobId) {
   const statusEl = document.getElementById('sheet-link-scan-status');
   const scanBtn = document.getElementById('scan-sheet-links-btn');
   for (;;) {
-    const { job } = await api('GET', `/api/projects/${projectId}/sheet-links/jobs/${jobId}`);
+    let job;
+    try {
+      ({ job } = await api('GET', `/api/projects/${projectId}/sheet-links/jobs/${jobId}`));
+    } catch (err) {
+      untrackPendingJob(jobId); // job expired/server restarted - stop tracking it
+      if (scanBtn) scanBtn.disabled = false;
+      if (statusEl) statusEl.textContent = `Scan status unavailable: ${err.message}`;
+      return;
+    }
     if (job.status === 'processing') {
       const progress = job.progress;
-      statusEl.textContent = progress ? `Scanning ${progress.current} / ${progress.total} sheets...` : 'Scanning...';
+      if (statusEl) statusEl.textContent = progress ? `Scanning ${progress.current} / ${progress.total} sheets...` : 'Scanning...';
+      if (scanBtn) scanBtn.disabled = true;
       await new Promise((r) => setTimeout(r, 1500));
       continue;
     }
-    scanBtn.disabled = false;
+    untrackPendingJob(jobId);
+    if (scanBtn) scanBtn.disabled = false;
     if (job.status === 'done') {
       const created = job.result ? job.result.created_links : null;
-      statusEl.textContent = created === null ? 'Scan complete.' : `Scan complete: ${created} link${created === 1 ? '' : 's'} found.`;
+      if (statusEl) statusEl.textContent = created === null ? 'Scan complete.' : `Scan complete: ${created} link${created === 1 ? '' : 's'} found.`;
       showToast('Sheet-link scan finished.', 'success');
       await loadSheetLinkSummary();
     } else {
-      statusEl.textContent = `Scan failed: ${job.error || 'Unknown error'}`;
+      if (statusEl) statusEl.textContent = `Scan failed: ${job.error || 'Unknown error'}`;
       showToast(`Sheet-link scan failed: ${job.error || 'Unknown error'}`, 'error');
     }
     return;
@@ -134,9 +147,10 @@ function setupSheetLinkScan() {
   if (!card || !scanBtn) return;
   if (!currentUser || !['admin', 'editor'].includes(currentUser.role)) return;
   card.style.display = '';
-  if (sheetLinkJobId) {
+  const trackedJob = getPendingJobsForProject(projectId).find((j) => j.kind === 'sheet-link-scan');
+  if (trackedJob) {
     scanBtn.disabled = true;
-    pollSheetLinkScan(sheetLinkJobId);
+    pollSheetLinkScan(trackedJob.jobId);
   }
   scanBtn.addEventListener('click', async () => {
     scanBtn.disabled = true;
@@ -144,6 +158,7 @@ function setupSheetLinkScan() {
     statusEl.textContent = 'Starting scan...';
     try {
       const { job_id } = await api('POST', `/api/projects/${projectId}/sheet-links/scan`);
+      trackPendingJob({ jobId: job_id, projectId, kind: 'sheet-link-scan', label: 'Sheet-link scan' });
       await pollSheetLinkScan(job_id);
     } catch (err) {
       scanBtn.disabled = false;
@@ -151,6 +166,80 @@ function setupSheetLinkScan() {
     }
   });
   loadSheetLinkSummary();
+}
+
+async function loadSearchIndexSummary() {
+  const statusEl = document.getElementById('search-index-status');
+  if (!statusEl) return;
+  try {
+    const { indexed_count } = await api('GET', `/api/projects/${projectId}/sheet-text/summary`);
+    statusEl.textContent = `${indexed_count} sheet${indexed_count === 1 ? '' : 's'} indexed.`;
+  } catch (err) {
+    statusEl.textContent = `Unable to load index summary: ${err.message}`;
+  }
+}
+
+// Same trackPendingJob() reconnect approach as pollSheetLinkScan() above.
+async function pollSearchIndexJob(jobId) {
+  const statusEl = document.getElementById('search-index-status');
+  const indexBtn = document.getElementById('index-search-btn');
+  for (;;) {
+    let job;
+    try {
+      ({ job } = await api('GET', `/api/projects/${projectId}/sheet-text/jobs/${jobId}`));
+    } catch (err) {
+      untrackPendingJob(jobId); // job expired/server restarted - stop tracking it
+      if (indexBtn) indexBtn.disabled = false;
+      if (statusEl) statusEl.textContent = `Index status unavailable: ${err.message}`;
+      return;
+    }
+    if (job.status === 'processing') {
+      const progress = job.progress;
+      if (statusEl) statusEl.textContent = progress ? `Indexing ${progress.current} / ${progress.total} sheets...` : 'Indexing...';
+      if (indexBtn) indexBtn.disabled = true;
+      await new Promise((r) => setTimeout(r, 1500));
+      continue;
+    }
+    untrackPendingJob(jobId);
+    if (indexBtn) indexBtn.disabled = false;
+    if (job.status === 'done') {
+      const indexedSheets = job.result ? job.result.indexed_sheets : null;
+      if (statusEl) statusEl.textContent = indexedSheets === null ? 'Index build complete.' : `Index build complete: ${indexedSheets} sheet${indexedSheets === 1 ? '' : 's'} indexed.`;
+      showToast('Search index build finished.', 'success');
+      await loadSearchIndexSummary();
+    } else {
+      if (statusEl) statusEl.textContent = `Index build failed: ${job.error || 'Unknown error'}`;
+      showToast(`Search index build failed: ${job.error || 'Unknown error'}`, 'error');
+    }
+    return;
+  }
+}
+
+function setupSearchIndex() {
+  const card = document.getElementById('search-index-card');
+  const indexBtn = document.getElementById('index-search-btn');
+  if (!card || !indexBtn) return;
+  if (!currentUser || !['admin', 'editor'].includes(currentUser.role)) return;
+  card.style.display = '';
+  const trackedJob = getPendingJobsForProject(projectId).find((j) => j.kind === 'search-index');
+  if (trackedJob) {
+    indexBtn.disabled = true;
+    pollSearchIndexJob(trackedJob.jobId);
+  }
+  indexBtn.addEventListener('click', async () => {
+    indexBtn.disabled = true;
+    const statusEl = document.getElementById('search-index-status');
+    statusEl.textContent = 'Starting index build...';
+    try {
+      const { job_id } = await api('POST', `/api/projects/${projectId}/sheet-text/index`);
+      trackPendingJob({ jobId: job_id, projectId, kind: 'search-index', label: 'Search index build' });
+      await pollSearchIndexJob(job_id);
+    } catch (err) {
+      indexBtn.disabled = false;
+      statusEl.textContent = `Index build failed: ${err.message}`;
+    }
+  });
+  loadSearchIndexSummary();
 }
 
 async function loadRevisions() {
@@ -268,6 +357,260 @@ document.getElementById('settings-form').addEventListener('submit', async (e) =>
   }
 });
 
+// ---- PlanSwift link (admin, imported projects only) --------------------------
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+async function setupPlanswiftLink() {
+  const card = document.getElementById('planswift-card');
+  const infoEl = document.getElementById('planswift-info');
+  const btn = document.getElementById('planswift-check-btn');
+  const statusEl = document.getElementById('planswift-status');
+  const resultEl = document.getElementById('planswift-result');
+  let link;
+  try {
+    ({ linked_source: link } = await api('GET', `/api/imports/link/${projectId}`));
+  } catch (err) {
+    return; // not available - leave the card hidden
+  }
+  if (!link) return;
+  card.style.display = '';
+  const renderInfo = (l) => {
+    infoEl.textContent = `Job: ${l.job_path || 'unknown'} · ${l.synced_at ? `last refreshed ${l.synced_at} UTC` : 'never refreshed'}`;
+  };
+  renderInfo(link);
+  setupPlanswiftPush(link);
+
+  let importId = null;
+  const reset = () => { importId = null; btn.disabled = false; resultEl.style.display = 'none'; resultEl.innerHTML = ''; };
+
+  const list = (items) => `<ul style="margin:4px 0 0 18px;">${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`;
+  function renderPlan({ plan, warnings }) {
+    const { sheets, items, shapes } = plan;
+    const changes = shapes.added + shapes.changed + shapes.removed + items.added + items.updated + sheets.scaleChanged + shapes.linked + items.linked + sheets.linked;
+    const lines = [];
+    if (sheets.linked || items.linked || shapes.linked) {
+      lines.push(`<p><b>First refresh of this project.</b> Matched ${sheets.linked} sheets, ${items.linked} items and ${shapes.linked} shapes already here to the PlanSwift job. If "added" below is far more than you expect, something here was edited since import — cancel and check before applying.</p>`);
+    }
+    lines.push(`<table style="width:auto;"><tbody>
+      <tr><td>Shapes added</td><td><b>${shapes.added}</b></td></tr>
+      <tr><td>Shapes changed in PlanSwift</td><td><b>${shapes.changed}</b></td></tr>
+      <tr><td>Shapes removed in PlanSwift</td><td><b>${shapes.removed}</b></td></tr>
+      <tr><td>Shapes unchanged</td><td>${shapes.unchanged}</td></tr>
+      <tr><td>Take-off items added / updated</td><td><b>${items.added}</b> / <b>${items.updated}</b></td></tr>
+      <tr><td>Page scales changed</td><td><b>${sheets.scaleChanged}</b></td></tr>
+    </tbody></table>`);
+    if (!changes && !shapes.conflicts.length && !shapes.keptLocal.length) lines.push('<p>Already up to date.</p>');
+    if (shapes.conflicts.length) {
+      lines.push(`<p><b>${shapes.conflicts.length} shape(s) changed in both places</b> — your edit here is kept, PlanSwift's change is not applied:${list(shapes.conflicts.slice(0, 15).map((c) => `${c.item} on ${c.sheet}`))}${shapes.conflicts.length > 15 ? `<span class="muted">…and ${shapes.conflicts.length - 15} more</span>` : ''}</p>`);
+    }
+    if (shapes.keptLocal.length) {
+      lines.push(`<p><b>${shapes.keptLocal.length} shape(s) deleted in PlanSwift but edited here</b> — kept as HammGrid-only shapes.</p>`);
+    }
+    if (sheets.newPages.length) {
+      lines.push(`<p class="muted">${sheets.newPages.length} PlanSwift page(s) are not in this project and were not added (take-offs on them are skipped): ${esc(sheets.newPages.slice(0, 12).join(', '))}${sheets.newPages.length > 12 ? '…' : ''}</p>`);
+    }
+    if (sheets.missing.length) {
+      lines.push(`<p class="muted">${sheets.missing.length} sheet(s) here no longer exist in PlanSwift (left alone): ${esc(sheets.missing.slice(0, 12).join(', '))}</p>`);
+    }
+    if (warnings.length) {
+      lines.push(`<details><summary class="muted">${warnings.length} warning(s)</summary>${list(warnings.slice(0, 50))}</details>`);
+    }
+    lines.push('<div class="row" style="margin-top:8px;"><button class="primary" type="button" id="planswift-apply-btn">Apply changes</button><button type="button" id="planswift-cancel-btn">Cancel</button></div>');
+    resultEl.innerHTML = lines.join('');
+    resultEl.style.display = '';
+    document.getElementById('planswift-cancel-btn').addEventListener('click', async () => {
+      try { await api('DELETE', `/api/imports/${importId}`); } catch (err) { /* staging cleanup is best effort */ }
+      statusEl.textContent = '';
+      reset();
+    });
+    document.getElementById('planswift-apply-btn').addEventListener('click', async (e) => {
+      e.target.disabled = true;
+      statusEl.textContent = 'Applying…';
+      try {
+        const out = await api('POST', `/api/imports/${importId}/refresh`);
+        const p = out.plan;
+        showToast(`PlanSwift refresh applied: ${p.shapes.added} added, ${p.shapes.changed} changed, ${p.shapes.removed} removed.`, 'success');
+        statusEl.textContent = 'Refreshed.';
+        reset();
+        ({ linked_source: link } = await api('GET', `/api/imports/link/${projectId}`));
+        if (link) renderInfo(link);
+      } catch (err) {
+        statusEl.textContent = `Failed: ${err.message}`;
+        e.target.disabled = false;
+      }
+    });
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    resultEl.style.display = 'none';
+    statusEl.textContent = 'Starting…';
+    try {
+      ({ import_id: importId } = await api('POST', '/api/imports/refresh', { project_id: Number(projectId) }));
+      for (;;) {
+        const data = await api('GET', `/api/imports/${importId}`);
+        const imp = data.import;
+        if (imp.status === 'error' || imp.status === 'cancelled') throw new Error(imp.error || 'Cancelled');
+        if (imp.status === 'ready') {
+          statusEl.textContent = 'Compared with PlanSwift.';
+          renderPlan(data.refresh);
+          return;
+        }
+        statusEl.textContent = imp.progress ? `Reading PlanSwift job… page ${imp.progress.current} of ${imp.progress.total}` : 'Reading PlanSwift job…';
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    } catch (err) {
+      statusEl.textContent = `Failed: ${err.message}`;
+      if (importId) { try { await api('DELETE', `/api/imports/${importId}`); } catch (e) { /* best effort */ } }
+      reset();
+    }
+  });
+}
+
+// ---- Send HammGrid-only take-offs to the linked PlanSwift job -----------------
+// Writes into the live PlanSwift job folder, so: a plan is shown first, a warning
+// dialog must be confirmed, and the last push can be undone.
+function setupPlanswiftPush(initialLink) {
+  const card = document.getElementById('planswift-push-card');
+  const btn = document.getElementById('planswift-push-check-btn');
+  const undoBtn = document.getElementById('planswift-push-undo-btn');
+  const statusEl = document.getElementById('planswift-push-status');
+  const resultEl = document.getElementById('planswift-push-result');
+  card.style.display = '';
+
+  const showUndo = (lastPush) => { undoBtn.style.display = lastPush && lastPush.status === 'applied' ? '' : 'none'; };
+  showUndo(initialLink.last_push);
+  let importId = null;
+  const reset = () => { importId = null; btn.disabled = false; resultEl.style.display = 'none'; resultEl.innerHTML = ''; };
+  const list = (items) => `<ul style="margin:4px 0 0 18px;">${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`;
+  const lockText = (l) => `locked by ${esc(l.locked_by || 'unknown')} at ${esc(l.timestamp || 'unknown time')} (${l.age_minutes} minute(s) ago)`;
+
+  // The warning dialog. `lock` = the job's JobLock.xml info (or null).
+  function confirmDialog({ title, body, lock, action, onConfirm }) {
+    const blocked = lock && lock.recent;
+    openModal(`
+      <h2 style="color: var(--danger);">${esc(title)}</h2>
+      ${body}
+      ${lock ? `<p><b>This job has a lock file</b> — ${lockText(lock)}. ${blocked ? '<b>That is very recent, so PlanSwift probably has the job open. Close it in PlanSwift and try again.</b>' : 'Lock files are often left behind, but check that nobody has the job open.'}</p>` : ''}
+      <label style="display:block; margin:10px 0;"><input type="checkbox" id="push-ack"> I understand this writes directly into the live PlanSwift job, and I have confirmed that PlanSwift is closed on it.</label>
+      <p class="error" id="push-modal-error" style="display:none;"></p>
+      <div class="modal-actions">
+        <button type="button" id="push-modal-cancel">Cancel</button>
+        <button class="danger" type="button" id="push-modal-go" disabled>${esc(action)}</button>
+      </div>`);
+    const ack = document.getElementById('push-ack');
+    const go = document.getElementById('push-modal-go');
+    ack.addEventListener('change', () => { go.disabled = blocked || !ack.checked; });
+    document.getElementById('push-modal-cancel').addEventListener('click', closeModal);
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      try {
+        await onConfirm({ acknowledge: true, confirm_closed: true });
+        closeModal();
+      } catch (err) {
+        const e = document.getElementById('push-modal-error');
+        e.textContent = err.message;
+        e.style.display = 'block';
+        go.disabled = false;
+      }
+    });
+  }
+
+  function renderPlan(plan) {
+    const lines = [];
+    if (plan.problems.length) lines.push(`<p><b>Cannot send yet:</b>${list(plan.problems)}</p>`);
+    if (!plan.instances) {
+      lines.push('<p>Nothing to send — every take-off in this project is already in PlanSwift (or can\'t be sent, see below).</p>');
+    } else {
+      lines.push(`<p>Ready to add to <b>${esc(plan.job)}</b>:</p>
+        <ul style="margin:4px 0 0 18px;">
+          <li><b>${plan.new_items}</b> new take-off item(s), in a "From HammGrid" folder</li>
+          <li><b>${plan.existing_items}</b> existing PlanSwift item(s) getting new shapes</li>
+          <li><b>${plan.sections}</b> drawn shape(s) in total (${plan.instances} HammGrid take-off row(s))</li>
+        </ul>`);
+      lines.push(`<details style="margin-top:6px;"><summary class="muted">Show items</summary>${list(plan.items.map((i) => `${i.name} — ${i.type}, ${i.shapes} shape(s) on ${i.sheets.join(', ')}${i.target === 'new' ? ' (new item)' : ' (added to existing item)'}`))}${plan.new_items + plan.existing_items > plan.items.length ? '<p class="muted">…and more</p>' : ''}</details>`);
+    }
+    if (plan.skipped.length) lines.push(`<p class="muted">Not sent:${list(plan.skipped.map((s) => `${s.count} take-off row(s) ${s.reason}`))}</p>`);
+    if (plan.lock) lines.push(`<p class="muted">Lock file present on the job: ${lockText(plan.lock)}.</p>`);
+    if (plan.instances) lines.push('<div class="row" style="margin-top:8px;"><button class="danger" type="button" id="planswift-push-go-btn">Write to PlanSwift…</button><button type="button" id="planswift-push-cancel-btn">Cancel</button></div>');
+    else lines.push('<div class="row" style="margin-top:8px;"><button type="button" id="planswift-push-cancel-btn">Close</button></div>');
+    resultEl.innerHTML = lines.join('');
+    resultEl.style.display = '';
+    document.getElementById('planswift-push-cancel-btn').addEventListener('click', async () => {
+      try { await api('DELETE', `/api/imports/${importId}`); } catch (err) { /* best effort */ }
+      statusEl.textContent = '';
+      reset();
+    });
+    const go = document.getElementById('planswift-push-go-btn');
+    if (!go) return;
+    go.addEventListener('click', () => confirmDialog({
+      title: 'Write into the live PlanSwift job?',
+      body: `<p>This will create <b>${plan.sections}</b> new shape(s) and <b>${plan.new_items}</b> new item(s) directly in the PlanSwift job:</p>
+        <p class="muted">${esc(plan.job_path)}</p>
+        <ul style="margin:4px 0 8px 18px;">
+          <li>Make sure <b>nobody has this job open in PlanSwift</b>. If they do, they won't see the changes and could overwrite them.</li>
+          <li>Nothing that PlanSwift already wrote is changed or deleted. Only new folders are added.</li>
+          <li>PlanSwift users must close and reopen the job to see the new take-offs.</li>
+          <li>PlanSwift recalculates quantities itself; HammGrid formulas and item properties are not sent.</li>
+          <li>You can use "Undo last push" afterwards to remove exactly what was added.</li>
+        </ul>`,
+      lock: plan.lock,
+      action: 'Write to PlanSwift',
+      onConfirm: async (body) => {
+        statusEl.textContent = 'Writing…';
+        try {
+          const out = await api('POST', `/api/imports/${importId}/push`, body);
+          showToast(`Sent to PlanSwift: ${out.written.items} new item(s), ${out.written.sections} shape(s). Reopen the job in PlanSwift to see them.`, 'success');
+          statusEl.textContent = 'Done. Close and reopen the job in PlanSwift to see the new take-offs.';
+          reset();
+          showUndo({ status: 'applied' });
+        } catch (err) {
+          statusEl.textContent = `Failed: ${err.message}`;
+          throw err;
+        }
+      },
+    }));
+  }
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    resultEl.style.display = 'none';
+    statusEl.textContent = 'Starting…';
+    try {
+      ({ import_id: importId } = await api('POST', '/api/imports/push', { project_id: Number(projectId) }));
+      for (;;) {
+        const data = await api('GET', `/api/imports/${importId}`);
+        const imp = data.import;
+        if (imp.status === 'error' || imp.status === 'cancelled') throw new Error(imp.error || 'Cancelled');
+        if (imp.status === 'ready') {
+          statusEl.textContent = 'Compared with PlanSwift.';
+          renderPlan(data.push.plan);
+          return;
+        }
+        statusEl.textContent = imp.progress ? `Reading PlanSwift job… page ${imp.progress.current} of ${imp.progress.total}` : 'Reading PlanSwift job…';
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    } catch (err) {
+      statusEl.textContent = `Failed: ${err.message}`;
+      if (importId) { try { await api('DELETE', `/api/imports/${importId}`); } catch (e) { /* best effort */ } }
+      reset();
+    }
+  });
+
+  undoBtn.addEventListener('click', () => confirmDialog({
+    title: 'Undo the last push to PlanSwift?',
+    body: `<p>This removes exactly the folders the last push added to the PlanSwift job, and unlinks them in HammGrid (the take-offs stay in HammGrid). If anyone added something inside those folders in PlanSwift since, nothing is removed.</p>`,
+    lock: null,
+    action: 'Undo push',
+    onConfirm: async (body) => {
+      const out = await api('POST', '/api/imports/push-undo', { project_id: Number(projectId), confirm_closed: true });
+      showToast(`Removed ${out.undone.sections} shape(s) and ${out.undone.items} item(s) from PlanSwift.`, 'success');
+      statusEl.textContent = 'Undone.';
+      showUndo({ status: 'undone' });
+    },
+  }));
+}
+
 (async function init() {
   const me = await requireSession();
   if (!me) return;
@@ -281,10 +624,12 @@ document.getElementById('settings-form').addEventListener('submit', async (e) =>
   });
   await loadDetails();
   setupSheetLinkScan();
+  setupSearchIndex();
   await loadRevisions();
 
   if (me.role === 'admin') {
     document.getElementById('danger-zone').style.display = '';
     document.getElementById('delete-project-btn').addEventListener('click', openDeleteConfirm);
+    setupPlanswiftLink();
   }
 })();

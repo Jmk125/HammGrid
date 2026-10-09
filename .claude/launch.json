@@ -6,7 +6,8 @@
       "runtimeExecutable": "C:\\Users\\hc.62\\Documents\\Tools\\node\\node.exe",
       "runtimeArgs": ["src/server.js"],
       "port": 3000,
-      "autoPort": true
+      "autoPort": true,
+      "url": "https://localhost:3000"
     }
   ]
 }

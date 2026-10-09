@@ -1,10 +1,11 @@
 // Sheet/thumbnail/markup data lives here (IndexedDB for structured metadata,
-// OPFS for the binary PDF/WebP blobs) - not the HTTP cache - per CLAUDE.md's
-// offline requirements. This is what lets the thumbnail grid and sheet
-// viewer read with zero network in the path once synced.
+// OPFS for binary PDF/WebP blobs when available, with an IndexedDB blob
+// fallback for browsers/origins that do not expose OPFS) - not the HTTP cache.
+// This is what lets the thumbnail grid and sheet viewer read with zero
+// network in the path once synced.
 
 const DB_NAME = 'drawing-app';
-const DB_VERSION = 1;
+const DB_VERSION = 6;
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -14,6 +15,39 @@ function openDb() {
       if (!db.objectStoreNames.contains('sheets')) db.createObjectStore('sheets', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('markups')) db.createObjectStore('markups', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'name' });
+      // v3: the dashboard's project list itself was never cached anywhere -
+      // syncProject() only ever caches sheets/thumbnails/markups WITHIN a
+      // project you've already opened, so a device that goes offline before
+      // ever loading the dashboard online has no way to discover which
+      // projects even exist. See cacheProjectList/getCachedProjectList.
+      if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
+      // v4: take-off items/assemblies/instances were never cached either -
+      // same gap as v3's project list, one level down (the pane's tools
+      // silently showed nothing/stale data offline). Each row gets a
+      // synthetic project_id field at write time (items/assemblies already
+      // have one from the API; instances don't - sheet_id is what the
+      // server row actually has) so reads/reconciliation can scope by
+      // project without a second lookup, same trick the 'sheets' store
+      // already uses.
+      if (!db.objectStoreNames.contains('takeoff_items')) db.createObjectStore('takeoff_items', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('takeoff_assemblies')) db.createObjectStore('takeoff_assemblies', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('takeoff_instances')) db.createObjectStore('takeoff_instances', { keyPath: 'id' });
+      // v5: the RFI/submittal/photo library (documents.js/document-view.js)
+      // had zero offline support at all - not even the folder/document
+      // metadata, let alone the files themselves. Document files reuse the
+      // existing 'assets'/OPFS blob store (writeAssetFile etc.) rather than
+      // a new one - see getCachedDocumentAsset for the distinct key prefix
+      // that keeps them from colliding with sheet_versions' asset keys
+      // (separate auto-increment PKs that can easily land on the same
+      // number on a small project).
+      if (!db.objectStoreNames.contains('documents')) db.createObjectStore('documents', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('document_folders')) db.createObjectStore('document_folders', { keyPath: 'id' });
+      // v6: photos taken on a photo pin while offline (or on flaky trailer
+      // WiFi) - held here, blob and all, until photoOutbox.js can upload
+      // them. Unlike every other store this is the ONLY copy of the data,
+      // so nothing here is ever cleared by deleteCachedProject/re-sync.
+      if (!db.objectStoreNames.contains('photo_outbox')) db.createObjectStore('photo_outbox', { keyPath: 'id', autoIncrement: true });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -59,38 +93,74 @@ async function putMeta(db, key, value) {
 }
 
 async function opfsRoot() {
-  return navigator.storage.getDirectory();
-}
-
-async function writeOpfsFile(name, blob) {
-  const root = await opfsRoot();
-  const handle = await root.getFileHandle(name, { create: true });
-  const writable = await handle.createWritable();
-  await writable.write(blob);
-  await writable.close();
-}
-
-async function readOpfsFile(name) {
+  if (!navigator.storage || !navigator.storage.getDirectory) return null;
   try {
-    const root = await opfsRoot();
-    const handle = await root.getFileHandle(name);
-    return await handle.getFile();
+    return await navigator.storage.getDirectory();
   } catch (err) {
     return null;
   }
 }
 
-async function deleteOpfsFile(name) {
-  try {
-    const root = await opfsRoot();
-    await root.removeEntry(name);
-  } catch (err) {
-    // Missing files are already clean.
+async function writeAssetFile(name, blob) {
+  const root = await opfsRoot();
+  if (root) {
+    const handle = await root.getFileHandle(name, { create: true });
+    // Safari's OPFS implementation exposes getDirectory()/getFileHandle()
+    // (so opfsRoot() above succeeds) but does NOT implement
+    // createWritable() at all - only the synchronous access-handle API,
+    // which is worker-only and a much bigger redesign than this warrants.
+    // Chrome has always supported createWritable() (why this only ever
+    // showed up on the iPad, never on PC) - detect it explicitly and fall
+    // back to the IndexedDB blob store (below) rather than crash.
+    if (typeof handle.createWritable === 'function') {
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return;
+    }
+    // getFileHandle(create:true) above already created a real (empty) file
+    // as a side effect, regardless of whether createWritable exists - left
+    // in place, that empty file would poison every future read.
+    // readAssetFile tries OPFS first and only falls through to IndexedDB on
+    // an error, but an empty file IS a successful read (a valid, if
+    // pointless, zero-byte File) - it would never even look at IndexedDB,
+    // where the real blob is about to be written instead. Clean it up.
+    await root.removeEntry(name).catch(() => {});
   }
+  const db = await openDb();
+  await idbPut(db, 'assets', { name, blob });
+}
+
+async function readAssetFile(name) {
+  const root = await opfsRoot();
+  if (root) {
+    try {
+      const handle = await root.getFileHandle(name);
+      return await handle.getFile();
+    } catch (err) {
+      // Fall through to IndexedDB in case this asset was cached before OPFS was available.
+    }
+  }
+  const db = await openDb();
+  const row = await idbGet(db, 'assets', name);
+  return row ? row.blob : null;
+}
+
+async function deleteAssetFile(name) {
+  const root = await opfsRoot();
+  if (root) {
+    try {
+      await root.removeEntry(name);
+    } catch (err) {
+      // Missing files are already clean.
+    }
+  }
+  const db = await openDb();
+  await idbDelete(db, 'assets', name);
 }
 
 async function deleteVersionAssets(versionId) {
-  await Promise.all(['pdf', 'thumb', 'preview'].map((kind) => deleteOpfsFile(`v${versionId}_${kind}`)));
+  await Promise.all(['pdf', 'thumb', 'preview'].map((kind) => deleteAssetFile(`v${versionId}_${kind}`)));
 }
 
 export async function requestPersistentStorage() {
@@ -172,34 +242,132 @@ export async function syncProject(projectId, { onProgress } = {}) {
     const sheetsToDownload = data.sheets.filter((sheet) => !previouslyCachedVersionIds.has(sheet.current_version.id));
 
     let done = 0;
+    let failedCount = 0;
     if (onProgress && sheetsToDownload.length > 0) onProgress(done, sheetsToDownload.length);
     for (const sheet of sheetsToDownload) {
-      const cv = sheet.current_version;
-      const [pdfBlob, thumbBlob, previewBlob] = await Promise.all([
-        fetchBlob(cv.pdf_url),
-        fetchBlob(cv.thumb_url),
-        fetchBlob(cv.preview_url),
-      ]);
-      await writeOpfsFile(`v${cv.id}_pdf`, pdfBlob);
-      await writeOpfsFile(`v${cv.id}_thumb`, thumbBlob);
-      await writeOpfsFile(`v${cv.id}_preview`, previewBlob);
+      // Per-sheet isolation matters a lot here: this had none before, so
+      // one bad fetch (a transient network blip, a timeout on a large PDF)
+      // threw straight out of the whole loop and silently left every sheet
+      // AFTER it in the batch un-downloaded for the rest of this sync -
+      // easy to miss since opening a sheet individually still works fine
+      // while online (falls back to a live fetch), so nothing looked wrong
+      // until actually going offline. A sheet that fails here never gets an
+      // idbPut below, so it's naturally retried on the next sync (it won't
+      // be in cached_version_ids, so the server includes it again) without
+      // any special-cased retry logic needed.
+      try {
+        const cv = sheet.current_version;
+        const [pdfBlob, thumbBlob, previewBlob] = await Promise.all([
+          fetchBlob(cv.pdf_url),
+          fetchBlob(cv.thumb_url),
+          fetchBlob(cv.preview_url),
+        ]);
+        await writeAssetFile(`v${cv.id}_pdf`, pdfBlob);
+        await writeAssetFile(`v${cv.id}_thumb`, thumbBlob);
+        await writeAssetFile(`v${cv.id}_preview`, previewBlob);
 
-      await idbPut(db, 'sheets', {
-        id: `${projectId}:${sheet.id}`,
-        project_id: Number(projectId),
-        sheet_id: sheet.id,
-        sheet_number: sheet.sheet_number,
-        discipline: sheet.discipline,
-        current_version_id: cv.id,
-        current_revision_id: cv.revision_id,
-        current_title: cv.title,
-      });
+        await idbPut(db, 'sheets', {
+          id: `${projectId}:${sheet.id}`,
+          project_id: Number(projectId),
+          sheet_id: sheet.id,
+          sheet_number: sheet.sheet_number,
+          discipline: sheet.discipline,
+          current_version_id: cv.id,
+          current_revision_id: cv.revision_id,
+          current_title: cv.title,
+          scale_feet_per_inch: sheet.scale_feet_per_inch,
+          scale_zones: sheet.scale_zones || [],
+        });
+      } catch (err) {
+        failedCount += 1;
+      }
       done += 1;
       if (onProgress) onProgress(done, sheetsToDownload.length);
     }
 
     for (const m of data.markups) {
       await idbPut(db, 'markups', { ...m, project_id: Number(projectId) });
+    }
+
+    // Take-off items/assemblies/instances - separate endpoints, not part of
+    // the main sync payload above (see takeoffProjectInstances.routes.js's
+    // comment for why instances specifically needed a new project-wide
+    // route). Wrapped in its own try/catch, deliberately isolated from the
+    // rest of this function: these endpoints 403 for any user without
+    // can_takeoff (view-only/non-takeoff viewers are common and expected),
+    // and that must not fail the whole sync - sheets/markups already
+    // succeeded above and should still count as synced.
+    try {
+      const [itemsRes, assembliesRes, instancesRes] = await Promise.all([
+        fetch(`/api/projects/${projectId}/take-off-items`, { credentials: 'same-origin' }),
+        fetch(`/api/projects/${projectId}/take-off-assemblies`, { credentials: 'same-origin' }),
+        fetch(`/api/projects/${projectId}/take-off-instances`, { credentials: 'same-origin' }),
+      ]);
+      if (itemsRes.ok && assembliesRes.ok && instancesRes.ok) {
+        const [{ items }, { assemblies }, { instances }] = await Promise.all([
+          itemsRes.json(),
+          assembliesRes.json(),
+          instancesRes.json(),
+        ]);
+        await cacheTakeoffItems(projectId, items);
+        await cacheTakeoffAssemblies(projectId, assemblies);
+        await cacheTakeoffInstances(projectId, instances);
+      }
+    } catch (err) {
+      // Take-off caching is best-effort - sheets/markups syncing
+      // successfully is the part that must not be undermined by this.
+    }
+
+    // Flags list - best-effort like the take-offs above, so the Flags page
+    // has something to show offline (see flags.js).
+    try {
+      const flagsRes = await fetch(`/api/projects/${projectId}/flags`, { credentials: 'same-origin' });
+      if (flagsRes.ok) await cacheFlags(projectId, (await flagsRes.json()).flags);
+    } catch (err) {
+      // Flags caching is best-effort.
+    }
+
+    // Documents (RFI/submittal/photo library) - same "best-effort, isolated
+    // failure" treatment as take-offs above, though these endpoints don't
+    // 403 for anyone with requireAuth - isolating this is still right in
+    // case of a transient failure fetching/downloading a large photo
+    // library specifically.
+    try {
+      const previousDocs = await getCachedDocuments(projectId);
+      const previousDocVersionIds = new Set(previousDocs.map((d) => d.current_version_id).filter(Boolean));
+
+      const [foldersRes, docsRes] = await Promise.all([
+        fetch(`/api/projects/${projectId}/documents/folders`, { credentials: 'same-origin' }),
+        fetch(`/api/projects/${projectId}/documents`, { credentials: 'same-origin' }),
+      ]);
+      if (foldersRes.ok && docsRes.ok) {
+        const [{ folders: docFolders }, { documents: docs }] = await Promise.all([foldersRes.json(), docsRes.json()]);
+        await cacheDocumentFolders(projectId, docFolders);
+        await cacheDocuments(projectId, docs);
+
+        const docsToDownload = docs.filter((d) => d.current_version_id && !previousDocVersionIds.has(d.current_version_id));
+        for (const doc of docsToDownload) {
+          try {
+            const fileBlob = await fetchBlob(`/api/document-versions/${doc.current_version_id}/pdf`);
+            await writeAssetFile(documentAssetKey(doc.current_version_id), fileBlob);
+          } catch (err) {
+            // One bad document file shouldn't abort the rest of the batch -
+            // same reasoning as sheets failing loudly enough to surface in
+            // the sync-status text (fetchBlob already throws on a non-ok
+            // response) without corrupting what's already cached.
+          }
+        }
+
+        // Clean up asset blobs no longer referenced by any current document
+        // (deleted document, or a new version superseding the cached one) -
+        // same two-pass reasoning as the sheets cleanup below.
+        const currentDocVersionIds = new Set(docs.map((d) => d.current_version_id).filter(Boolean));
+        for (const oldVersionId of previousDocVersionIds) {
+          if (!currentDocVersionIds.has(oldVersionId)) await deleteAssetFile(documentAssetKey(oldVersionId));
+        }
+      }
+    } catch (err) {
+      // Document caching is best-effort - see the take-offs comment above.
     }
 
     const currentSheetIds = new Set((data.current_sheet_ids || []).map((id) => Number(id)));
@@ -218,7 +386,12 @@ export async function syncProject(projectId, { onProgress } = {}) {
 
     await putMeta(db, cursorKey, data.since);
     await putMeta(db, stateKey, { status: 'synced', last_success_at: new Date().toISOString(), since: data.since });
-    return { sheetCount: sheetsToDownload.length, markupCount: data.markups.length, since: data.since };
+    return {
+      sheetCount: sheetsToDownload.length - failedCount,
+      failedSheetCount: failedCount,
+      markupCount: data.markups.length,
+      since: data.since,
+    };
   } catch (err) {
     await putMeta(db, stateKey, { status: 'error', last_error_at: new Date().toISOString(), message: err.message });
     throw err;
@@ -253,6 +426,8 @@ export async function deleteCachedProject(projectId) {
   await Promise.all([
     idbDelete(db, 'meta', `sync-cursor:${projectId}`),
     idbDelete(db, 'meta', `sync-state:${projectId}`),
+    idbDelete(db, 'meta', `project-created-at:${projectId}`),
+    idbDelete(db, 'meta', `flags:${projectId}`),
   ]);
 }
 
@@ -276,6 +451,14 @@ export async function getProjectSyncInfo(projectId, project = {}) {
   const state = stateRow ? stateRow.value : null;
   let status = 'not-synced';
   if (state && state.status === 'syncing') status = 'syncing';
+  // state is overwritten on every attempt (see syncProject's try/catch), so
+  // 'error' here always means the MOST RECENT attempt failed - regardless
+  // of whether an earlier attempt (reflected in lastSync) ever succeeded.
+  // Surfacing this distinctly (not just falling through to the generic
+  // not-synced/needs-sync text below) is what actually makes a real
+  // failure diagnosable from the UI instead of looking identical to
+  // "just hasn't synced yet".
+  else if (state && state.status === 'error') status = 'error';
   else if (currentSheetCount === 0) status = 'empty';
   else if (!lastSync || cachedSheetCount === 0) status = 'not-synced';
   else if (latestPublished && lastSync < latestPublished) status = 'needs-sync';
@@ -286,5 +469,58 @@ export async function getProjectSyncInfo(projectId, project = {}) {
 
 // kind: 'pdf' | 'thumb' | 'preview'. Returns a File (Blob) or null if not cached.
 export async function getCachedAsset(versionId, kind) {
-  return readOpfsFile(`v${versionId}_${kind}`);
+  return readAssetFile(`v${versionId}_${kind}`);
+}
+
+// Distinct 'docv' prefix, not 'v' - sheet_versions.id and document_versions.id
+// are separate auto-increment PKs that can easily collide on a small
+// project, and both would otherwise land in the same 'assets'/OPFS store.
+// One blob per document version (unlike sheets' pdf/thumb/preview trio) -
+// the document store has no separate pre-generated thumbnail, the "thumb"
+// shown in documents.js's table for a photo document is just this same
+// file (see documents.js's is_image thumbnail rendering).
+function documentAssetKey(versionId) {
+  return `docv${versionId}`;
+}
+
+export async function getCachedDocumentAsset(versionId) {
+  return readAssetFile(documentAssetKey(versionId));
+}
+
+// ---------- Photo outbox (see photoOutbox.js) ----------
+export async function addOutboxPhoto(entry) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('photo_outbox', 'readwrite');
+    const req = tx.objectStore('photo_outbox').add(entry);
+    tx.oncomplete = () => resolve(req.result);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// Oldest first (autoIncrement ids) - upload order matters, since a pin's
+// first queued photo creates the document the later ones get added to.
+export async function getOutboxPhotos() {
+  const db = await openDb();
+  const all = await idbGetAll(db, 'photo_outbox');
+  return all.sort((a, b) => a.id - b.id);
+}
+
+export async function putOutboxPhoto(entry) {
+  const db = await openDb();
+  await idbPut(db, 'photo_outbox', entry);
+}
+
+export async function deleteOutboxPhoto(id) {
+  const db = await openDb();
+  await idbDelete(db, 'photo_outbox', id);
+}
+
+// Keeps the offline copy of one markup current after the outbox creates or
+// links it, so it doesn't vanish (or show stale) if the device goes offline
+// again before the next full sync.
+export async function cacheMarkup(projectId, markup) {
+  if (!markup || !markup.sheet_id) return;
+  const db = await openDb();
+  await idbPut(db, 'markups', { ...markup, project_id: Number(projectId) });
 }

@@ -1,8 +1,11 @@
 const express = require('express');
 const fs = require('fs');
+const path = require('path');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { streamFile } = require('../lib/streamFile');
+const { mimeForPath } = require('../lib/documentFileTypes');
+const { sendThumbOrOriginal, removeThumb } = require('../lib/documentThumbs');
 
 const router = express.Router();
 
@@ -26,7 +29,7 @@ router.get('/:id/download', requireAuth, (req, res) => {
     .prepare(`SELECT d.name, dv.pdf_path AS p FROM documents d JOIN document_versions dv ON dv.id = d.current_version_id WHERE d.id = ?`)
     .get(req.params.id);
   if (!row || !row.p) return res.status(404).end();
-  res.download(row.p, `${row.name || 'document'}.pdf`);
+  res.download(row.p, `${row.name || 'document'}${path.extname(row.p)}`);
 });
 
 router.get('/:id/pdf', requireAuth, (req, res) => {
@@ -38,7 +41,21 @@ router.get('/:id/pdf', requireAuth, (req, res) => {
     )
     .get(req.params.id);
   if (!row || !row.p) return res.status(404).end();
-  streamFile(res, row.p, 'application/pdf');
+  streamFile(res, row.p, mimeForPath(row.p));
+});
+
+// Small pre-generated thumbnail for a photo (see lib/documentThumbs.js) -
+// falls back to the full file while it's still being generated.
+router.get('/:id/thumb', requireAuth, (req, res) => {
+  const row = db
+    .prepare(
+      `SELECT dv.pdf_path AS p FROM documents d
+       JOIN document_versions dv ON dv.id = d.current_version_id
+       WHERE d.id = ?`
+    )
+    .get(req.params.id);
+  if (!row || !row.p) return res.status(404).end();
+  sendThumbOrOriginal(res, row.p);
 });
 
 router.patch('/:id', requireRole('admin', 'editor'), (req, res) => {
@@ -73,6 +90,7 @@ router.delete('/:id', requireRole('admin', 'editor'), (req, res) => {
   db.prepare('DELETE FROM documents WHERE id = ?').run(document.id);
   for (const p of paths) {
     if (p.pdf_path) fs.rm(p.pdf_path, { force: true }, () => {});
+    removeThumb(p.pdf_path);
   }
   res.json({ ok: true });
 });
@@ -91,7 +109,7 @@ router.get('/:id/links', requireAuth, (req, res) => {
        JOIN sheets s ON s.id = m.sheet_id
        WHERE m.linked_document_id = ?
        GROUP BY s.id
-       ORDER BY s.sheet_number`
+       ORDER BY natsort_key(s.sheet_number)`
     )
     .all(document.id);
   res.json({ sheets });

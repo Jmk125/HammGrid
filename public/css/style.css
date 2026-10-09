@@ -15,6 +15,65 @@
   --sidebar-w: 220px;
 }
 
+/* "Light" keeps the same light body but drops the navy chrome for an all-
+   bright look; "Dark" flips body/surface/text. Both leave the small set of
+   permanently-dark HUD chrome (topbar's own overlay badges, toasts, the
+   canvas-surround in sheet/document viewers) alone - those float over the
+   drawing itself rather than being part of the themed document UI, so they
+   stay dark regardless, same as e.g. Figma's toolbar in light mode. */
+:root[data-theme="light"] {
+  --navy: #f7f8fa;
+  --navy-dark: #eceff3;
+  --bg: #ffffff;
+  --surface: #ffffff;
+}
+:root[data-theme="light"] .topbar,
+:root[data-theme="light"] .selection-bar {
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+:root[data-theme="light"] .topbar .row,
+:root[data-theme="light"] .topbar .brand,
+:root[data-theme="light"] .selection-bar { color: var(--text); }
+:root[data-theme="light"] .topbar .muted,
+:root[data-theme="light"] .selection-bar .muted { color: var(--muted); }
+:root[data-theme="light"] .topbar button,
+:root[data-theme="light"] .selection-bar button,
+:root[data-theme="light"] .selection-bar .chip-toggle {
+  color: var(--text);
+  border-color: var(--border);
+}
+:root[data-theme="light"] .topbar button:hover { background: var(--bg); }
+:root[data-theme="light"] .topbar button.icon-btn { background: var(--bg); color: var(--text); }
+:root[data-theme="light"] .topbar button.icon-btn:hover { background: var(--border); }
+:root[data-theme="light"] .topbar button.primary,
+:root[data-theme="light"] .selection-bar .chip-toggle.checked { color: #fff; }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --navy: #0a1119;
+  --navy-dark: #050a10;
+  --border: #2c3644;
+  --bg: #12181f;
+  --surface: #1b232c;
+  --text: #e6e9ee;
+  --muted: #9099a8;
+  --accent: #3b82f6;
+  --accent-light: #16233a;
+  --danger: #f87171;
+  --warn-bg: #4a3b13;
+  --ok: #4ade80;
+}
+
+/* Per-account "dark drawing canvas" preference - separate from the theme
+   above, so it can be black-bg/white-lines even under the default/light
+   theme. Only #pdf-canvas (the PDF.js-rendered sheet raster) is inverted;
+   the SVG markup layer sits on top with its own user-chosen colors and
+   would look wrong flipped along with it. */
+:root[data-canvas-invert="1"] #pdf-canvas {
+  filter: invert(1) hue-rotate(180deg);
+}
+
 * { box-sizing: border-box; }
 
 body {
@@ -23,6 +82,11 @@ body {
   background: var(--bg);
   color: var(--text);
 }
+
+/* Sheet viewer: the page itself never scrolls - only .pane-body does. This
+   keeps the version badge and nav arrows on-screen no matter how long the
+   takeoffs list in the right pane gets. */
+body.sheet-page { height: 100vh; overflow: hidden; }
 
 a { color: var(--accent); }
 
@@ -75,6 +139,42 @@ a { color: var(--accent); }
 .topbar .sheet-label .num { font-weight: 700; font-size: 15px; }
 .topbar .sheet-label .title { color: #b8c4d4; font-size: 13px; }
 
+.user-menu { position: relative; display: inline-flex; }
+.user-menu #user-menu-btn { display: flex; align-items: center; gap: 4px; }
+.user-menu .chevron { font-size: 10px; }
+.user-menu-dropdown {
+  position: absolute;
+  top: 38px;
+  right: 0;
+  z-index: 30;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.user-menu-role {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: capitalize;
+  border-bottom: 1px solid var(--border);
+}
+.user-menu-dropdown button {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 9px 12px;
+  width: 100%;
+}
+.user-menu-dropdown button:hover { background: var(--bg); }
+
 .sheet-history-wrap { position: relative; display: inline-flex; }
 .sheet-history-menu {
   position: absolute;
@@ -119,8 +219,15 @@ a { color: var(--accent); }
 .sync-pill.syncing { background: #dbeafe; color: #1d4ed8; }
 .sync-pill.needs-sync, .sync-pill.not-synced { background: var(--warn-bg); color: #7a5b06; }
 .sync-pill.empty { background: #f3f4f6; color: var(--muted); }
+/* Carries the actual error message (see syncLabel in viewer.js), which can
+   run long - let it wrap instead of overflowing the pill's fixed nowrap
+   shape like every other (short, fixed-text) state uses. */
+.sync-pill.error { background: #fee2e2; color: #991b1b; white-space: normal; text-align: left; }
 .topbar .network-indicator { border: 1px solid rgba(255,255,255,0.25); }
-.project-card .sync-pill { margin-top: 8px; align-self: flex-start; }
+.project-card .card-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.project-card .card-archive-btn { padding: 3px 10px; font-size: 12px; }
+.dashboard-heading { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; }
+.dashboard-heading h1 { margin: 0; }
 .project-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 /* ---------- App shell (sidebar + content) ---------- */
@@ -201,7 +308,7 @@ button {
   padding: 8px 14px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
@@ -215,7 +322,7 @@ a.view-btn {
   padding: 8px 14px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--surface);
   color: var(--text);
   text-decoration: none;
   cursor: pointer;
@@ -345,14 +452,14 @@ tr.ignored td { opacity: 0.5; }
 .sheet-card .thumb-wrap {
   overflow: hidden;
   border-radius: 6px 6px 0 0;
-  background: #f0f0f0;
+  background: var(--bg);
 }
 .sheet-card img {
   width: 100%;
   display: block;
   aspect-ratio: 4/3;
   object-fit: contain;
-  background: #f0f0f0;
+  background: var(--bg);
 }
 .sheet-card:hover {
   z-index: 5;
@@ -363,6 +470,13 @@ tr.ignored td { opacity: 0.5; }
 .sheet-card .meta { padding: 6px 8px; }
 .sheet-card .sheet-number { font-weight: 700; font-size: 13px; }
 .sheet-card .sheet-title { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Combined view only (see viewer.js) - which of the several merged projects
+   this sheet actually belongs to, since sheet numbers can collide across
+   separate projects for the same district. */
+.sheet-card .sheet-project-badge {
+  font-size: 10px; color: var(--accent); font-weight: 600; margin-top: 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 .sheet-card.selectable { cursor: pointer; }
 .sheet-card.selectable:hover { transform: none; box-shadow: 0 4px 14px rgba(15,43,70,0.15); }
@@ -405,9 +519,42 @@ tr.ignored td { opacity: 0.5; }
   box-shadow: 0 12px 32px rgba(0,0,0,0.3);
 }
 .selection-bar .muted { color: #b8c4d4; }
+
+/* #takeoff-toolbar reuses .selection-bar's look, but unlike the grid's
+   download bar it floats directly over the drawing canvas (there's no free
+   strip below the canvas to dock it in - the canvas fills the full
+   remaining viewport height). Left solid, its background would swallow any
+   right-click-drag pan attempt that happens to start under it. Punching
+   pointer-events back through everywhere except the actual controls lets a
+   drag starting in the bar's padding/gaps fall through to the canvas
+   underneath, while every button/checkbox stays fully clickable. */
+#takeoff-toolbar { pointer-events: none; }
+#takeoff-toolbar > * { pointer-events: auto; }
+/* Full-width, square-cornered strip along the bottom of the drawing area,
+   items left-aligned. left/width are synced to #zoom-wrap's rect by
+   positionTakeoffToolbar in sheet.js (the sidebar shifts the drawing area),
+   these are just the fallback. */
+#takeoff-toolbar {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  transform: none;
+  border-radius: 0;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 5px 12px;
+  box-shadow: 0 -4px 14px rgba(0,0,0,0.25);
+}
+/* Name must not stretch to fill the strip, or it shoves everything else right. */
+#takeoff-toolbar .takeoff-item-actions-name { flex: 0 1 auto; max-width: 320px; }
+#takeoff-toolbar .chip-toggle { padding: 4px 12px; }
+#takeoff-toolbar button { padding-top: 4px; padding-bottom: 4px; }
 .selection-bar button { border-color: rgba(255,255,255,0.35); background: transparent; color: #fff; }
 .selection-bar button.primary { background: var(--accent); border-color: var(--accent); }
 .selection-bar button:hover:not(:disabled):not(.primary) { background: rgba(255,255,255,0.1); }
+/* "Go to item in take-offs" - same box-with-arrow glyph as .pane-popout-btn. */
+.selection-bar .takeoff-goto-btn { display: inline-flex; align-items: center; justify-content: center; padding: 6px 8px; }
+.selection-bar .takeoff-goto-btn svg { width: 16px; height: 16px; display: block; }
 
 /* ---------- Chip toggle: app-styled checkbox, used anywhere a native
    checkbox would otherwise look like raw HTML (select-all, overlay layer
@@ -461,12 +608,13 @@ tr.ignored td { opacity: 0.5; }
   text-decoration: none;
   color: var(--text);
   display: block;
+  position: relative;
   transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
 .project-card:hover { box-shadow: 0 8px 20px rgba(15,43,70,0.15); transform: translateY(-2px); }
 .project-card .thumb-wrap {
   aspect-ratio: 16/10;
-  background: linear-gradient(135deg, #eef1f5, #dde3ea);
+  background: linear-gradient(135deg, var(--bg), var(--border));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -477,6 +625,33 @@ tr.ignored td { opacity: 0.5; }
 .project-card .body { padding: 12px 14px; }
 .project-card .project-name { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
 .project-card .project-meta { font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+/* "View Multiple" selection mode (see dashboard.js) - same checkbox-overlay
+   treatment as .sheet-card's (see above), reused verbatim so a second visual
+   language doesn't need inventing for the same interaction on this page. */
+.project-card.selectable { cursor: pointer; }
+.project-card.selectable:hover { transform: none; box-shadow: 0 4px 14px rgba(15,43,70,0.15); }
+.project-card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+.project-card .card-checkbox {
+  position: absolute;
+  top: 8px; left: 8px;
+  z-index: 6;
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.92);
+  border: 1.5px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.project-card .card-checkbox input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; }
+.project-card .card-checkbox .checkmark { width: 12px; height: 12px; }
+.project-card.selected .card-checkbox { background: var(--accent); border-color: var(--accent); }
+.project-card.selected .card-checkbox .checkmark {
+  border-right: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  width: 6px; height: 11px;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
 
 /* ---------- Modal ---------- */
 .modal-backdrop {
@@ -498,9 +673,110 @@ tr.ignored td { opacity: 0.5; }
 .modal h2 { margin-top: 0; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
+/* fragmentPicker.js's crop/mask step needs real room to see the drawing -
+   :has() lets this one modal opt into a wider layout without a className
+   param on the shared openModal() helper. */
+.modal:has(h2.fragment-picker) { width: 900px; }
+/* No max-height/overflow here - the svg overlay is sized to 100% of this
+   wrap (see below), so if this wrap were shorter than the canvas's actual
+   rendered height (e.g. via its own overflow:auto scroll), the svg would
+   only cover the clipped visible portion and every click coordinate would
+   come out wrong for anything below the fold. The outer .modal already
+   scrolls (overflow-y:auto) if a tall/narrow source sheet makes this wrap
+   taller than the viewport, so nothing is lost by not double-scrolling. */
+.fragment-picker-canvas-wrap {
+  position: relative;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.fragment-picker-canvas-wrap canvas { display: block; width: 100%; height: auto; }
+.fragment-picker-canvas-wrap svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; }
+
+.settings-radio-group { display: flex; gap: 16px; flex-wrap: wrap; }
+.settings-radio, .settings-checkbox { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; max-width: 420px; }
 .field input, .field select { width: 100%; }
 .field label { font-size: 13px; font-weight: 600; color: var(--muted); }
+
+/* ---------- Take-off "Advanced" properties/formula UI (setupAdvancedFields
+   in takeoffAdvancedFields.js) - shared by item creation/edit and the
+   Templates tab's template modal. ---------- */
+.takeoff-advanced-toggle {
+  background: none; border: none; padding: 4px 0; margin-bottom: 8px;
+  color: var(--accent); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.takeoff-advanced-body { display: flex; flex-direction: column; gap: 4px; }
+.takeoff-property-row {
+  display: grid; grid-template-columns: 1fr 100px auto;
+  gap: 6px; align-items: center; margin-bottom: 6px;
+}
+.takeoff-property-row input { width: 100%; }
+.takeoff-advanced-add-btn { width: 100%; margin-bottom: 12px; }
+.takeoff-formula-hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.takeoff-formula-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.takeoff-formula-chip {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; font-family: monospace; color: var(--text); cursor: pointer;
+}
+.takeoff-formula-chip:hover { background: var(--accent-light); }
+.flags-tag-chip {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; color: var(--text); white-space: nowrap;
+  display: inline-block; margin: 2px 4px 2px 0;
+}
+.takeoff-name-preview { font-size: 12px; margin-top: 2px; }
+
+.takeoff-folder-header-row td {
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  background: var(--bg);
+  padding-top: 10px;
+}
+/* A colspan'd <td> loses its spanned-width calculation if display:flex is
+   set directly on it (the browser falls back to shrink-to-fit) - the flex
+   row has to live on an inner wrapper instead. */
+.takeoff-folder-header-row-inner { display: flex; justify-content: space-between; align-items: center; }
+.takeoff-folder-toggle { cursor: pointer; user-select: none; }
+.takeoff-folder-toggle:hover { color: var(--text); }
+.takeoff-folder-delete-btn, .takeoff-folder-add-sub-btn { font-size: 13px; text-transform: none; letter-spacing: normal; }
+
+/* "Go to Item in Take-offs" (sheet.js's take-off right-click menu) lands
+   here and scrolls this row into view - stays on (not a fade-out flash) so
+   it's still easy to spot after scrolling/searching around a list that can
+   run into the hundreds. */
+.takeoff-row-highlighted { background: var(--accent-light); box-shadow: inset 3px 0 0 var(--accent); }
+
+.takeoff-totals-row td { border-top: 2px solid var(--border); }
+
+#takeoff-tooltip {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  background: var(--navy);
+  color: #fff;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.3);
+  white-space: nowrap;
+}
+
+/* ---------- "From Template" picker (sheet.js) ---------- */
+.takeoff-template-picker-list { max-height: 320px; overflow-y: auto; margin: 10px 0; }
+.takeoff-template-picker-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  padding: 8px 4px; text-align: left; cursor: pointer; font-size: 14px;
+}
+.takeoff-template-picker-row:hover { background: var(--bg); }
+.takeoff-template-picker-name { flex: 1; }
 
 /* Multi-column responsive form layout - each child is expected to be a
    .field (or similar label+control pair), unlike .row which is for loose
@@ -520,6 +796,15 @@ tr.ignored td { opacity: 0.5; }
    aligned with the row". display:block removes it from that text flow so
    the cell's vertical-align:middle can center it properly. */
 .doc-icon { display: block; width: 18px; height: 18px; flex-shrink: 0; color: var(--muted); }
+/* Bigger than the plain file/folder icons (18px) - enough to actually
+   recognize the photo, not just tell "this row has an image". Overrides
+   .doc-icon's width/height since both classes are set together in markup.
+   Was 48px, but combined with td's default 8px padding that made photo
+   rows ~64px tall against ~36px for every other row - visibly "broke" the
+   table's rhythm. 32px + the tighter padding below lands much closer to a
+   normal row while still being a real upgrade over the 18px icon. */
+.doc-thumb { width: 32px; height: 32px; object-fit: cover; border-radius: 4px; background: var(--border); }
+td:has(> .doc-thumb) { padding-top: 4px; padding-bottom: 4px; }
 /* Icon and name live in separate <td>s (not one flex-wrapped cell), so this
    must NOT set display:flex - that overrides the cell's display:table-cell,
    which breaks its normal box model (borders/height hug the flex content
@@ -546,6 +831,26 @@ tr.doc-row-folder .doc-icon { color: #d4a537; }
 }
 .doc-dropzone.drag-active .doc-dropzone-hint { display: flex; }
 tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline: 2px dashed var(--accent); outline-offset: -2px; }
+tr.doc-selected { background: var(--accent-light); }
+
+/* Thumbnail view (documents.js renderGrid) - big enough to actually tell
+   photos apart on an iPad. */
+.doc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; padding: 4px; }
+.doc-card { position: relative; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; display: flex; flex-direction: column; }
+.doc-card.doc-selected { outline: 3px solid var(--accent); outline-offset: -1px; }
+.doc-card.drag-target-folder { background: var(--accent-light); outline: 2px dashed var(--accent); outline-offset: -2px; }
+.doc-card-thumb { display: flex; align-items: center; justify-content: center; aspect-ratio: 4 / 3; background: var(--border); color: var(--muted); }
+.doc-card-thumb .doc-icon { width: 56px; height: 56px; }
+.doc-card-folder .doc-card-thumb { background: transparent; }
+.doc-card-folder .doc-icon { color: #d4a537; width: 72px; height: 72px; }
+.doc-card-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.doc-card-name { padding: 6px 8px 2px; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.doc-card-sub { padding: 0 8px 6px; font-size: 12px; color: var(--muted); }
+.doc-card-name:last-child { padding-bottom: 8px; }
+.doc-card-check { position: absolute; top: 6px; left: 6px; background: var(--surface); border-radius: 4px; padding: 4px; line-height: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.doc-card-check input { width: 20px; height: 20px; margin: 0; }
+.doc-card-delete { position: absolute; top: 6px; right: 6px; background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.doc-select { width: 18px; height: 18px; }
 
 .row-delete-icon-btn { background: transparent; border: none; color: var(--danger); padding: 4px; border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; }
 .row-delete-icon-btn:hover { background: rgba(220,38,38,0.12); }
@@ -561,6 +866,20 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .doc-picker-row.current { background: var(--accent-light); font-weight: 600; }
 .doc-picker-icon { width: 16px; height: 16px; flex-shrink: 0; color: var(--muted); }
 .doc-picker-row.folder .doc-picker-icon { color: #d4a537; }
+.doc-picker-thumb { width: 32px; height: 32px; object-fit: cover; border-radius: 4px; flex-shrink: 0; background: var(--border); }
+/* Thumbnail view inside the Link doc picker (docPicker.js) - the modal
+   widens so the cards are big enough to recognize a photo. */
+.modal.modal-wide { width: 680px; }
+.doc-picker-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); max-height: 55vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.doc-picker-grid .doc-picker-row { padding: 0; gap: 0; border-bottom: 1px solid var(--border); align-items: stretch; }
+.doc-picker-grid .doc-card-thumb .doc-picker-icon { width: 48px; height: 48px; }
+.doc-picker-grid .doc-card-folder .doc-picker-icon { width: 64px; height: 64px; }
+.doc-picker-grid .doc-picker-row:hover { background: var(--accent-light); }
+/* Multi-select (photo pins) - see docPicker.js's `multiple` option. */
+.doc-picker-check { width: 18px; height: 18px; margin: 0; flex-shrink: 0; pointer-events: none; }
+.doc-picker-row.picked { background: var(--accent-light); }
+.doc-picker-grid .doc-picker-row.picked { outline: 3px solid var(--accent); outline-offset: -1px; }
+.doc-picker-row.disabled { opacity: 0.45; cursor: not-allowed; }
 
 .pdf-viewer-wrap { text-align: center; background: #525659; padding: 16px; border-radius: 8px; }
 .pdf-viewer-wrap canvas { max-width: 100%; box-shadow: 0 2px 10px rgba(0,0,0,0.4); }
@@ -568,6 +887,12 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .markup-stage { position: relative; display: inline-block; }
 .markup-stage canvas { display: block; }
 .markup-stage svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+/* Composite "Edit Layout" mode: fragments dragged past the current
+   (last-flattened) page bounds must stay visible instead of clipping at the
+   SVG's own viewBox rect - see the editLayoutMode comment in sheet.js. The
+   zoomable ancestor (.zoom-wrap) still clips to the actual screen viewport,
+   so this only removes the artificial page-bounds clip, not real scrolling. */
+#markup-svg.composite-edit-active { overflow: visible; }
 #sheet-link-layer { pointer-events: none; }
 #sheet-link-layer .sheet-link-hotspot {
   fill: rgba(37, 99, 235, 0.16);
@@ -577,6 +902,400 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   pointer-events: auto;
 }
 #sheet-link-layer .sheet-link-hotspot:hover { fill: rgba(37, 99, 235, 0.28); }
+
+#search-highlight-layer { pointer-events: none; }
+#search-highlight-layer .search-highlight-rect {
+  fill: rgba(250, 204, 21, 0.55);
+  stroke: rgba(202, 138, 4, 0.9);
+  stroke-width: 1;
+}
+/* The currently-cycled-to match (document-view.js's find-in-document) reads
+   distinctly from the rest so "next/previous" is obviously doing something. */
+#search-highlight-layer .search-highlight-current {
+  fill: rgba(249, 115, 22, 0.65);
+  stroke: rgba(194, 65, 12, 0.95);
+  stroke-width: 2;
+}
+
+.doc-search-bar {
+  position: absolute;
+  top: 10px; right: 10px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(15,43,70,0.9);
+  border-radius: 6px;
+  padding: 5px 6px;
+}
+.doc-search-bar input {
+  border: none;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 13px;
+  width: 160px;
+}
+.doc-search-bar button {
+  background: transparent;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 5px 8px;
+}
+.doc-search-bar button:hover:not(:disabled) { background: rgba(255,255,255,0.15); }
+.doc-search-bar button:disabled { opacity: 0.35; cursor: default; }
+.doc-search-bar .doc-search-count { color: #fff; font-size: 12px; white-space: nowrap; min-width: 44px; text-align: center; }
+
+.search-term-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(250, 204, 21, 0.25);
+  border: 1px solid rgba(202, 138, 4, 0.5);
+  font-size: 0.85em;
+}
+.search-term-chip button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 1.1em;
+  line-height: 1;
+  padding: 0;
+  color: inherit;
+}
+
+#takeoff-instances-layer, #takeoff-draft-layer { pointer-events: none; }
+#takeoff-instances-layer.edit-enabled { pointer-events: auto; }
+#takeoff-edit-layer circle { cursor: pointer; }
+
+/* Scale zones - purely a reference overlay, never selectable/draggable on
+   the canvas (see sheet.js's openScaleZonesModal comment). */
+#scale-zone-layer, #scale-zone-draft-layer { pointer-events: none; }
+
+/* Assembly box-draw live preview - same read-only-overlay treatment. */
+#assembly-draft-layer { pointer-events: none; }
+
+.takeoff-assembly-row { border-left: 2px solid var(--border); }
+.takeoff-assembly-row.active { border-left-color: #2563eb; }
+.assembly-link-row label { font-size: 0.85em; }
+
+#takeoff-context-menu {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+  min-width: 160px;
+}
+#takeoff-context-menu button {
+  border: none;
+  background: none;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+#takeoff-context-menu button:hover { background: var(--accent-light); }
+
+.takeoff-color-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.takeoff-search-input { width: 100%; box-sizing: border-box; }
+.takeoff-items-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.takeoff-item-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.takeoff-item-row:hover { background: var(--accent-light); }
+.takeoff-item-row.active { background: var(--accent-light); font-weight: 600; }
+.takeoff-item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+.takeoff-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.takeoff-item-total { font-size: 0.85em; white-space: nowrap; }
+.takeoff-row-hide-btn { flex: 0 0 auto; font-size: 0.9em; }
+.takeoff-row-activate-btn { flex: 0 0 auto; font-size: 0.85em; color: #16a34a; }
+.takeoff-item-row.takeoff-hidden-item { opacity: 0.45; }
+.takeoff-hide-all-btn { margin-top: 6px; }
+
+/* Take-off legend overlay (sheet.js's foreignObject inside #markup-svg) -
+   hardcoded light colors rather than the theme's --surface/--text tokens:
+   this box is meant to look like a print legend sitting on the drawing
+   itself, not a themed piece of app UI, so it stays the same in dark mode
+   too (same reasoning as the topbar/selection-bar's permanently-dark HUD
+   chrome, just inverted - see style.css's top-of-file comment). */
+.takeoff-legend-box {
+  position: relative;
+  width: 100%; height: 100%; box-sizing: border-box;
+  display: flex; flex-direction: column;
+  background: rgba(255,255,255,0.92);
+  border: 1px solid #333;
+  border-radius: 4px;
+  overflow: hidden;
+  font-family: inherit;
+  color: #1a1a1a;
+  /* Establishes the containment context `cqw` below measures against, so
+     text size tracks the BOX'S OWN width - drag it wider and the font
+     grows, independent of how many items are in it (that's what height/row
+     count controls instead). annotate_pdf.py's draw_legend uses the same
+     ratio (its FONT_RATIO) against the box's actual PDF-point width, so the
+     exported legend scales the same way the on-screen preview does. */
+  container-type: inline-size;
+}
+.takeoff-legend-handle {
+  flex: 0 0 auto;
+  padding: 0.3em 0.6em;
+  /* No upper bound - only a floor so a tiny box stays legible. Drag the
+     box as wide as the page and the text keeps growing right along with
+     it, matching annotate_pdf.py's uncapped font_size in the export. */
+  font-size: max(7px, 4.5cqw);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  background: #333;
+  color: #fff;
+  cursor: move;
+  user-select: none;
+}
+.takeoff-legend-items { flex: 1 1 auto; overflow: hidden; padding: 0.4em 0.6em; }
+.takeoff-legend-item {
+  display: flex; align-items: center; gap: 0.4em;
+  font-size: max(7px, 4.5cqw);
+  line-height: 1.7;
+}
+.takeoff-legend-item.muted { color: #667085; font-style: italic; white-space: normal; }
+.takeoff-legend-swatch { flex: 0 0 auto; width: 0.85em; height: 0.85em; border-radius: 2px; border: 1px solid rgba(0,0,0,0.25); }
+.takeoff-legend-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.takeoff-legend-qty { flex: 0 0 auto; color: #444; white-space: nowrap; }
+.takeoff-legend-resize {
+  position: absolute; right: 0; bottom: 0;
+  width: 14px; height: 14px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, #333 50%, #333 60%, transparent 60%, transparent 70%, #333 70%, #333 80%, transparent 80%);
+}
+
+/* Composite drawing "Edit Layout" mode's fragment palette (sheet.js) - rows
+   reuse .takeoff-item-row's hover/active styling, but override its
+   single-line flex layout with two stacked lines (thumbnail+name, then the
+   5 icon-buttons+rotation input) - one line trying to fit all of that at
+   once left the name squeezed to near-zero width at the pane's default
+   280px, silently ellipsis-truncating sheet numbers to a single letter. */
+.fragment-row { flex-direction: column; align-items: stretch; gap: 4px; }
+.fragment-row-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.fragment-row-controls { display: flex; align-items: center; gap: 4px; }
+.fragment-row .takeoff-item-name { flex: 1 1 auto; min-width: 0; font-size: 12px; }
+.fragment-thumb { width: 40px; height: 30px; object-fit: cover; border-radius: 3px; border: 1px solid var(--border); flex: 0 0 auto; background: var(--bg); }
+.fragment-rotation-input { flex: 0 0 auto; width: 52px; font-size: 11px; padding: 2px 4px; }
+#edit-layout-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* Edit/Remove/Delete/Stop only apply to whichever item is currently
+   selected, so they live in one group instead of repeating on every row -
+   keeps the row itself down to just name, total, and the always-available
+   hide toggle. #takeoff-item-actions-group lives inside #takeoff-toolbar
+   (see sheet.html) and shows/hides independently of the axis-lock/snap
+   controls there - see updateTakeoffToolbar in sheet.js. Previously its
+   own separate floating bar (before that, docked to the pane's corner,
+   which was easy to lose off the bottom of a short iPad viewport with
+   Stop as the only way out of an active take-off) - merged into the same
+   bar as Lock axes/Snap to points per explicit request, since the two are
+   frequently relevant at the same time (actively tracing a line/perimeter/
+   area shows both at once). */
+.takeoff-item-actions-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: 13px; }
+/* Live running quantity while a line/area/perimeter is being traced (see
+   redrawTakeoff's updateLiveTakeoffQuantity) - empty and takes no visible
+   space the rest of the time. flex: 0 0 auto so it never gets squeezed by
+   the name's ellipsis instead of the other way around. */
+.takeoff-item-actions-live-qty { flex: 0 0 auto; white-space: nowrap; font-weight: 700; font-size: 13px; color: var(--accent); }
+
+/* PlanSwift-style hold-M magnifier (see setupMagnifierLens in sheet.js) - a
+   round lens that follows the cursor, positioned via JS (left/top), sized
+   here. pointer-events:none so it never blocks the placement click/hover
+   it's meant to help with. */
+.magnifier-lens {
+  position: fixed;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  border: 3px solid var(--navy);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  pointer-events: none;
+  z-index: 80;
+  background: #525659;
+}
+
+.zoom-wrap.freeze-armed { cursor: crosshair; }
+
+.freeze-pane {
+  position: fixed;
+  z-index: 90;
+  background: var(--navy);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* Applied/removed dynamically by applyFreezePaneOverlayColor (sheet.js)
+   whenever overlay compare is entered/exited - not fixed at capture time,
+   since the same pane can be re-shown against a different version pairing
+   later. Colored top border matches whichever side (A=blue, B=red) of the
+   CURRENT overlay session the pane's captured version happens to be. */
+.freeze-pane.freeze-pane-source-a { border-top: 3px solid #3b82f6; }
+.freeze-pane.freeze-pane-source-b { border-top: 3px solid #ef4444; }
+
+/* Tints the captured drawing itself to match, not just the header border.
+   The capture is black ink on a solid white background (see toGray/
+   createFreezePane), so blending it with `lighten` against a solid A/B
+   backdrop color leaves white untouched (max(255,x)=255) while pushing pure
+   black ink to the backdrop color (max(0,x)=x) - i.e. white stays white,
+   ink turns blue or red. This is the same math computeOverlay uses to color
+   each layer's ink in the live A+B composite, just applied to a single
+   already-captured image instead of two live layers. */
+.freeze-pane.freeze-pane-source-a .freeze-pane-viewport { background: #3b82f6; }
+.freeze-pane.freeze-pane-source-b .freeze-pane-viewport { background: #ef4444; }
+.freeze-pane.freeze-pane-source-a .freeze-pane-canvas,
+.freeze-pane.freeze-pane-source-b .freeze-pane-canvas { mix-blend-mode: lighten; }
+
+/* Normally #markup-svg is hidden outright during overlay compare (see
+   enterOverlay/exitOverlay in sheet.js) so stale markups/measurements/
+   take-offs from the currently-displayed version don't float over an
+   arbitrary version pairing. Arming the pin tool during overlay needs the
+   svg visible/hit-testable again for its drag-to-capture gesture, but
+   everything else in it should stay hidden - only the in-progress capture
+   draft rect (#freeze-draft-layer) is meant to be seen. */
+#markup-svg.overlay-freeze-active > *:not(#freeze-draft-layer) { display: none; }
+
+/* Take-off geometry has no version concept (identical regardless of which
+   version(s) are composited - see loadSheetTakeoffInstances), unlike markups/
+   measurements. So instead of keeping #markup-svg fully hidden during
+   overlay, arming a take-off tool or entering take-off edit mode re-shows it
+   scoped to just the take-off layers - everything else (markup layers,
+   measure layers, the freeze draft layer) stays hidden. Mirrors
+   .overlay-freeze-active above, but exempts take-off's three layers instead
+   of just #freeze-draft-layer. */
+#markup-svg.overlay-takeoff-active > *:not(#takeoff-draft-layer):not(#takeoff-instances-layer):not(#takeoff-edit-layer) {
+  display: none;
+}
+.freeze-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(255,255,255,0.08);
+  cursor: move;
+  user-select: none;
+  flex: none;
+}
+.freeze-pane-drag-handle { color: rgba(255,255,255,0.6); font-size: 14px; line-height: 1; flex: none; }
+.freeze-pane-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  padding: 2px 4px;
+  outline: none;
+  cursor: text;
+}
+.freeze-pane-label::placeholder { color: rgba(255,255,255,0.45); }
+.freeze-pane-label:focus { background: rgba(255,255,255,0.12); border-radius: 4px; }
+.freeze-pane-header-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.freeze-pane-pin {
+  background: transparent;
+  border: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.freeze-pane-pin:hover { background: rgba(255,255,255,0.15); }
+.freeze-pane-pin .pin-shape { fill: none; stroke: #fff; stroke-width: 2; }
+.freeze-pane-pin .pin-badge { display: none; fill: #f59e0b; stroke: #1b232c; stroke-width: 1; }
+.freeze-pane-pin[data-pin-state="sheet"] .pin-shape,
+.freeze-pane-pin[data-pin-state="project"] .pin-shape { fill: #fff; }
+.freeze-pane-pin[data-pin-state="project"] .pin-badge { display: block; }
+.freeze-pane-close {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.freeze-pane-close:hover { background: rgba(255,255,255,0.15); }
+.freeze-pane-collapse {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: transform 0.15s ease;
+}
+.freeze-pane-collapse:hover { background: rgba(255,255,255,0.15); }
+.freeze-pane.freeze-pane-collapsed .freeze-pane-collapse { transform: rotate(180deg); }
+.freeze-pane.freeze-pane-collapsed .freeze-pane-viewport { display: none; }
+.freeze-pane-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+.freeze-pane-canvas { display: block; width: 100%; height: 100%; transform-origin: 0 0; }
+
+.freeze-pane-resize-handle { position: absolute; z-index: 2; }
+.freeze-pane-resize-n { top: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.freeze-pane-resize-s { bottom: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.freeze-pane-resize-e { right: 0; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.freeze-pane-resize-w { left: 0; top: 8px; bottom: 8px; width: 6px; cursor: ew-resize; }
+.freeze-pane-resize-ne { top: 0; right: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.freeze-pane-resize-nw { top: 0; left: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.freeze-pane-resize-se { bottom: 0; right: 0; width: 10px; height: 10px; cursor: nwse-resize; }
+.freeze-pane-resize-sw { bottom: 0; left: 0; width: 10px; height: 10px; cursor: nesw-resize; }
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-n,
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-s,
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-ne,
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-nw,
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-se,
+.freeze-pane.freeze-pane-collapsed .freeze-pane-resize-sw { display: none; }
+
+.icon-tool-grid .tool-btn[disabled] { opacity: 0.35; cursor: not-allowed; }
+
+.takeoff-expand-btn { font-size: 0.8em; }
+.takeoff-breakdown-row td { background: var(--accent-light); padding: 8px 12px; }
+.takeoff-breakdown-table { width: auto; }
+.takeoff-breakdown-table th, .takeoff-breakdown-table td { padding: 2px 16px 2px 0; text-align: left; font-size: 0.9em; }
 
 .tool-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
@@ -589,6 +1308,41 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .version-list .current { font-weight: 700; }
 
 /* ---------- Sheet view: canvas area + right pane ---------- */
+.sheet-tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  overflow-x: auto;
+  background: var(--navy);
+  border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.sheet-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.75);
+  border: none;
+  border-radius: 6px 6px 0 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.sheet-tab.active { background: var(--bg); color: var(--text); }
+.sheet-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.sheet-tab-close:hover { background: rgba(0,0,0,0.2); }
+
 .sheet-view-row { display: flex; align-items: flex-start; gap: 0; }
 
 .sheet-canvas-area { flex: 1; min-width: 0; }
@@ -601,12 +1355,35 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   height: 72vh;
   cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
+  /* Without this, iPad Safari treats a long-press on SVG shapes/markers as
+     a "select content" gesture and pops its own Copy/Look Up/Translate
+     callout instead of letting our long-press-to-context-menu handling
+     (sheet.js) take over. */
+  -webkit-touch-callout: none;
   /* Keep iPad Safari from turning drawing gestures into page scroll/zoom.
      zoomPan.js and markups.js handle pan/pinch/draw inside this region. */
   touch-action: none;
 }
 .zoom-wrap.panning { cursor: grabbing; }
 .zoom-wrap.align-active { cursor: move; }
+.zoom-wrap.takeoff-active { cursor: crosshair; }
+
+/* Screen-space crosshair guides for take-off alignment - siblings of
+   .zoom-pan-inner (not inside it), so they never inherit its pan/zoom
+   transform and always span the full visible canvas area. mix-blend-mode:
+   difference inverts whatever's underneath (white line -> black on a white
+   background, white on a black background, etc.) so it stays visible
+   regardless of the drawing's own colors, instead of a fixed color that can
+   disappear against a light sheet. */
+.takeoff-crosshair-v, .takeoff-crosshair-h {
+  position: absolute;
+  pointer-events: none;
+  z-index: 5;
+  mix-blend-mode: difference;
+}
+.takeoff-crosshair-v { top: 0; bottom: 0; width: 0; border-left: 1px dashed #fff; }
+.takeoff-crosshair-h { left: 0; right: 0; height: 0; border-top: 1px dashed #fff; }
 .zoom-pan-inner {
   position: absolute;
   top: 0; left: 0;
@@ -618,6 +1395,12 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   position: absolute;
   top: 10px; left: 10px;
   z-index: 10;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.version-badge-inner {
+  position: relative;
 }
 .version-badge button {
   background: rgba(15,43,70,0.85);
@@ -627,6 +1410,10 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   padding: 6px 10px;
   font-size: 13px;
   cursor: pointer;
+}
+.version-badge button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 .version-dropdown {
   position: absolute;
@@ -640,6 +1427,42 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   overflow-y: auto;
   z-index: 11;
 }
+/* Click-or-drag jump-to-page rail, left edge of the canvas - see
+   setupPageScrubber() in document-view.js. Sits clear of page-nav-badge's
+   top-left corner (top offset below) and is itself floating chrome inside
+   .zoom-wrap, same as that badge - see isPanBlocked in document-view.js's
+   setupZoomPan for why that placement needs its tag excluded from panning. */
+.page-scrubber {
+  position: absolute;
+  top: 52px; bottom: 10px; left: 10px;
+  width: 16px;
+  z-index: 10;
+}
+.page-scrubber-track {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: rgba(15,43,70,0.35);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.page-scrubber-handle {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 34px;
+  margin-top: -17px;
+  background: rgba(15,43,70,0.9);
+  border-radius: 8px;
+  color: #fff;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  pointer-events: none; /* the track's own listener drives both click-to-jump and drag - see setupPageScrubber */
+}
+
 .version-dropdown a {
   display: block;
   padding: 8px 12px;
@@ -698,6 +1521,137 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   text-overflow: ellipsis;
   max-width: 260px;
 }
+.markup-popup-flag-desc,
+.markup-popup-flag-comment,
+.markup-popup-flag-tag {
+  width: 220px;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+}
+.markup-popup-flag-comment { resize: vertical; }
+.markup-popup-flag-desc::placeholder,
+.markup-popup-flag-comment::placeholder,
+.markup-popup-flag-tag::placeholder { color: rgba(255,255,255,0.5); }
+
+.markup-popup-photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  align-content: start;
+  gap: 6px;
+  padding: 4px 8px 6px;
+  width: 400px;
+  max-width: calc(100vw - 40px);
+  max-height: 65vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+.markup-popup-photo-gallery > .markup-popup-photo-status { grid-column: 1 / -1; }
+@media (max-width: 520px) {
+  .markup-popup-photo-gallery { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+}
+/* Corner grip for resizing the photo pin popup (markups.js addGalleryResizeHandle). */
+.markup-popup-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 26px;
+  height: 26px;
+  cursor: nwse-resize;
+  touch-action: none;
+  border-bottom-right-radius: 6px;
+  background:
+    linear-gradient(135deg, transparent 0 55%, rgba(255,255,255,0.55) 55% 62%, transparent 62% 72%, rgba(255,255,255,0.55) 72% 79%, transparent 79%);
+}
+.markup-popup-photo-status { padding: 2px 8px 4px; font-size: 11px; color: rgba(255,255,255,0.65); white-space: nowrap; }
+.markup-popup-photo-thumb {
+  position: relative;
+  display: block;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.2);
+  cursor: pointer;
+}
+/* Edit mode's per-photo delete (markups.js renderPhotoGalleryInto). */
+.markup-popup button.markup-popup-photo-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  background: #dc2626;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 28px;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+.markup-popup button.markup-popup-photo-delete:hover { background: #b91c1c; }
+.markup-popup-photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.markup-popup-photo-thumb.pending { border: 1px dashed #f59e0b; }
+.markup-popup-photo-thumb.pending.failed { border-color: #e11d48; }
+.markup-popup-photo-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #f59e0b;
+  color: #111;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+.markup-popup-photo-thumb.failed .markup-popup-photo-badge { background: #e11d48; color: #fff; }
+
+.photo-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0,0,0,0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.photo-lightbox img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.photo-lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+  font-size: 28px;
+  line-height: 44px;
+  padding: 0;
+}
+
+.markup-popup-dims { display: flex; gap: 6px; padding: 2px 8px 4px; }
+.markup-popup-dim-field { display: flex; flex-direction: column; gap: 2px; font-size: 10px; color: rgba(255,255,255,0.75); }
+.markup-popup-dim-field input {
+  width: 74px;
+  font-size: 12px;
+  font-family: inherit;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+}
 
 /* ---------- Right pane (markup tools + measure), styled like .sidebar ---------- */
 .sheet-pane {
@@ -705,13 +1659,20 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
   flex-shrink: 0;
   background: var(--surface);
   border-left: 1px solid var(--border);
-  min-height: calc(100vh - 53px);
+  height: calc(100vh - 53px);
   transition: width 0.15s ease;
   position: relative;
   overflow: hidden;
 }
+.sheet-pane.pane-wide { width: 360px; }
 .sheet-pane.collapsed { width: 32px; }
-.sheet-pane .pane-body { padding-top: 42px; }
+.sheet-pane .pane-body {
+  padding-top: 42px;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+}
 .sheet-pane.collapsed .pane-body { display: none; }
 .pane-toggle {
   position: absolute;
@@ -725,7 +1686,45 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 }
 .sheet-pane.collapsed .pane-toggle { right: 4px; }
 
-.pane-section { border-bottom: 1px solid var(--border); }
+.pane-resize-handle {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 3;
+}
+.pane-resize-handle:hover, .pane-resize-handle.dragging { background: var(--accent-light); }
+.sheet-pane.collapsed .pane-resize-handle { display: none; }
+
+.pane-section { border-bottom: 1px solid var(--border); position: relative; }
+/* Drag handle for reordering sections (see setupPaneSectionOrder). Sits in the
+   header's left padding; touch-action:none so a finger drag moves the section
+   instead of scrolling the pane. */
+.pane-grip {
+  position: absolute;
+  left: 2px;
+  top: 0;
+  width: 16px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0.45;
+  cursor: grab;
+  touch-action: none;
+  z-index: 1;
+  font-size: 12px;
+  line-height: 1;
+}
+.pane-grip:hover { opacity: 1; }
+.pane-order-list { list-style: none; margin: 8px 0 12px; padding: 0; max-width: 320px; }
+.pane-order-list li { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.pane-order-list li span { flex: 1; }
+.pane-section.pane-dragging { opacity: 0.6; background: var(--bg); box-shadow: 0 2px 10px rgba(0,0,0,0.25); }
+.pane-section.pane-dragging .pane-grip { cursor: grabbing; }
 .pane-section:last-child { border-bottom: none; }
 .pane-section-header {
   width: 100%;
@@ -749,6 +1748,65 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .pane-section.collapsed .chevron { transform: rotate(-90deg); }
 .pane-section-body { padding: 2px 18px 16px; }
 .pane-section.collapsed .pane-section-body { display: none; }
+
+.pane-section-header-row { display: flex; align-items: stretch; }
+.pane-section-header-row .pane-section-header { width: auto; flex: 1 1 auto; min-width: 0; }
+.pane-popout-btn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 0;
+}
+.pane-popout-btn:hover { background: var(--bg); color: var(--text); }
+.pane-popout-btn.active { color: var(--accent); }
+.pane-popout-btn svg { width: 15px; height: 15px; display: block; }
+.pane-popout-placeholder { padding: 4px 18px 16px; }
+.pane-popout-placeholder p { margin: 0 0 8px; }
+.pane-section.collapsed .pane-popout-placeholder { display: none; }
+
+.help-body { font-size: 13px; }
+.help-heading {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--muted);
+  margin: 16px 0 6px;
+}
+.help-heading:first-child { margin-top: 4px; }
+.help-topic {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  padding: 2px 10px;
+}
+.help-topic summary {
+  cursor: pointer;
+  padding: 8px 0;
+  font-weight: 600;
+  list-style: none;
+}
+.help-topic summary::-webkit-details-marker { display: none; }
+.help-topic summary::before { content: '\25B8'; display: inline-block; margin-right: 6px; color: var(--muted); transition: transform 0.15s ease; }
+.help-topic[open] summary::before { transform: rotate(90deg); }
+.help-topic p, .help-topic ul { margin: 0 0 8px; line-height: 1.45; }
+.help-topic ul { padding-left: 18px; }
+.help-topic li { margin-bottom: 4px; }
+.help-diagram { display: flex; justify-content: center; margin-bottom: 8px; }
+.help-svg { width: 100%; max-width: 220px; height: auto; }
+
+.help-page { max-width: 760px; }
+.help-page .help-heading { margin-top: 28px; font-size: 12px; }
+.help-page .help-topic { padding: 2px 16px; }
+.help-page .help-topic summary { font-size: 15px; padding: 12px 0; }
+.help-page .help-topic p, .help-page .help-topic ul { font-size: 14px; }
+.help-page .help-svg { max-width: 320px; }
 
 .icon-tool-grid {
   display: grid;
@@ -788,6 +1846,11 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 /* ---------- SVG markup selection/edit handles ---------- */
 .markup-selected { outline: 2px dashed var(--accent); outline-offset: 2px; }
 .markup-handle { fill: #fff; stroke: var(--accent); stroke-width: 2; cursor: pointer; }
+/* Placeholder pin shown while the folder-pick/photo-upload flow that follows
+   a photo-pin drag is still in progress (see promptAndCreatePhotoMarkup) -
+   not yet a real markup, so it shouldn't intercept clicks meant for the
+   canvas underneath. */
+.photo-pin-draft { pointer-events: none; }
 
 /* ---------- Overlay picker ---------- */
 .overlay-picker-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
@@ -948,3 +2011,15 @@ tr.doc-row-folder.drag-target-folder { background: var(--accent-light); outline:
 .shared-doc-row:hover { background: var(--accent-light); }
 .shared-doc-file a { font-weight: 600; text-decoration: none; }
 .shared-doc-icon { width: 22px; text-align: center; flex: 0 0 auto; }
+
+/* ---------- New project -> Import from... (import.html) ---------- */
+.import-crumbs a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.import-crumbs a:hover { text-decoration: underline; }
+.import-stats { display: flex; flex-wrap: wrap; gap: 10px; }
+.import-stat { min-width: 110px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.import-stat-value { font-size: 22px; font-weight: 700; }
+.import-warnings { margin: 10px 0 0; padding-left: 20px; max-height: 320px; overflow: auto; font-size: 13px; }
+.import-warnings li { margin: 2px 0; }
+.import-folder-bar { margin-bottom: 10px; }
+.import-folder-form { padding: 12px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.import-current-job { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--accent-light); }

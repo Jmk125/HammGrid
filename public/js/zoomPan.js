@@ -5,19 +5,51 @@
 // mouse positions) keeps working unmodified because getBoundingClientRect()
 // already reflects applied transforms.
 
-export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButton = 0, touchPan = panButton === 0 }) {
+export function setupZoomPan({
+  wrapEl,
+  innerEl,
+  isPanBlocked,
+  onChange,
+  panButton = 0,
+  touchPan = panButton === 0,
+  isButtonAllowed,
+  // Default (sheet viewer, box-drawing tool): bare wheel zooms, shift+wheel
+  // pans horizontally. Opt in here for the opposite - bare wheel scrolls/
+  // pans (useful for paging through a tall/wide document), and zoom moves
+  // to ctrl+wheel - which is also how browsers report trackpad pinch-zoom
+  // (ctrlKey is true on a pinch gesture even with no physical key held), so
+  // this doubles as trackpad-pinch support for free. Real touchscreen pinch
+  // (touchstart/touchmove below) always zooms either way, unaffected by this.
+  wheelZoomRequiresCtrl = false,
+}) {
   const state = { scale: 1, x: 0, y: 0 };
 
-  // When panning is bound to the right mouse button (box-drawing tool, so
-  // left-drag is free to draw), suppress the browser's right-click context
-  // menu on the wrap - otherwise every pan attempt pops it open instead.
-  if (panButton !== 0) {
+  // When panning isn't strictly left-button-only (the box-drawing tool's
+  // fixed right button, or a caller like sheet.js whose allowed button(s)
+  // vary by current tool state via isButtonAllowed), suppress the browser's
+  // right-click context menu on the wrap - otherwise every pan attempt pops
+  // it open instead.
+  if (panButton !== 0 || isButtonAllowed) {
     wrapEl.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
   function apply() {
     innerEl.style.transform = `translate(${state.x}px, ${state.y}px) scale(${state.scale})`;
     if (onChange) onChange(state);
+  }
+
+  // Touch devices can fire touchmove more than once per frame; applying
+  // (transform write + the caller's onChange work) on each one just burns
+  // main-thread time an older iPad doesn't have. State still updates
+  // immediately - only the DOM write is coalesced to once per frame. Mouse/
+  // wheel paths keep calling apply() directly, unchanged.
+  let applyFrame = null;
+  function scheduleApply() {
+    if (applyFrame !== null) return;
+    applyFrame = requestAnimationFrame(() => {
+      applyFrame = null;
+      apply();
+    });
   }
 
   function fitToView(contentWidth, contentHeight) {
@@ -30,21 +62,34 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
     apply();
   }
 
+  function zoomAt(clientX, clientY, factor) {
+    const rect = wrapEl.getBoundingClientRect();
+    const cx = clientX - rect.left;
+    const cy = clientY - rect.top;
+    const newScale = Math.min(6, Math.max(0.1, state.scale * factor));
+    state.x = cx - (cx - state.x) * (newScale / state.scale);
+    state.y = cy - (cy - state.y) * (newScale / state.scale);
+    state.scale = newScale;
+  }
+
   wrapEl.addEventListener(
     'wheel',
     (e) => {
       e.preventDefault();
-      if (e.shiftKey) {
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      if (wheelZoomRequiresCtrl) {
+        if (e.ctrlKey) {
+          zoomAt(e.clientX, e.clientY, factor);
+        } else if (e.shiftKey) {
+          state.x -= e.deltaY;
+        } else {
+          state.x -= e.deltaX;
+          state.y -= e.deltaY;
+        }
+      } else if (e.shiftKey) {
         state.x -= e.deltaY;
       } else {
-        const rect = wrapEl.getBoundingClientRect();
-        const cx = e.clientX - rect.left;
-        const cy = e.clientY - rect.top;
-        const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
-        const newScale = Math.min(6, Math.max(0.1, state.scale * factor));
-        state.x = cx - (cx - state.x) * (newScale / state.scale);
-        state.y = cy - (cy - state.y) * (newScale / state.scale);
-        state.scale = newScale;
+        zoomAt(e.clientX, e.clientY, factor);
       }
       apply();
     },
@@ -53,9 +98,10 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
 
   let pan = null;
   wrapEl.addEventListener('mousedown', (e) => {
-    if (e.button !== panButton) return;
+    const buttonOk = isButtonAllowed ? isButtonAllowed(e) : e.button === panButton;
+    if (!buttonOk) return;
     if (isPanBlocked && isPanBlocked(e)) return;
-    if (panButton !== 0) e.preventDefault();
+    if (e.button !== 0) e.preventDefault();
     pan = { startX: e.clientX, startY: e.clientY, origX: state.x, origY: state.y };
     wrapEl.classList.add('panning');
   });
@@ -81,7 +127,7 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
     return { x: (touches[0].clientX + touches[1].clientX) / 2, y: (touches[0].clientY + touches[1].clientY) / 2 };
   }
 
-  let pinch = null; // { startDist, startScale }
+  let pinch = null; // { startDist, startScale, prevMid } - prevMid also drives two-finger pan, see touchmove
   let touchPanState = null;
   wrapEl.addEventListener(
     'touchstart',
@@ -97,7 +143,7 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
       if (e.touches.length !== 2) return;
       e.preventDefault();
       touchPanState = null;
-      pinch = { startDist: touchDistance(e.touches), startScale: state.scale };
+      pinch = { startDist: touchDistance(e.touches), startScale: state.scale, prevMid: touchMidpoint(e.touches) };
     },
     { passive: false }
   );
@@ -109,20 +155,27 @@ export function setupZoomPan({ wrapEl, innerEl, isPanBlocked, onChange, panButto
         const t = e.touches[0];
         state.x = touchPanState.origX + (t.clientX - touchPanState.startX);
         state.y = touchPanState.origY + (t.clientY - touchPanState.startY);
-        apply();
+        scheduleApply();
         return;
       }
       if (e.touches.length !== 2 || !pinch) return;
       e.preventDefault();
-      const rect = wrapEl.getBoundingClientRect();
       const mid = touchMidpoint(e.touches);
+      // Two-finger drag (no spread change) pans - move the content by however
+      // far the midpoint itself traveled since the last frame. This is on top
+      // of (not instead of) the existing pinch-to-zoom below, so a diagonal
+      // pinch-while-dragging gesture does both at once, like any native app.
+      state.x += mid.x - pinch.prevMid.x;
+      state.y += mid.y - pinch.prevMid.y;
+      pinch.prevMid = mid;
+      const rect = wrapEl.getBoundingClientRect();
       const cx = mid.x - rect.left;
       const cy = mid.y - rect.top;
       const newScale = Math.min(6, Math.max(0.1, pinch.startScale * (touchDistance(e.touches) / pinch.startDist)));
       state.x = cx - (cx - state.x) * (newScale / state.scale);
       state.y = cy - (cy - state.y) * (newScale / state.scale);
       state.scale = newScale;
-      apply();
+      scheduleApply();
     },
     { passive: false }
   );

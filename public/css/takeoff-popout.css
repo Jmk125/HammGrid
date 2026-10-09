@@ -1,0 +1,35 @@
+/* Standalone shell for the take-offs pane when popped out of the sheet
+   viewer's right pane (see sheet.js's openTakeoffPopout). style.css is
+   loaded first for all the shared component styles (buttons, inputs,
+   .takeoff-item-row, etc.) - this file only reshapes the outer chrome so a
+   floating window doesn't look like a strip cut out of a wider sidebar. */
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  color: var(--text);
+}
+.takeoff-popout-header {
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--navy);
+}
+/* Light theme flips --navy to a near-white chip-bar color (see style.css) -
+   .topbar/.selection-bar swap to dark text for the same reason, so this
+   does too rather than going invisible. */
+:root[data-theme="light"] .takeoff-popout-header {
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+.takeoff-popout-content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 12px 14px 16px;
+}
+.takeoff-popout-content .pane-section-body { padding: 0; }

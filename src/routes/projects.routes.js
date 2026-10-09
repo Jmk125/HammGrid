@@ -4,6 +4,7 @@ const path = require('path');
 const db = require('../db');
 const config = require('../config');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { removeThumb } = require('../lib/documentThumbs');
 
 const router = express.Router();
 
@@ -103,6 +104,30 @@ router.put('/:id', requireRole('admin'), (req, res) => {
   res.json({ project: parseProject(project) });
 });
 
+// Archive/unarchive only flips a flag that the dashboard filters on. Files,
+// sheets, shares, etc. are untouched, and an archived project stays fully
+// openable by direct link.
+function setArchived(archived) {
+  return (req, res) => {
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
+    if (!project) return res.status(404).json({ error: 'Not found' });
+
+    db.prepare(`UPDATE projects SET archived_at = ${archived ? "datetime('now')" : 'NULL'} WHERE id = ?`).run(project.id);
+    db.prepare('INSERT INTO activity_log (project_id, actor, action, detail) VALUES (?, ?, ?, ?)').run(
+      project.id,
+      String(req.session.user.id),
+      archived ? 'project_archive' : 'project_unarchive',
+      JSON.stringify({ project_name: project.name })
+    );
+
+    const updated = db.prepare('SELECT * FROM projects WHERE id = ?').get(project.id);
+    res.json({ project: parseProject(updated) });
+  };
+}
+
+router.post('/:id/archive', requireRole('admin'), setArchived(true));
+router.post('/:id/unarchive', requireRole('admin'), setArchived(false));
+
 // Destructive and unrecoverable, so it requires the caller to echo back the
 // project's exact name (defense in depth - the UI also makes the user type
 // it, but a stray/buggy API call shouldn't be able to wipe a project by id
@@ -147,6 +172,7 @@ router.delete('/:id', requireRole('admin'), (req, res) => {
   }
   for (const docPath of documentPaths) {
     fs.rm(docPath, { force: true }, () => {});
+    removeThumb(docPath);
   }
 
   res.json({ ok: true });

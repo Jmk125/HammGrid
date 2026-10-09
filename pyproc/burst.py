@@ -4,7 +4,7 @@ WebP image for each page. Renders each page once and derives the thumbnail
 from the preview raster (avoids a second, expensive re-render per page).
 
 Usage:
-    python burst.py <input_pdf> <output_dir> [--thumb-size 300] [--preview-size 1800]
+    python burst.py <input_pdf> <output_dir> [--thumb-size 300] [--preview-size 4000]
 
 Prints a JSON array to stdout, one entry per page, in page order:
     [{"page_number": 1, "pdf_path": "...", "thumb_path": "...",
@@ -47,7 +47,16 @@ def main():
     parser.add_argument("input_pdf")
     parser.add_argument("output_dir")
     parser.add_argument("--thumb-size", type=int, default=300)
-    parser.add_argument("--preview-size", type=int, default=1800)
+    # Preview feeds the version-overlay comparison (sheet.js's computeOverlay
+    # composites two of these client-side) as well as the staged-sheet
+    # review screen. A full-size architectural sheet (e.g. 48"x36" ARCH E1)
+    # is long enough that even 2200px works out to under 50 DPI - visibly
+    # soft the moment you zoom into the overlay at all. 4000px gets a 48"
+    # sheet to ~83 DPI, a real improvement, without the file-size/composite
+    # cost of chasing print-grade DPI. The earlier, more conservative 1800/
+    # 2200 values were sized for RAM-constrained Pi deployment; the target
+    # deploy is a Windows box now; see CLAUDE.md/project memory.
+    parser.add_argument("--preview-size", type=int, default=4000)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -74,10 +83,21 @@ def main():
 
         single_page = fitz.open()
         single_page.insert_pdf(doc, from_page=i, to_page=i)
-        single_page.save(pdf_path)
+        # insert_pdf() carries over the source doc's whole object graph
+        # (every page's annotations/fonts/XObjects, OCG layers, etc.), not
+        # just the one page's - a plain save() leaves all of that as
+        # unreferenced bytes in the file. garbage=4 drops unreferenced
+        # objects, clean=True sanitizes/rewrites content streams (needed for
+        # garbage collection to actually reach objects a content stream still
+        # nominally points at), and deflate recompresses what's left. On one
+        # real multi-hundred-sheet structural set this took single burst
+        # files from ~230MB down to ~0.3MB with pixel-identical output -
+        # without it, every sheet's file silently carries the entire source
+        # document's data.
+        single_page.save(pdf_path, garbage=4, deflate=True, clean=True)
         single_page.close()
 
-        save_webp(img, preview_path, args.preview_size, quality=85)
+        save_webp(img, preview_path, args.preview_size, quality=92)
         save_webp(img, thumb_path, args.thumb_size, quality=78)
 
         # These paths get stored verbatim in the DB and may later be read on

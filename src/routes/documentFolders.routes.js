@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const { removeThumb } = require('../lib/documentThumbs');
 
 const FOLDER_TREE_CTE = `
   WITH RECURSIVE folder_tree(id) AS (
@@ -26,6 +27,12 @@ router.patch('/:id', requireRole('admin', 'editor'), (req, res) => {
       .prepare('SELECT id FROM document_folders WHERE id = ? AND project_id = ?')
       .get(parent_folder_id, folder.project_id);
     if (!parent) return res.status(400).json({ error: 'parent_folder_id not found in this project' });
+    // Moving a folder into one of its own subfolders would orphan the whole
+    // branch in a cycle.
+    const intoOwnSubtree = db
+      .prepare(`${FOLDER_TREE_CTE} SELECT 1 FROM folder_tree WHERE id = ?`)
+      .get(folder.id, parent_folder_id);
+    if (intoOwnSubtree) return res.status(400).json({ error: "A folder can't be moved into one of its own subfolders" });
   }
 
   db.prepare('UPDATE document_folders SET name = ?, parent_folder_id = ? WHERE id = ?').run(
@@ -75,6 +82,7 @@ router.delete('/:id', requireRole('admin', 'editor'), (req, res) => {
   db.prepare('DELETE FROM document_folders WHERE id = ?').run(folder.id);
   for (const p of paths) {
     if (p.pdf_path) fs.rm(p.pdf_path, { force: true }, () => {});
+    removeThumb(p.pdf_path);
   }
   res.json({ ok: true });
 });
