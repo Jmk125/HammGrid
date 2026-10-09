@@ -31,6 +31,9 @@ const { readPackage, renderScaleFor, upper, localHash, PUSHED } = require('./pla
 const HG_FOLDER = 'From HammGrid';
 const MANIFEST_DIR = path.join(config.storageDir, 'planswift-push');
 const RECENT_LOCK_MINUTES = 60;
+// Stock PlanSwift nodes (one per class) used when the job has no node of a class to
+// clone, e.g. a job with no take-offs yet. A node found in the job itself wins.
+const BUNDLED_TEMPLATES_DIR = path.join(__dirname, 'planswift-templates');
 const MAX_FOLDER_NAME = 20; // PlanSwift's own take-off folders are cut to 20 characters
 
 // ---------------------------------------------------------------- small helpers
@@ -202,6 +205,14 @@ const CLASS_TO_TYPE = { Area: 'area', Linear: 'linear', Segment: 'linear', Count
 const TYPE_TO_CLASS = { area: 'Area', linear: 'Linear', count: 'Count' };
 const MIN_POINTS = { area: 3, linear: 2, count: 1 };
 
+function bundledTemplates() {
+  const out = {};
+  for (const d of fs.readdirSync(BUNDLED_TEMPLATES_DIR, { withFileTypes: true })) {
+    if (d.isDirectory()) out[d.name] = path.join(BUNDLED_TEMPLATES_DIR, d.name); // absolute: path.resolve(jobDir, abs) = abs
+  }
+  return out;
+}
+
 // Finds everything in the project that exists only in HammGrid (instances with no
 // PlanSwift link) and works out where each piece would go. No files are touched.
 // Returns { plan, work, jobDir }.
@@ -209,7 +220,7 @@ function collect({ pkgDir, projectId, jobDir }) {
   const pkg = readPackage(path.resolve(pkgDir));
   jobDir = path.resolve(jobDir || (pkg.job || {}).source_folder || '');
   if (!jobDir || !fs.existsSync(path.join(jobDir, 'Takeoff'))) throw fail('The PlanSwift job folder (Takeoff) was not found', 404);
-  const templates = pkg.templates || {};
+  const templates = { ...bundledTemplates(), ...(pkg.templates || {}) };
 
   const pkgSheets = new Map(pkg.sheets.filter((s) => s.width_pt && s.height_pt && s.dpi).map((s) => [upper(s.id), s]));
   const hgSheets = new Map(db.prepare('SELECT id, sheet_number, external_id FROM sheets WHERE project_id = ?').all(projectId).map((s) => [s.id, s]));
@@ -362,7 +373,7 @@ function lastPush(projectId) {
 
 // Creates one node folder (Data.xml written via a temp name, then renamed).
 function createNode({ jobDir, templateRel, parentDir, wantedName, build, created, kind }) {
-  const template = fs.readFileSync(path.join(jobDir, templateRel, 'Data.xml'), 'utf8');
+  const template = fs.readFileSync(path.resolve(jobDir, templateRel, 'Data.xml'), 'utf8');
   const name = uniqueFolderName(parentDir, wantedName);
   const dir = path.join(parentDir, name);
   fs.mkdirSync(dir); // not recursive: fails loudly if it somehow exists

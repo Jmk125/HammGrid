@@ -86,7 +86,7 @@ acknowledgement) → *Undo last push* afterwards if needed. Routes: `POST /api/i
 - **Never** edits or deletes anything PlanSwift wrote; it only creates folders. Each new node is a
   clone of a real node of the same class in the same job (`templates` in the converter JSON, one
   per class) with only name/GUIDs/colour/ordering/timestamp/page/points changed, descriptions and
-  costs blanked. If the job has no node of a needed class, those shapes are skipped (reported).
+  costs blanked. If the job has no node of a needed class (e.g. an empty job), the stock nodes bundled in `src/lib/importers/planswift-templates/<class>/Data.xml` are used instead; a node found in the job always wins. Perimeter items are still skipped.
   Files are written to `Data.xml.hgtmp` then renamed.
 - **Lock:** `JobLock.xml` present → a lock < 60 min old blocks the push; an older one (they are
   often left over — many jobs have 2014–2023 locks) needs the "PlanSwift is closed" confirmation.
