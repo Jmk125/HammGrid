@@ -183,7 +183,6 @@ export async function updateCachedSheetMetadata(projectId, sheet) {
     current_version_id: sheet.current_version_id ?? existing.current_version_id,
     current_revision_id: sheet.current_revision_id ?? existing.current_revision_id,
     current_title: sheet.current_title ?? existing.current_title,
-    scale_feet_per_inch: sheet.scale_feet_per_inch !== undefined ? sheet.scale_feet_per_inch : existing.scale_feet_per_inch,
   });
 }
 
@@ -200,151 +199,8 @@ async function refreshCachedSheetMetadata(projectId, currentSheets) {
       discipline: sheet.discipline,
       current_revision_id: sheet.current_version.revision_id,
       current_title: sheet.current_version.title,
-      // Scale/scale-zones are sheet metadata (not tied to the PDF version),
-      // so this needs refreshing even when the sheet's current version -
-      // and therefore its cached PDF - hasn't changed at all.
-      scale_feet_per_inch: sheet.scale_feet_per_inch,
-      scale_zones: sheet.scale_zones || [],
     });
   }
-}
-
-
-// Caches the dashboard's project list (id/name/number/location/size/
-// first_thumbnail_url/current_sheet_count/latest_published_at - whatever
-// GET /api/projects returns) so the dashboard itself has something to
-// render offline, not just individual projects already opened once. A
-// straight replace, not an incremental sync like sheets/markups get - this
-// is "what does the dashboard look like right now", so a project deleted
-// or renamed server-side should disappear/update here too the next time
-// this succeeds while online, not linger as a stale duplicate.
-export async function cacheProjectList(projects) {
-  const db = await openDb();
-  const existing = await idbGetAll(db, 'projects');
-  const currentIds = new Set(projects.map((p) => p.id));
-  for (const old of existing) {
-    if (!currentIds.has(old.id)) await idbDelete(db, 'projects', old.id);
-  }
-  for (const p of projects) await idbPut(db, 'projects', p);
-}
-
-export async function getCachedProjectList() {
-  const db = await openDb();
-  return idbGetAll(db, 'projects');
-}
-
-// Shared by the three take-off stores below - all are "this project's
-// current full list", replaced (not incrementally merged) on every sync,
-// same reasoning as cacheProjectList: small lists, and a deleted/edited
-// item/assembly/instance should disappear/update here too, not linger.
-// scopeKey lets the same helper work for items/assemblies (already carry
-// project_id from the API) and instances (only carry sheet_id - the caller
-// passes a synthetic project_id per row instead, see cacheTakeoffInstances).
-async function reconcileProjectScopedStore(store, projectId, rows) {
-  const db = await openDb();
-  const existing = await idbGetAll(db, store);
-  const existingForProject = existing.filter((r) => r.project_id === Number(projectId));
-  const newIds = new Set(rows.map((r) => r.id));
-  for (const old of existingForProject) {
-    if (!newIds.has(old.id)) await idbDelete(db, store, old.id);
-  }
-  for (const row of rows) await idbPut(db, store, { ...row, project_id: Number(projectId) });
-}
-
-export async function cacheTakeoffItems(projectId, items) {
-  await reconcileProjectScopedStore('takeoff_items', projectId, items);
-}
-
-export async function getCachedTakeoffItems(projectId) {
-  const db = await openDb();
-  const all = await idbGetAll(db, 'takeoff_items');
-  return all.filter((r) => r.project_id === Number(projectId));
-}
-
-export async function cacheTakeoffAssemblies(projectId, assemblies) {
-  await reconcileProjectScopedStore('takeoff_assemblies', projectId, assemblies);
-}
-
-export async function getCachedTakeoffAssemblies(projectId) {
-  const db = await openDb();
-  const all = await idbGetAll(db, 'takeoff_assemblies');
-  return all.filter((r) => r.project_id === Number(projectId));
-}
-
-// Instances don't carry project_id on the server row (only sheet_id) -
-// reconcileProjectScopedStore still works, it just gets project_id attached
-// per-row here (rather than it already being present, like items/
-// assemblies) before being handed off, so reads can still scope by project
-// without a sheets lookup.
-export async function cacheTakeoffInstances(projectId, instances) {
-  await reconcileProjectScopedStore('takeoff_instances', projectId, instances);
-}
-
-export async function getCachedTakeoffInstancesForSheet(sheetId) {
-  const db = await openDb();
-  const all = await idbGetAll(db, 'takeoff_instances');
-  return all.filter((r) => r.sheet_id === Number(sheetId));
-}
-
-// Neither documents nor document_folders carry project_id on the server row
-// (both are already fetched via a project-scoped URL) - reconcileProjectScopedStore
-// attaches it synthetically at write time, same as take-off instances above.
-export async function cacheDocuments(projectId, docs) {
-  await reconcileProjectScopedStore('documents', projectId, docs);
-}
-
-export async function getCachedDocuments(projectId) {
-  const db = await openDb();
-  const all = await idbGetAll(db, 'documents');
-  return all.filter((r) => r.project_id === Number(projectId));
-}
-
-// Documents are keyed by their own (globally unique) id in the 'documents'
-// store, so a single document can be looked up directly with no project_id
-// needed - useful for document-view.js specifically, which only ever has
-// documentId from the URL and would otherwise have no way to learn the
-// project offline (its own project_id normally comes from the live
-// metadata fetch, which is exactly what's failing in this code path).
-export async function getCachedDocumentById(documentId) {
-  const db = await openDb();
-  return idbGet(db, 'documents', Number(documentId));
-}
-
-export async function cacheDocumentFolders(projectId, docFolders) {
-  await reconcileProjectScopedStore('document_folders', projectId, docFolders);
-}
-
-export async function getCachedDocumentFolders(projectId) {
-  const db = await openDb();
-  const all = await idbGetAll(db, 'document_folders');
-  return all.filter((r) => r.project_id === Number(projectId));
-}
-
-// The Flags page's list (sheet AND document flags, with sheet number /
-// document name / author already resolved server-side) - kept as one meta
-// row per project, replaced whole on every successful fetch, since that
-// list is exactly what the page renders and is small.
-export async function cacheFlags(projectId, flags) {
-  const db = await openDb();
-  await putMeta(db, `flags:${projectId}`, flags);
-}
-
-export async function getCachedFlags(projectId) {
-  const db = await openDb();
-  const row = await idbGet(db, 'meta', `flags:${projectId}`);
-  return row ? row.value : null;
-}
-
-export async function ensureProjectCacheFresh(projectId, project = {}) {
-  if (!project.created_at) return;
-  const db = await openDb();
-  const key = `project-created-at:${projectId}`;
-  const row = await idbGet(db, 'meta', key);
-  if (row && row.value && row.value !== project.created_at) {
-    await deleteCachedProject(projectId);
-  }
-  const freshDb = await openDb();
-  await putMeta(freshDb, key, project.created_at);
 }
 
 export async function syncProject(projectId, { onProgress } = {}) {

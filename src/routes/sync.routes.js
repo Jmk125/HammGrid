@@ -64,8 +64,6 @@ function handleSync(req, res) {
     id: s.id,
     sheet_number: s.sheet_number,
     discipline: s.discipline,
-    scale_feet_per_inch: s.scale_feet_per_inch,
-    scale_zones: zonesBySheetId.get(s.id) || [],
     current_version: {
       id: s.version_id,
       revision_id: s.revision_id,
