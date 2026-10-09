@@ -2323,11 +2323,11 @@ async function openOverlayPicker() {
   document.getElementById('overlay-search').addEventListener('input', (e) => renderList(e.target.value));
 }
 
-// Recently overlaid sheets, per project, most recent first. Per-device
+// Recently overlaid sheets, per base sheet (the one being viewed), most recent first. Per-device
 // convenience only, so localStorage is fine (and may be unavailable).
 const RECENT_OVERLAY_MAX = 5;
 function recentOverlayKey() {
-  return `recentOverlaySheets:${projectId}`;
+  return `recentOverlaySheets:${projectId}:${sheetId}`;
 }
 function getRecentOverlaySheetIds() {
   try {
