@@ -2369,6 +2369,22 @@ async function openOverlayPicker() {
   function renderList(filter) {
     const listEl = document.getElementById('overlay-picker-list');
     listEl.innerHTML = '';
+    const recents = getRecentOverlaySheetIds()
+      .map((id) => sheets.find((s) => s.id === id))
+      .filter((s) => s && (!filter || `${s.sheet_number} ${s.current_title || ''}`.toLowerCase().includes(filter.toLowerCase())));
+    if (recents.length) {
+      const label = document.createElement('div');
+      label.className = 'overlay-picker-group-label';
+      label.textContent = 'Recent';
+      listEl.appendChild(label);
+      for (const s of recents) {
+        const item = document.createElement('div');
+        item.className = 'overlay-picker-item';
+        item.textContent = `${s.sheet_number} - ${s.current_title || ''}`;
+        item.addEventListener('click', () => pickOverlayTarget(s));
+        listEl.appendChild(item);
+      }
+    }
     const grouped = {};
     for (const s of sheets) {
       const hay = `${s.sheet_number} ${s.current_title || ''}`.toLowerCase();
@@ -2394,7 +2410,31 @@ async function openOverlayPicker() {
   document.getElementById('overlay-search').addEventListener('input', (e) => renderList(e.target.value));
 }
 
+// Recently overlaid sheets, per project, most recent first. Per-device
+// convenience only, so localStorage is fine (and may be unavailable).
+const RECENT_OVERLAY_MAX = 5;
+function recentOverlayKey() {
+  return `recentOverlaySheets:${projectId}`;
+}
+function getRecentOverlaySheetIds() {
+  try {
+    const ids = JSON.parse(localStorage.getItem(recentOverlayKey()) || '[]');
+    return Array.isArray(ids) ? ids.map(Number) : [];
+  } catch {
+    return [];
+  }
+}
+function rememberOverlaySheet(id) {
+  try {
+    const ids = [Number(id), ...getRecentOverlaySheetIds().filter((x) => x !== Number(id))];
+    localStorage.setItem(recentOverlayKey(), JSON.stringify(ids.slice(0, RECENT_OVERLAY_MAX)));
+  } catch {
+    /* storage unavailable - recents just won't persist */
+  }
+}
+
 async function pickOverlayTarget(otherSheet) {
+  rememberOverlaySheet(otherSheet.id);
   if (otherSheet.id === Number(sheetId)) {
     openModal(`
       <h2>Overlay against which version?</h2>
