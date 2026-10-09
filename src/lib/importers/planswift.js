@@ -272,6 +272,16 @@ function renderScaleFor(sheet) {
   return Math.min(RENDER_SCALE, MAX_RENDER_PX / longest);
 }
 
+// Feet per paper inch -> PlanSwift's AutoScaled style label, e.g. 30 -> 1" = 30' 0".
+function scaleLabel(fpi) {
+  const feet = Math.floor(fpi + 1e-9);
+  const inches = Number(((fpi - feet) * 12).toFixed(2));
+  return `1" = ${feet}' ${inches}"`;
+}
+
+// True when two feet-per-inch scales differ by more than rounding noise.
+const scalesDiffer = (a, b) => Math.abs(a - b) / Math.max(a, b) > 0.001;
+
 // Same math as sheet.js polylineLengthFeet / polygonAreaFeet, done in PDF
 // points (render scale cancels out): feet = pt / 72 * feetPerInch.
 function lengthFeet(ptsPt, fpi, closed) {
@@ -594,7 +604,7 @@ function refreshPackage({ pkgDir, projectId, userId, apply = false }) {
 
   const warnings = [];
   const plan = {
-    sheets: { linked: 0, newPages: [], missing: [], scaleChanged: 0 },
+    sheets: { linked: 0, newPages: [], missing: [], scaleChanged: 0, scaleMismatch: [] },
     items: { added: 0, updated: 0, linked: 0 },
     shapes: { added: 0, changed: 0, removed: 0, unchanged: 0, linked: 0, keptLocal: [], conflicts: [], skipped: 0 },
     instances: { added: 0, removed: 0 },
@@ -628,6 +638,10 @@ function refreshPackage({ pkgDir, projectId, userId, apply = false }) {
         : Math.abs((hg.external_scale || 0) - (fpi || 0)) > 1e-9;
       const scale = sourceChanged ? fpi : hg.scale_feet_per_inch;
       if (sourceChanged && !isNewLink) plan.sheets.scaleChanged++;
+      // Both sides scaled but different (HammGrid's was kept above): flag it.
+      if (fpi && scale && scalesDiffer(fpi, scale)) {
+        plan.sheets.scaleMismatch.push({ sheet: hg.sheet_number, hammgrid: scaleLabel(scale), planswift: scaleLabel(fpi) });
+      }
       if (isNewLink) plan.sheets.linked++;
       updSheet.run(guid, fpi, scale, hg.id);
     }
@@ -824,5 +838,5 @@ module.exports = {
   pushApply: (opts) => require('./planswiftPush').apply(opts),
   pushUndo: (opts) => require('./planswiftPush').undo(opts),
   lastPush: (projectId) => require('./planswiftPush').lastPush(projectId),
-  helpers: { readPackage, renderScaleFor, sha, upper, localHash, PUSHED },
+  helpers: { readPackage, renderScaleFor, sha, upper, localHash, PUSHED, scaleLabel, scalesDiffer },
 };
