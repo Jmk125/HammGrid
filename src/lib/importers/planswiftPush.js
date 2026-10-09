@@ -201,9 +201,11 @@ function checkLock(jobDir, confirmClosed) {
 
 // ---------------------------------------------------------------- what would be sent
 
-const CLASS_TO_TYPE = { Area: 'area', Linear: 'linear', Segment: 'linear', Count: 'count' };
-const TYPE_TO_CLASS = { area: 'Area', linear: 'Linear', count: 'Count' };
-const MIN_POINTS = { area: 3, linear: 2, count: 1 };
+// The firm's PlanSwift convention: a PlanSwift "Linear" is a HammGrid perimeter and a
+// PlanSwift "Segment" is a HammGrid linear.
+const CLASS_TO_TYPE = { Area: 'area', Linear: 'perimeter', Segment: 'linear', Count: 'count' };
+const TYPE_TO_CLASS = { area: 'Area', perimeter: 'Linear', linear: 'Segment', count: 'Count' };
+const MIN_POINTS = { area: 3, perimeter: 2, linear: 2, count: 1 };
 
 function bundledTemplates() {
   const out = {};
@@ -248,8 +250,8 @@ function collect({ pkgDir, projectId, jobDir }) {
   const needTemplate = new Set();
 
   for (const r of rows) {
-    const type = r.type === 'perimeter' ? null : r.type;
-    if (!type || !TYPE_TO_CLASS[type]) { skip('perimeter take-offs are not supported', 1); continue; }
+    const type = r.type;
+    if (!TYPE_TO_CLASS[type]) { skip(`${type} take-offs are not supported`, 1); continue; }
     const sheet = hgSheets.get(r.sheet_id);
     const ps = sheet && sheet.external_id ? pkgSheets.get(upper(sheet.external_id)) : null;
     if (!ps) { skip('on a sheet that is not linked to a PlanSwift page', 1); continue; }
