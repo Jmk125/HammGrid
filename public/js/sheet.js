@@ -1,14 +1,7 @@
 import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { initMarkups } from '/js/markups.js';
-import {
-  getCachedAsset,
-  getCachedSheets,
-  updateCachedSheetMetadata,
-  getCachedTakeoffItems,
-  getCachedTakeoffAssemblies,
-  getCachedTakeoffInstancesForSheet,
-} from '/js/offline-store.js';
-import { renderShell, openModal, closeModal, showToast, promptModal, confirmModal } from '/js/shell.js';
+import { getCachedAsset, getCachedSheets, updateCachedSheetMetadata } from '/js/offline-store.js';
+import { renderShell, openModal, closeModal, showToast, promptModal } from '/js/shell.js';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 import { setupAdvancedFields, wireNamePreview } from '/js/takeoffAdvancedFields.js';
 import { getDefaultTakeoffFolderId, setDefaultTakeoffFolderId } from '/js/takeoffDefaultFolder.js';
@@ -754,7 +747,8 @@ function openEditSheetModal() {
       currentSheet.sheet_number = sheet.sheet_number;
       currentSheet.discipline = sheet.discipline;
       await updateCachedSheetMetadata(projectId, sheet);
-      insertSheetLabel(currentSheet, sheet.current_title || '');
+      const titleEl = document.querySelector('.sheet-label .title');
+      insertSheetLabel(currentSheet, titleEl ? titleEl.textContent : '');
       closeModal();
       showToast('Sheet updated.', 'success');
     } catch (err) {
