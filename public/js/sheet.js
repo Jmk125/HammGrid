@@ -1183,7 +1183,7 @@ function renderFragmentList() {
         <input type="number" class="fragment-rotation-input" data-action="rotation" step="0.1" title="Rotation, degrees clockwise"
           value="${(fragment.rotation || 0).toFixed(1)}" ${fragment.locked ? 'disabled' : ''}>
         <button type="button" class="icon-btn" data-action="lock" title="${fragment.locked ? 'Unlock' : 'Lock'}">${fragment.locked ? '&#128274;' : '&#128275;'}</button>
-        <button type="button" class="icon-btn" data-action="visible" title="${fragment.visible ? 'Hide' : 'Show'}">${fragment.visible ? '&#128065;' : '&#128584;'}</button>
+        <button type="button" class="icon-btn" data-action="visible" title="${fragment.visible ? 'Hide' : 'Show'}">${fragment.visible ? '&#128065;' : EYE_OFF_SVG}</button>
         <button type="button" class="icon-btn" data-action="front" title="Bring to front">&#8593;</button>
         <button type="button" class="icon-btn" data-action="back" title="Send to back">&#8595;</button>
         <button type="button" class="icon-btn" data-action="delete" title="Remove fragment">&#128465;</button>
@@ -2609,6 +2609,8 @@ function takeoffDoc() {
 // Per-sheet visual hide - purely a "declutter the drawing while I work"
 // toggle, not a delete. Keyed by item id since the same item can appear on
 // many sheets but this preference is local to the one you're looking at.
+// Eye with a slash through it — the "hidden" state icon (inherits the button's text color).
+const EYE_OFF_SVG = '<svg viewBox="0 0 24 24" width="1.1em" height="1.1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-0.15em" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/><line x1="3" y1="3" x2="21" y2="21"/></svg>';
 let hiddenTakeoffItemIds = new Set();
 function takeoffHiddenStorageKey() {
   return `hammgrid-hidden-takeoffs:${projectId}:${sheetId}`;
@@ -7884,7 +7886,7 @@ function renderTakeoffPane() {
           ? '<button type="button" class="icon-btn takeoff-row-activate-btn" data-action="activate" title="Activate">&#9654;</button>'
           : ''
       }
-      <button type="button" class="icon-btn takeoff-row-hide-btn" data-action="hide" title="${isHidden ? 'Unhide on this drawing' : 'Hide on this drawing'}">${isHidden ? '&#128584;' : '&#128065;'}</button>`;
+      <button type="button" class="icon-btn takeoff-row-hide-btn" data-action="hide" title="${isHidden ? 'Unhide on this drawing' : 'Hide on this drawing'}">${isHidden ? EYE_OFF_SVG : '&#128065;'}</button>`;
     // A plain click behaves like clicking this item's shape on the drawing
     // itself: if it's already placed on this sheet, it enters the same
     // point/segment edit mode (points selected, the edit toolbar's Start
