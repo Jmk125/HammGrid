@@ -1586,6 +1586,12 @@ async function paintCachedPreviewPlaceholder(versionId, renderToken, isTimedOut,
   }
 }
 
+// True for sheets the PlanSwift importer built (file is v<rev>_planswift.pdf).
+function isPlanswiftRaster(versionId) {
+  const v = allVersions.find((x) => x.id === versionId);
+  return !!(v && /_planswift/.test(v.pdf_path || ''));
+}
+
 function computeFinalViewport(page) {
   const unitViewport = page.getViewport({ scale: 1 });
   const longestPt = Math.max(unitViewport.width, unitViewport.height);
@@ -1665,6 +1671,7 @@ async function renderPdfAttemptInner(versionId, renderToken, isTimedOut, canvas,
     }
   }
 
+  const viewportKnownEarly = !!viewport; // placeholder is then sized to the final render
   const placeholderShown = await paintCachedPreviewPlaceholder(
     versionId,
     renderToken,
@@ -1691,14 +1698,23 @@ async function renderPdfAttemptInner(versionId, renderToken, isTimedOut, canvas,
   // which is exactly the thing the placeholder exists to hide. Keeping the
   // work off the visible canvas means the placeholder stays up, unbroken,
   // until the real image is fully ready to swap in in one atomic step.
-  const offscreen = document.createElement('canvas');
-  scratch.offscreen = offscreen;
-  offscreen.width = viewport.width;
-  offscreen.height = viewport.height;
-  const offscreenCtx = offscreen.getContext('2d');
-  offscreenCtx.imageSmoothingEnabled = true;
-  offscreenCtx.imageSmoothingQuality = 'high';
-  await page.render({ canvasContext: offscreenCtx, viewport }).promise;
+  // Image-only imports (PlanSwift TIFFs wrapped in a PDF) are a single ~30MP
+  // raster. Having PDF.js decode that (~110MB RGBA) into a second ~100MB
+  // offscreen canvas, on top of the visible canvas, is what kills the tab on
+  // an old iPad. The 4000px preview WebP is already on the canvas at the
+  // final render size from the placeholder step, so for these sheets that is
+  // the render: no decode, no offscreen buffer, same coordinate space.
+  const useStretchedPreview = placeholderShown && viewportKnownEarly && isPlanswiftRaster(versionId);
+  if (!useStretchedPreview) {
+    const offscreen = document.createElement('canvas');
+    scratch.offscreen = offscreen;
+    offscreen.width = viewport.width;
+    offscreen.height = viewport.height;
+    const offscreenCtx = offscreen.getContext('2d');
+    offscreenCtx.imageSmoothingEnabled = true;
+    offscreenCtx.imageSmoothingQuality = 'high';
+    await page.render({ canvasContext: offscreenCtx, viewport }).promise;
+  }
   if (isTimedOut() || currentRenderTask !== renderToken) return; // gave up waiting, or superseded while rendering
 
   // Capture the placeholder's view before resizing the canvas out from
@@ -1714,9 +1730,11 @@ async function renderPdfAttemptInner(versionId, renderToken, isTimedOut, canvas,
   const priorY = zoomPan ? zoomPan.state.y : null;
   const priorWidth = canvas.width;
 
-  canvas.width = viewport.width;
-  canvas.height = viewport.height;
-  ctx.drawImage(offscreen, 0, 0);
+  if (!useStretchedPreview) {
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    ctx.drawImage(scratch.offscreen, 0, 0);
+  }
 
   const priorPdfDoc = currentPdfDoc;
   currentPdfDoc = pdf;
