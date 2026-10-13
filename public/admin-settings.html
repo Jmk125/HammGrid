@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<title>Admin Settings — HammGrid</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0f2b46">
+<script src="/js/theme-boot.js"></script>
+<body>
+  <div class="topbar" id="topbar"></div>
+  <div class="app-shell">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="shell-content">
+      <main class="wide">
+        <h1>Admin Settings</h1>
+        <p class="error" id="error" style="display:none;"></p>
+        <div class="card">
+          <h2>Data storage</h2>
+          <p class="muted">Where HammGrid keeps drawings, documents, photos and the database on the server.</p>
+          <table>
+            <tbody>
+              <tr><th style="width:180px;">File storage folder</th><td id="storage-dir">&hellip;</td></tr>
+              <tr><th>Database file</th><td id="db-path">&hellip;</td></tr>
+              <tr><th>Current size</th><td id="storage-size">&hellip;</td></tr>
+            </tbody>
+          </table>
+          <p class="muted" id="storage-note"></p>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/js/api.js"></script>
+  <script type="module" src="/js/admin-settings.js"></script>
+  <script type="module" src="/js/pwa.js"></script>
+</body>

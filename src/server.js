@@ -6,6 +6,7 @@ const db = require('./db');
 const SqliteSessionStore = require('./db/sessionStore');
 const authRoutes = require('./routes/auth.routes');
 const usersRoutes = require('./routes/users.routes');
+const adminRoutes = require('./routes/admin.routes');
 const projectsRoutes = require('./routes/projects.routes');
 const revisionsRoutes = require('./routes/revisions.routes');
 const stagedSheetsRoutes = require('./routes/stagedSheets.routes');
@@ -71,6 +72,7 @@ app.use(
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/imports', importsRoutes);
 app.use('/api/projects/:projectId/revisions', revisionsRoutes);

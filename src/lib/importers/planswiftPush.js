@@ -26,11 +26,14 @@ const crypto = require('crypto');
 
 const db = require('../../db');
 const config = require('../../config');
-const { readPackage, renderScaleFor, upper, localHash, PUSHED } = require('./planswift').helpers;
+const { readPackage, renderScaleFor, upper, localHash, PUSHED, scaleLabel, scalesDiffer } = require('./planswift').helpers;
 
 const HG_FOLDER = 'From HammGrid';
 const MANIFEST_DIR = path.join(config.storageDir, 'planswift-push');
 const RECENT_LOCK_MINUTES = 60;
+// Stock PlanSwift nodes (one per class) used when the job has no node of a class to
+// clone, e.g. a job with no take-offs yet. A node found in the job itself wins.
+const BUNDLED_TEMPLATES_DIR = path.join(__dirname, 'planswift-templates');
 const MAX_FOLDER_NAME = 20; // PlanSwift's own take-off folders are cut to 20 characters
 
 // ---------------------------------------------------------------- small helpers
@@ -146,6 +149,38 @@ function sectionXml(template, { name, guid, pageGuid, points, orderIndex }) {
   return setProp(xml, 'Created By', 'HammGrid', { required: false });
 }
 
+// Page scale. The one place a push edits a node PlanSwift wrote, so it is limited to
+// pages that have no scale at all (no ScaleX property): a scale somebody set in
+// PlanSwift is never overwritten, only reported. The five properties mirror what
+// PlanSwift writes on a scaled page; ScaleX/Y = image pixels per foot.
+const sha1 = (s) => crypto.createHash('sha1').update(s).digest('hex');
+const roundScale = (v) => Math.round(v * 1e6) / 1e6;
+
+function addScaleProps(xml, { dpi, fpi }) {
+  const eol = xml.includes('\r\n') ? '\r\n' : '\n';
+  const end = xml.lastIndexOf('</Properties>');
+  if (end < 0) throw fail('The PlanSwift page has no <Properties> block', 500);
+  const lineStart = xml.lastIndexOf('\n', end) + 1;
+  const indent = /^[ \t]*/.exec(xml.slice(lineStart, end))[0];
+  let order = Math.max(-1, ...[...xml.matchAll(/\sOrderIndex="(\d+)"/g)].map((m) => Number(m[1]))) + 1;
+  const px = num(dpi / fpi);
+  const prop = (cls, name, value, extra = '', dp = '2') =>
+    `${indent}  <Property Class="${cls}" GUID="${newGuid()}" Name="${name}"${extra} OrderIndex="${order++}" DecimalPlaces="${dp}">${escAttr(value)}</Property>${eol}`;
+  const block = prop('Text', 'AutoScaled', scaleLabel(fpi))
+    + prop('Number', 'ScaleX', px, ' systemhidden="True"', '')
+    + prop('Number', 'ScaleY', px, ' systemhidden="True"', '')
+    + prop('Text', 'Scale Units', 'FT')
+    + prop('Text', 'Measurement Type', 'English');
+  return xml.slice(0, lineStart) + block + xml.slice(lineStart);
+}
+
+// Atomic file replace, like the node writes.
+function writeFileAtomic(file, text) {
+  const tmp = `${file}.hgtmp`;
+  fs.writeFileSync(tmp, text, 'utf8');
+  fs.renameSync(tmp, file);
+}
+
 function readNodeGuid(dir) {
   try {
     const m = /<Item\b[^>]*\bGUID="([^"]*)"/.exec(fs.readFileSync(path.join(dir, 'Data.xml'), 'utf8').slice(0, 4096));
@@ -198,9 +233,19 @@ function checkLock(jobDir, confirmClosed) {
 
 // ---------------------------------------------------------------- what would be sent
 
-const CLASS_TO_TYPE = { Area: 'area', Linear: 'linear', Segment: 'linear', Count: 'count' };
-const TYPE_TO_CLASS = { area: 'Area', linear: 'Linear', count: 'Count' };
-const MIN_POINTS = { area: 3, linear: 2, count: 1 };
+// The firm's PlanSwift convention: a PlanSwift "Linear" is a HammGrid perimeter and a
+// PlanSwift "Segment" is a HammGrid linear.
+const CLASS_TO_TYPE = { Area: 'area', Linear: 'perimeter', Segment: 'linear', Count: 'count' };
+const TYPE_TO_CLASS = { area: 'Area', perimeter: 'Linear', linear: 'Segment', count: 'Count' };
+const MIN_POINTS = { area: 3, perimeter: 2, linear: 2, count: 1 };
+
+function bundledTemplates() {
+  const out = {};
+  for (const d of fs.readdirSync(BUNDLED_TEMPLATES_DIR, { withFileTypes: true })) {
+    if (d.isDirectory()) out[d.name] = path.join(BUNDLED_TEMPLATES_DIR, d.name); // absolute: path.resolve(jobDir, abs) = abs
+  }
+  return out;
+}
 
 // Finds everything in the project that exists only in HammGrid (instances with no
 // PlanSwift link) and works out where each piece would go. No files are touched.
@@ -209,10 +254,10 @@ function collect({ pkgDir, projectId, jobDir }) {
   const pkg = readPackage(path.resolve(pkgDir));
   jobDir = path.resolve(jobDir || (pkg.job || {}).source_folder || '');
   if (!jobDir || !fs.existsSync(path.join(jobDir, 'Takeoff'))) throw fail('The PlanSwift job folder (Takeoff) was not found', 404);
-  const templates = pkg.templates || {};
+  const templates = { ...bundledTemplates(), ...(pkg.templates || {}) };
 
   const pkgSheets = new Map(pkg.sheets.filter((s) => s.width_pt && s.height_pt && s.dpi).map((s) => [upper(s.id), s]));
-  const hgSheets = new Map(db.prepare('SELECT id, sheet_number, external_id FROM sheets WHERE project_id = ?').all(projectId).map((s) => [s.id, s]));
+  const hgSheets = new Map(db.prepare('SELECT id, sheet_number, external_id, scale_feet_per_inch FROM sheets WHERE project_id = ?').all(projectId).map((s) => [s.id, s]));
   const pkgItems = new Map(pkg.takeoff_items.map((i) => [upper(i.id), i]));
 
   const rows = db
@@ -237,8 +282,8 @@ function collect({ pkgDir, projectId, jobDir }) {
   const needTemplate = new Set();
 
   for (const r of rows) {
-    const type = r.type === 'perimeter' ? null : r.type;
-    if (!type || !TYPE_TO_CLASS[type]) { skip('perimeter take-offs are not supported', 1); continue; }
+    const type = r.type;
+    if (!TYPE_TO_CLASS[type]) { skip(`${type} take-offs are not supported`, 1); continue; }
     const sheet = hgSheets.get(r.sheet_id);
     const ps = sheet && sheet.external_id ? pkgSheets.get(upper(sheet.external_id)) : null;
     if (!ps) { skip('on a sheet that is not linked to a PlanSwift page', 1); continue; }
@@ -293,6 +338,22 @@ function collect({ pkgDir, projectId, jobDir }) {
     work.push(w);
   }
 
+  // Page scales: HammGrid has one, the PlanSwift page has none -> send it. Both have
+  // one and they differ -> report only.
+  const scaleWork = [];
+  const scaleMismatch = [];
+  for (const s of hgSheets.values()) {
+    const ps = s.external_id ? pkgSheets.get(upper(s.external_id)) : null;
+    const fpi = s.scale_feet_per_inch;
+    if (!ps || !(fpi > 0)) continue;
+    const psFpi = ps.scale && ps.scale.feet_per_inch;
+    if (psFpi) {
+      if (scalesDiffer(fpi, psFpi)) scaleMismatch.push({ sheet: s.sheet_number, hammgrid: scaleLabel(fpi), planswift: scaleLabel(psFpi) });
+    } else if (!ps.scale && ps.source_folder && fs.existsSync(path.join(jobDir, ps.source_folder, 'Data.xml'))) {
+      scaleWork.push({ sheetId: s.id, sheetNumber: s.sheet_number, rel: ps.source_folder, dpi: ps.dpi, fpi });
+    }
+  }
+
   const hgFolderExists = fs.existsSync(path.join(jobDir, 'Takeoff', HG_FOLDER));
   if (work.some((w) => w.target.kind === 'new') && !hgFolderExists && !templates.Folder) {
     problems.push('The PlanSwift job has no Folder to copy from, so new items cannot be created.');
@@ -322,10 +383,13 @@ function collect({ pkgDir, projectId, jobDir }) {
       shapes: w.shapes.reduce((a, s) => a + s.parts.length, 0),
       sheets: [...new Set(w.shapes.map((s) => s.sheetNumber))].slice(0, 6),
     })),
+    scales_to_set: scaleWork.length,
+    scales: scaleWork.slice(0, 60).map((s) => ({ sheet: s.sheetNumber, label: scaleLabel(s.fpi) })),
+    scale_mismatch: scaleMismatch,
     skipped: [...skipped].map(([reason, count]) => ({ reason, count })),
     problems,
   };
-  return { plan, work, jobDir, templates };
+  return { plan, work, scaleWork, jobDir, templates };
 }
 
 function plan(opts) {
@@ -362,7 +426,7 @@ function lastPush(projectId) {
 
 // Creates one node folder (Data.xml written via a temp name, then renamed).
 function createNode({ jobDir, templateRel, parentDir, wantedName, build, created, kind }) {
-  const template = fs.readFileSync(path.join(jobDir, templateRel, 'Data.xml'), 'utf8');
+  const template = fs.readFileSync(path.resolve(jobDir, templateRel, 'Data.xml'), 'utf8');
   const name = uniqueFolderName(parentDir, wantedName);
   const dir = path.join(parentDir, name);
   fs.mkdirSync(dir); // not recursive: fails loudly if it somehow exists
@@ -377,10 +441,10 @@ function createNode({ jobDir, templateRel, parentDir, wantedName, build, created
 }
 
 function apply({ pkgDir, projectId, userId, jobDir, confirmClosed }) {
-  const { plan: p, work, jobDir: job, templates } = collect({ pkgDir, projectId, jobDir });
-  if (p.problems.length && !work.length) throw fail(p.problems[0]);
+  const { plan: p, work, scaleWork, jobDir: job, templates } = collect({ pkgDir, projectId, jobDir });
+  if (p.problems.length && !work.length && !scaleWork.length) throw fail(p.problems[0]);
   checkLock(job, confirmClosed);
-  if (!work.length) return { plan: p, written: { items: 0, sections: 0 } };
+  if (!work.length && !scaleWork.length) return { plan: p, written: { items: 0, sections: 0, scales: 0 } };
 
   const manifest = {
     id: crypto.randomUUID(),
@@ -392,11 +456,24 @@ function apply({ pkgDir, projectId, userId, jobDir, confirmClosed }) {
     created: [],
     links: [], // { guid, instance_ids } - HammGrid rows linked to a new section
     items: [], // { hg_item_id, guid } - HammGrid items linked to a new PlanSwift item
+    scales: [], // { file, sheet_id, original, written_sha, external_scale } - page Data.xml files edited
   };
   saveManifest(manifest);
   const created = manifest.created;
 
   try {
+    // Page scales first. The original text is kept in the manifest so undo (and a
+    // failed push) can put the file back exactly.
+    for (const s of scaleWork) {
+      const file = path.join(job, s.rel, 'Data.xml');
+      const original = fs.readFileSync(file, 'utf8');
+      if (propRegex('ScaleX').test(original)) continue; // scaled in PlanSwift since the check
+      const written = addScaleProps(original, s);
+      manifest.scales.push({ file, sheet_id: s.sheetId, original, written_sha: sha1(written), external_scale: roundScale(s.dpi / Number(num(s.dpi / s.fpi))) });
+      saveManifest(manifest);
+      writeFileAtomic(file, written);
+    }
+
     const takeoffDir = path.join(job, 'Takeoff');
     let hgFolderDir = path.join(takeoffDir, HG_FOLDER);
     if (work.some((w) => w.target.kind === 'new') && !fs.existsSync(hgFolderDir)) {
@@ -444,9 +521,12 @@ function apply({ pkgDir, projectId, userId, jobDir, confirmClosed }) {
       saveManifest(manifest);
     }
   } catch (err) {
-    // Remove whatever this push created so far; PlanSwift data is untouched either way.
+    // Remove whatever this push created so far and restore edited pages.
     for (let i = created.length - 1; i >= 0; i--) {
       try { fs.rmSync(created[i].path, { recursive: true, force: true }); } catch (e) { /* best effort */ }
+    }
+    for (const s of manifest.scales) {
+      try { writeFileAtomic(s.file, s.original); } catch (e) { /* best effort */ }
     }
     manifest.status = 'failed';
     manifest.error = err.message;
@@ -466,15 +546,18 @@ function apply({ pkgDir, projectId, userId, jobDir, confirmClosed }) {
     }
     const linkItem = db.prepare('UPDATE take_off_items SET external_id = ?, external_hash = ? WHERE id = ? AND external_id IS NULL');
     for (const it of manifest.items) linkItem.run(it.guid, PUSHED, it.hg_item_id);
+    // The scale now in PlanSwift is the one HammGrid has, so the next refresh sees no change.
+    const setScale = db.prepare('UPDATE sheets SET external_scale = ? WHERE id = ?');
+    for (const s of manifest.scales) setScale.run(s.external_scale, s.sheet_id);
     db.prepare('INSERT INTO activity_log (project_id, actor, action, detail) VALUES (?, ?, ?, ?)').run(
       projectId, String(userId), 'planswift_push',
-      JSON.stringify({ job: p.job, new_items: p.new_items, existing_items: p.existing_items, sections: p.sections, instances: p.instances, manifest: manifest.id })
+      JSON.stringify({ job: p.job, new_items: p.new_items, existing_items: p.existing_items, sections: p.sections, instances: p.instances, scales: manifest.scales.length, manifest: manifest.id })
     );
   })();
   manifest.status = 'applied';
   manifest.finished_at = new Date().toISOString();
   saveManifest(manifest);
-  return { plan: p, written: { items: manifest.items.length, sections: manifest.links.length }, push_id: manifest.id };
+  return { plan: p, written: { items: manifest.items.length, sections: manifest.links.length, scales: manifest.scales.length }, push_id: manifest.id };
 }
 
 // ---------------------------------------------------------------- undo
@@ -496,6 +579,17 @@ function undo({ projectId, userId, jobDir, confirmClosed }) {
       }
     }
   }
+  // Page files we edited: restore only if still exactly what we wrote.
+  const scalesToRestore = [];
+  for (const s of manifest.scales || []) {
+    let cur = null;
+    try { cur = fs.readFileSync(s.file, 'utf8'); } catch (err) { /* page gone */ }
+    if (cur === null) continue;
+    if (sha1(cur) !== s.written_sha) throw fail(`${s.file} was changed in PlanSwift after the push; not removing anything`, 409);
+    scalesToRestore.push(s);
+  }
+  for (const s of scalesToRestore) writeFileAtomic(s.file, s.original);
+
   for (let i = manifest.created.length - 1; i >= 0; i--) {
     const c = manifest.created[i];
     if (!fs.existsSync(c.path)) continue;
@@ -513,14 +607,16 @@ function undo({ projectId, userId, jobDir, confirmClosed }) {
     for (const l of manifest.links) for (const id of l.instance_ids) clr.run(id, l.guid);
     const clrItem = db.prepare('UPDATE take_off_items SET external_id = NULL, external_hash = NULL WHERE id = ? AND external_id = ?');
     for (const it of manifest.items) clrItem.run(it.hg_item_id, it.guid);
+    const clrScale = db.prepare('UPDATE sheets SET external_scale = NULL WHERE id = ? AND external_scale = ?');
+    for (const s of manifest.scales || []) clrScale.run(s.sheet_id, s.external_scale);
     db.prepare('INSERT INTO activity_log (project_id, actor, action, detail) VALUES (?, ?, ?, ?)').run(
-      projectId, String(userId), 'planswift_push_undo', JSON.stringify({ manifest: manifest.id, sections: manifest.links.length })
+      projectId, String(userId), 'planswift_push_undo', JSON.stringify({ manifest: manifest.id, sections: manifest.links.length, scales: (manifest.scales || []).length })
     );
   })();
   manifest.status = 'undone';
   manifest.undone_at = new Date().toISOString();
   saveManifest(manifest);
-  return { undone: { items: manifest.items.length, sections: manifest.links.length } };
+  return { undone: { items: manifest.items.length, sections: manifest.links.length, scales: (manifest.scales || []).length } };
 }
 
-module.exports = { plan, apply, undo, lastPush, collect };
+module.exports = { plan, apply, undo, lastPush, collect, addScaleProps };

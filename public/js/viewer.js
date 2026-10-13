@@ -593,6 +593,11 @@ document.getElementById('discipline-filter').addEventListener('change', () => {
   else renderFromCache();
 });
 document.getElementById('revision-filter').addEventListener('change', () => {
+  if (!combinedMode) {
+    const value = document.getElementById('revision-filter').value;
+    if (value) localStorage.setItem(revisionStorageKey(), value);
+    else localStorage.removeItem(revisionStorageKey());
+  }
   if (combinedMode) renderGrid(lastItems); // unreachable in practice - the control is hidden in combined mode, see loadCombinedFilters
   else renderFromCache();
 });
@@ -686,6 +691,8 @@ async function initCombined(me) {
     // to something not yet in the list is silently ignored by the browser.
     const savedDiscipline = localStorage.getItem(disciplineStorageKey());
     if (savedDiscipline) document.getElementById('discipline-filter').value = savedDiscipline;
+    const savedRevision = localStorage.getItem(revisionStorageKey());
+    if (savedRevision) document.getElementById('revision-filter').value = savedRevision;
     await ensureProjectCacheFresh(projectId, currentProject || {});
   } catch (err) {
     // offline on first-ever load with no cached project metadata - filters just stay empty

@@ -1,4 +1,5 @@
 import { applyTheme } from '/js/shell.js';
+import { PANE_SECTIONS, resolvePaneOrder } from '/js/paneOrder.js';
 
 const statusEl = document.getElementById('settings-status');
 let statusTimer = null;
@@ -36,6 +37,44 @@ async function save(patch) {
   const magnifierCornerValue = settings.magnifierCorner === 'bottom-right' ? 'bottom-right' : 'bottom-left';
   const magnifierCornerInput = document.querySelector(`input[name="magnifierCorner"][value="${magnifierCornerValue}"]`);
   if (magnifierCornerInput) magnifierCornerInput.checked = true;
+
+  const canTakeoffs = me.role === 'admin' || !!me.can_takeoff;
+  let paneOrder = resolvePaneOrder(settings.paneSectionOrder, canTakeoffs);
+  const paneListEl = document.getElementById('pane-order-list');
+  function renderPaneOrder() {
+    paneListEl.innerHTML = '';
+    paneOrder.forEach((id, i) => {
+      const li = document.createElement('li');
+      const label = document.createElement('span');
+      label.textContent = PANE_SECTIONS.find((s) => s.id === id).label;
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.textContent = '▲';
+      up.title = 'Move up';
+      up.disabled = i === 0;
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.textContent = '▼';
+      down.title = 'Move down';
+      down.disabled = i === paneOrder.length - 1;
+      const move = (delta) => {
+        const j = i + delta;
+        [paneOrder[i], paneOrder[j]] = [paneOrder[j], paneOrder[i]];
+        renderPaneOrder();
+        save({ paneSectionOrder: paneOrder });
+      };
+      up.addEventListener('click', () => move(-1));
+      down.addEventListener('click', () => move(1));
+      li.append(label, up, down);
+      paneListEl.appendChild(li);
+    });
+  }
+  renderPaneOrder();
+  document.getElementById('pane-order-reset').addEventListener('click', () => {
+    paneOrder = resolvePaneOrder(null, canTakeoffs);
+    renderPaneOrder();
+    save({ paneSectionOrder: paneOrder });
+  });
 
   document.querySelectorAll('input[name="theme"]').forEach((input) => {
     input.addEventListener('change', () => save({ theme: input.value }));

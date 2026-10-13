@@ -1,6 +1,7 @@
 import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { setupZoomPan } from '/js/zoomPan.js';
 import { openModal, closeModal, promptModal } from '/js/shell.js';
+import { isTextbox, buildTextboxNode } from '/js/textbox.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -64,7 +65,12 @@ function renderMarkup(m) {
   const { w, h } = vbSize();
   const style = m.style || {};
   let node;
-  if (m.type === 'text') {
+  if (isTextbox(m)) {
+    node = buildTextboxNode(m, w, h, {
+      color: style.color || '#e11d48',
+      strokeWidth: (style.strokeWidth || 2) / (zoomPan ? zoomPan.state.scale : 1),
+    });
+  } else if (m.type === 'text') {
     node = el('text');
     node.setAttribute('x', m.geometry.x * w);
     node.setAttribute('y', m.geometry.y * h);

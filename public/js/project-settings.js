@@ -406,6 +406,7 @@ async function setupPlanswiftLink() {
     if (shapes.keptLocal.length) {
       lines.push(`<p><b>${shapes.keptLocal.length} shape(s) deleted in PlanSwift but edited here</b> — kept as HammGrid-only shapes.</p>`);
     }
+    lines.push(scaleMismatchHtml(sheets.scaleMismatch));
     if (sheets.newPages.length) {
       lines.push(`<p class="muted">${sheets.newPages.length} PlanSwift page(s) are not in this project and were not added (take-offs on them are skipped): ${esc(sheets.newPages.slice(0, 12).join(', '))}${sheets.newPages.length > 12 ? '…' : ''}</p>`);
     }
@@ -467,6 +468,13 @@ async function setupPlanswiftLink() {
   });
 }
 
+// Sheets scaled differently in HammGrid and PlanSwift (shown by refresh and push).
+function scaleMismatchHtml(mismatches) {
+  if (!mismatches || !mismatches.length) return '';
+  const items = mismatches.slice(0, 20).map((m) => `<li>${esc(`${m.sheet}: HammGrid ${m.hammgrid}, PlanSwift ${m.planswift}`)}</li>`).join('');
+  return `<p><b>${mismatches.length} sheet(s) have a different scale in HammGrid than in PlanSwift.</b> Neither side is changed, so quantities will disagree until one is corrected:<ul style="margin:4px 0 0 18px;">${items}</ul>${mismatches.length > 20 ? `<span class="muted">…and ${mismatches.length - 20} more</span>` : ''}</p>`;
+}
+
 // ---- Send HammGrid-only take-offs to the linked PlanSwift job -----------------
 // Writes into the live PlanSwift job folder, so: a plan is shown first, a warning
 // dialog must be confirmed, and the last push can be undone.
@@ -519,20 +527,24 @@ function setupPlanswiftPush(initialLink) {
   function renderPlan(plan) {
     const lines = [];
     if (plan.problems.length) lines.push(`<p><b>Cannot send yet:</b>${list(plan.problems)}</p>`);
-    if (!plan.instances) {
-      lines.push('<p>Nothing to send — every take-off in this project is already in PlanSwift (or can\'t be sent, see below).</p>');
+    const canSend = plan.instances || plan.scales_to_set;
+    if (!canSend) {
+      lines.push('<p>Nothing to send — every take-off and page scale in this project is already in PlanSwift (or can\'t be sent, see below).</p>');
     } else {
       lines.push(`<p>Ready to add to <b>${esc(plan.job)}</b>:</p>
         <ul style="margin:4px 0 0 18px;">
+          <li><b>${plan.scales_to_set}</b> page scale(s) set on PlanSwift pages that have none</li>
           <li><b>${plan.new_items}</b> new take-off item(s), in a "From HammGrid" folder</li>
           <li><b>${plan.existing_items}</b> existing PlanSwift item(s) getting new shapes</li>
           <li><b>${plan.sections}</b> drawn shape(s) in total (${plan.instances} HammGrid take-off row(s))</li>
         </ul>`);
-      lines.push(`<details style="margin-top:6px;"><summary class="muted">Show items</summary>${list(plan.items.map((i) => `${i.name} — ${i.type}, ${i.shapes} shape(s) on ${i.sheets.join(', ')}${i.target === 'new' ? ' (new item)' : ' (added to existing item)'}`))}${plan.new_items + plan.existing_items > plan.items.length ? '<p class="muted">…and more</p>' : ''}</details>`);
+      if (plan.scales_to_set) lines.push(`<details style="margin-top:6px;"><summary class="muted">Show page scales</summary>${list(plan.scales.map((s) => `${s.sheet}: ${s.label}`))}${plan.scales_to_set > plan.scales.length ? '<p class="muted">…and more</p>' : ''}</details>`);
+      if (plan.instances) lines.push(`<details style="margin-top:6px;"><summary class="muted">Show items</summary>${list(plan.items.map((i) => `${i.name} — ${i.type}, ${i.shapes} shape(s) on ${i.sheets.join(', ')}${i.target === 'new' ? ' (new item)' : ' (added to existing item)'}`))}${plan.new_items + plan.existing_items > plan.items.length ? '<p class="muted">…and more</p>' : ''}</details>`);
     }
+    lines.push(scaleMismatchHtml(plan.scale_mismatch));
     if (plan.skipped.length) lines.push(`<p class="muted">Not sent:${list(plan.skipped.map((s) => `${s.count} take-off row(s) ${s.reason}`))}</p>`);
     if (plan.lock) lines.push(`<p class="muted">Lock file present on the job: ${lockText(plan.lock)}.</p>`);
-    if (plan.instances) lines.push('<div class="row" style="margin-top:8px;"><button class="danger" type="button" id="planswift-push-go-btn">Write to PlanSwift…</button><button type="button" id="planswift-push-cancel-btn">Cancel</button></div>');
+    if (canSend) lines.push('<div class="row" style="margin-top:8px;"><button class="danger" type="button" id="planswift-push-go-btn">Write to PlanSwift…</button><button type="button" id="planswift-push-cancel-btn">Cancel</button></div>');
     else lines.push('<div class="row" style="margin-top:8px;"><button type="button" id="planswift-push-cancel-btn">Close</button></div>');
     resultEl.innerHTML = lines.join('');
     resultEl.style.display = '';
@@ -545,11 +557,11 @@ function setupPlanswiftPush(initialLink) {
     if (!go) return;
     go.addEventListener('click', () => confirmDialog({
       title: 'Write into the live PlanSwift job?',
-      body: `<p>This will create <b>${plan.sections}</b> new shape(s) and <b>${plan.new_items}</b> new item(s) directly in the PlanSwift job:</p>
+      body: `<p>This will create <b>${plan.sections}</b> new shape(s) and <b>${plan.new_items}</b> new item(s)${plan.scales_to_set ? `, and set the scale on <b>${plan.scales_to_set}</b> page(s),` : ''} directly in the PlanSwift job:</p>
         <p class="muted">${esc(plan.job_path)}</p>
         <ul style="margin:4px 0 8px 18px;">
           <li>Make sure <b>nobody has this job open in PlanSwift</b>. If they do, they won't see the changes and could overwrite them.</li>
-          <li>Nothing that PlanSwift already wrote is changed or deleted. Only new folders are added.</li>
+          <li>Nothing that PlanSwift already wrote is changed or deleted. New folders are added, and pages with no scale get one; a scale already set in PlanSwift is never touched.</li>
           <li>PlanSwift users must close and reopen the job to see the new take-offs.</li>
           <li>PlanSwift recalculates quantities itself; HammGrid formulas and item properties are not sent.</li>
           <li>You can use "Undo last push" afterwards to remove exactly what was added.</li>
@@ -560,8 +572,8 @@ function setupPlanswiftPush(initialLink) {
         statusEl.textContent = 'Writing…';
         try {
           const out = await api('POST', `/api/imports/${importId}/push`, body);
-          showToast(`Sent to PlanSwift: ${out.written.items} new item(s), ${out.written.sections} shape(s). Reopen the job in PlanSwift to see them.`, 'success');
-          statusEl.textContent = 'Done. Close and reopen the job in PlanSwift to see the new take-offs.';
+          showToast(`Sent to PlanSwift: ${out.written.items} new item(s), ${out.written.sections} shape(s), ${out.written.scales || 0} page scale(s). Reopen the job in PlanSwift to see them.`, 'success');
+          statusEl.textContent = 'Done. Close and reopen the job in PlanSwift to see the changes.';
           reset();
           showUndo({ status: 'applied' });
         } catch (err) {
@@ -599,12 +611,12 @@ function setupPlanswiftPush(initialLink) {
 
   undoBtn.addEventListener('click', () => confirmDialog({
     title: 'Undo the last push to PlanSwift?',
-    body: `<p>This removes exactly the folders the last push added to the PlanSwift job, and unlinks them in HammGrid (the take-offs stay in HammGrid). If anyone added something inside those folders in PlanSwift since, nothing is removed.</p>`,
+    body: `<p>This removes exactly the folders the last push added to the PlanSwift job, reverts any page scales it set, and unlinks them in HammGrid (the take-offs stay in HammGrid). If anyone added something inside those folders in PlanSwift since, nothing is removed.</p>`,
     lock: null,
     action: 'Undo push',
     onConfirm: async (body) => {
       const out = await api('POST', '/api/imports/push-undo', { project_id: Number(projectId), confirm_closed: true });
-      showToast(`Removed ${out.undone.sections} shape(s) and ${out.undone.items} item(s) from PlanSwift.`, 'success');
+      showToast(`Removed ${out.undone.sections} shape(s) and ${out.undone.items} item(s) from PlanSwift${out.undone.scales ? `, and reverted ${out.undone.scales} page scale(s)` : ''}.`, 'success');
       statusEl.textContent = 'Undone.';
       showUndo({ status: 'undone' });
     },

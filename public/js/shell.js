@@ -485,6 +485,27 @@ function exportModal(projectId) {
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
 }
 
+// Sidebar for pages that sit above any single project (the projects list,
+// admin pages). Only admins have anything to put here today, so for everyone
+// else the sidebar element is removed and the page goes full-width.
+export function renderGlobalSidebar(sidebarEl, active, me) {
+  if (!sidebarEl) return;
+  if (me.role !== 'admin') {
+    sidebarEl.remove();
+    return;
+  }
+  const items = [
+    { key: 'projects', label: 'Projects', href: '/dashboard.html' },
+    { key: 'users', label: 'Users', href: '/users.html' },
+    { key: 'admin', label: 'Admin Settings', href: '/admin-settings.html' },
+  ];
+  sidebarEl.innerHTML = `
+    <nav>
+      ${items.map((i) => `<a href="${i.href}" data-key="${i.key}" class="${i.key === active ? 'active' : ''}">${i.label}</a>`).join('')}
+    </nav>
+  `;
+}
+
 export async function renderShell({
   topbarEl,
   sidebarEl,
@@ -522,6 +543,12 @@ export async function renderShell({
   if (overlayBtn) overlayBtn.addEventListener('click', onOverlayClick);
 
   if (!sidebarEl) return;
+
+  if (!projectId && !isCombined) {
+    renderGlobalSidebar(sidebarEl, active, me);
+    wireSidebarToggle(topbarEl, sidebarEl);
+    return;
+  }
 
   // "View Multiple" (see dashboard.js) - Sheets/Documents/Flags have combined
   // flavors, so their links point back to the combined URL whenever there's
@@ -586,6 +613,10 @@ export async function renderShell({
     });
   }
 
+  wireSidebarToggle(topbarEl, sidebarEl);
+}
+
+function wireSidebarToggle(topbarEl, sidebarEl) {
   const toggleBtn = topbarEl.querySelector('#sidebar-toggle-btn');
   if (toggleBtn) {
     const collapsedKey = 'sidebar-collapsed';
