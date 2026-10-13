@@ -35,8 +35,55 @@ function disciplineStorageKey() {
   return `hammgrid-discipline-filter:${projectId}`;
 }
 
-function revisionStorageKey() {
-  return `hammgrid-revision-filter:${projectId}`;
+// Bookmarks are per-device (localStorage), keyed by sheet_id - sheet ids are
+// globally unique, so one key also covers combined mode.
+const BOOKMARKS_KEY = 'hammgrid-bookmarked-sheets';
+let bookmarkedIds = new Set();
+let bookmarksOnly = false;
+try {
+  bookmarkedIds = new Set(JSON.parse(localStorage.getItem(BOOKMARKS_KEY) || '[]'));
+  bookmarksOnly = localStorage.getItem('hammgrid-bookmarks-only') === '1';
+} catch (e) { /* storage unavailable - bookmarks just don't persist */ }
+
+function saveBookmarks() {
+  try { localStorage.setItem(BOOKMARKS_KEY, JSON.stringify([...bookmarkedIds])); } catch (e) { /* ignore */ }
+}
+
+function toggleBookmark(sheetId) {
+  if (bookmarkedIds.has(sheetId)) bookmarkedIds.delete(sheetId);
+  else bookmarkedIds.add(sheetId);
+  saveBookmarks();
+  renderGrid(lastItems);
+}
+
+function syncBookmarkButton() {
+  const btn = document.getElementById('bookmark-filter-btn');
+  btn.classList.toggle('active', bookmarksOnly);
+  btn.setAttribute('aria-pressed', String(bookmarksOnly));
+}
+
+function showBookmarkMenu(e, sheet) {
+  e.preventDefault();
+  document.getElementById('takeoff-context-menu')?.remove();
+  const menu = document.createElement('div');
+  menu.id = 'takeoff-context-menu'; // reuses the existing context-menu styling
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = bookmarkedIds.has(sheet.sheet_id) ? '🔖 Remove bookmark' : '🔖 Bookmark';
+  btn.addEventListener('click', () => {
+    menu.remove();
+    toggleBookmark(sheet.sheet_id);
+  });
+  menu.appendChild(btn);
+  document.body.appendChild(menu);
+  menu.style.left = `${Math.min(e.clientX, window.innerWidth - 180)}px`;
+  menu.style.top = `${Math.min(e.clientY, window.innerHeight - 50)}px`;
+  const close = (ev) => {
+    if (menu.contains(ev.target)) return;
+    menu.remove();
+    document.removeEventListener('mousedown', close, true);
+  };
+  document.addEventListener('mousedown', close, true);
 }
 
 function filteredOrderKey() {
@@ -177,6 +224,7 @@ function renderGrid(items) {
   if (discipline) filtered = filtered.filter((s) => s.discipline === discipline);
   if (revisionId) filtered = filtered.filter((s) => String(s.revision_id) === revisionId);
   if (combinedMode && projectFilterValue) filtered = filtered.filter((s) => String(s.project_id) === projectFilterValue);
+  if (bookmarksOnly) filtered = filtered.filter((s) => bookmarkedIds.has(s.sheet_id));
   const isMetadataMatch = (s) =>
     s.sheet_number.toLowerCase().includes(search) ||
     (s.title || '').toLowerCase().includes(search) ||
@@ -224,6 +272,7 @@ function renderGrid(items) {
     }
     card.innerHTML = `
       ${selectionMode ? `<span class="card-checkbox"><input type="checkbox" tabindex="-1" ${selected ? 'checked' : ''}><span class="checkmark"></span></span>` : ''}
+      ${bookmarkedIds.has(s.sheet_id) ? '<span class="bookmark-badge">🔖</span>' : ''}
       <div class="thumb-wrap"><img src="${s.thumbSrc}" loading="lazy"></div>
       <div class="meta">
         <div class="sheet-number">${s.sheet_number}</div>
@@ -233,6 +282,7 @@ function renderGrid(items) {
     if (selectionMode) {
       card.addEventListener('click', () => toggleSheetSelection(s.sheet_id, card));
     }
+    card.addEventListener('contextmenu', (e) => showBookmarkMenu(e, s));
     grid.appendChild(card);
   }
   if (selectionMode) updateSelectionBar();
@@ -519,6 +569,13 @@ async function renderFromCombinedLiveApi() {
   renderGrid(items);
 }
 
+syncBookmarkButton();
+document.getElementById('bookmark-filter-btn').addEventListener('click', () => {
+  bookmarksOnly = !bookmarksOnly;
+  try { localStorage.setItem('hammgrid-bookmarks-only', bookmarksOnly ? '1' : '0'); } catch (e) { /* ignore */ }
+  syncBookmarkButton();
+  renderGrid(lastItems);
+});
 document.getElementById('project-filter').addEventListener('change', (e) => {
   projectFilterValue = e.target.value;
   renderGrid(lastItems);

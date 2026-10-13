@@ -1007,6 +1007,17 @@ tr.doc-selected { background: var(--accent-light); }
 }
 #takeoff-context-menu button:hover { background: var(--accent-light); }
 
+.bookmark-filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.sheet-card .bookmark-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  font-size: 16px;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+}
+
 .takeoff-color-dot {
   display: inline-block;
   width: 10px;
