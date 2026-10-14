@@ -200,6 +200,9 @@ async function refreshCachedSheetMetadata(projectId, currentSheets) {
       discipline: sheet.discipline,
       current_revision_id: sheet.current_version.revision_id,
       current_title: sheet.current_version.title,
+      // The viewer's PlanSwift-raster check reads pdf_path; offline there is
+      // no other source for it, so it must live in the cached row.
+      current_pdf_path: sheet.current_version.pdf_path ?? existing.current_pdf_path,
       // Scale/scale-zones are sheet metadata (not tied to the PDF version),
       // so this needs refreshing even when the sheet's current version -
       // and therefore its cached PDF - hasn't changed at all.
@@ -419,6 +422,7 @@ export async function syncProject(projectId, { onProgress } = {}) {
           current_version_id: cv.id,
           current_revision_id: cv.revision_id,
           current_title: cv.title,
+          current_pdf_path: cv.pdf_path,
           scale_feet_per_inch: sheet.scale_feet_per_inch,
           scale_zones: sheet.scale_zones || [],
         });
