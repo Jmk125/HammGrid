@@ -4940,7 +4940,13 @@ function showTakeoffContextMenu(x, y, instance) {
   }
   menu.querySelector('[data-action="change"]').addEventListener('click', () => {
     hideTakeoffContextMenu();
-    openChangeTakeoffItemModal(instance);
+    // If the right-clicked shape is part of the current multi-selection, move
+    // the whole selection (edited piece + ctrl-clicked extras), not just it.
+    const selectedIds = new Set(editingInstance ? [editingInstance.id, ...extraSelectedInstanceIds] : []);
+    const targets = selectedIds.has(instance.id)
+      ? sheetTakeoffInstances.filter((i) => selectedIds.has(i.id) && i.item_id === instance.item_id)
+      : [instance];
+    openChangeTakeoffItemModal(instance, targets.length ? targets : [instance]);
   });
   menu.querySelector('[data-action="goto"]').addEventListener('click', () => {
     hideTakeoffContextMenu();
@@ -5013,11 +5019,12 @@ function showSheetLinkContextMenu(x, y, targetSheetId) {
   }, 0);
 }
 
-function openChangeTakeoffItemModal(instance) {
+function openChangeTakeoffItemModal(instance, targets = [instance]) {
   const sameTypeItems = takeoffItems.filter((i) => i.type === instance.item_type && i.id !== instance.item_id);
+  const many = targets.length > 1;
   openModal(`
     <h2>Change item</h2>
-    <p class="muted">Move this ${escapeHtml(instance.item_type)} take-off to a different item - the whole placed shape, not part of it.</p>
+    <p class="muted">Move ${many ? `these ${targets.length} ${escapeHtml(instance.item_type)} take-offs` : `this ${escapeHtml(instance.item_type)} take-off`} to a different item - the whole placed shape${many ? 's' : ''}, not part of ${many ? 'them' : 'it'}.</p>
     <div class="field">
       <label>Move to an existing item</label>
       <select id="change-item-select">
@@ -5067,10 +5074,12 @@ function openChangeTakeoffItemModal(instance) {
         takeoffItems.push({ ...item, total_quantity: 0, instance_count: 0 });
         targetItemId = item.id;
       }
-      await api('PATCH', `/api/take-off-instances/${instance.id}`, { item_id: targetItemId });
+      for (const t of targets) {
+        await api('PATCH', `/api/take-off-instances/${t.id}`, { item_id: targetItemId });
+      }
       closeModal();
-      showToast('Take-off moved.', 'success');
-      if (editingInstance && editingInstance.id === instance.id) exitTakeoffEditMode();
+      showToast(many ? `${targets.length} take-offs moved.` : 'Take-off moved.', 'success');
+      if (editingInstance && targets.some((t) => t.id === editingInstance.id)) exitTakeoffEditMode();
       if (activeTakeoffItemId === instance.item_id) deactivateTakeoff();
       await Promise.all([loadSheetTakeoffInstances(), loadTakeoffItems()]);
       renderTakeoffPane();
