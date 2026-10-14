@@ -673,7 +673,7 @@ document.getElementById('download-doc-btn').addEventListener('click', () => {
 
   if (shareToken) {
     document.getElementById('user-menu-slot').style.display = 'none';
-    document.querySelector('.brand').textContent = 'HammGrid — Shared Document';
+    document.querySelector('.brand').textContent = 'Shared Document';
     document.getElementById('doc-label').textContent = 'Shared document';
   } else {
     const me = await requireSession();

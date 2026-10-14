@@ -31,7 +31,7 @@ function renderTopbar() {
   applyTheme(me.settings);
   const topbar = document.getElementById('topbar');
   topbar.innerHTML = `
-    <a class="brand" href="/dashboard.html">HammGrid</a>
+    <a class="brand" href="/dashboard.html"></a>
     <div class="row topbar-actions">
       <div id="user-menu-slot"></div>
     </div>
