@@ -8302,6 +8302,71 @@ function restoreTakeoffFromPopout() {
   renderTakeoffPane();
 }
 
+// Shift+A: small type picker (Linear / Perimeter / Area / Count), then it
+// "clicks" the matching toolbar button so the flow is identical to the normal
+// new take-off path (scale check, draft clearing, naming modal). Runs in the
+// capture phase so keys typed into the picker never reach the other handlers
+// (plain A = arc, P = freeze pane, etc.).
+function setupTakeoffTypeShortcut(grid, defs) {
+  const hotkeys = { l: 'linear', p: 'perimeter', a: 'area', c: 'count' };
+  const pick = (tool) => {
+    closeModal();
+    const btn = grid.querySelector(`[data-tool="${tool}"]`);
+    if (!btn || btn.disabled) return;
+    // The toolbar button toggles off when its own tool is already armed;
+    // disarm first so this always starts a fresh item.
+    if (takeoffTool) deactivateTakeoff();
+    btn.click();
+  };
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      const picker = document.getElementById('takeoff-type-picker');
+      if (picker) {
+        const idx = Number(e.key) - 1;
+        const tool = defs[idx] ? defs[idx].tool : hotkeys[e.key.toLowerCase()];
+        if (e.key === 'Escape') {
+          closeModal();
+        } else if (tool && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          pick(tool);
+        } else {
+          return;
+        }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
+      if (e.key !== 'A' || !e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = (document.activeElement && document.activeElement.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (document.querySelector('.modal-backdrop')) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (!scaleFeetPerInch) {
+        showToast('Set a scale first.', 'error');
+        return;
+      }
+      const labels = { linear: 'Linear', perimeter: 'Perimeter', area: 'Area', count: 'Count' };
+      const keyFor = (tool) => Object.keys(hotkeys).find((k) => hotkeys[k] === tool).toUpperCase();
+      const backdrop = openModal(`
+        <div id="takeoff-type-picker">
+          <h2>New take-off item</h2>
+          <div class="takeoff-type-picker-list" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            ${defs
+              .map(
+                (d, i) =>
+                  `<button type="button" class="tool-btn" data-pick="${d.tool}" style="padding:10px;">${labels[d.tool]} <span class="muted">(${keyFor(d.tool)})</span></button>`
+              )
+              .join('')}
+          </div>
+        </div>
+      `);
+      backdrop.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => pick(b.dataset.pick)));
+    },
+    true
+  );
+}
+
 async function setupTakeoffTools() {
   document.getElementById('section-takeoffs').style.display = '';
   document.getElementById('sheet-pane').classList.add('pane-wide');
@@ -8346,6 +8411,7 @@ async function setupTakeoffTools() {
     grid.appendChild(btn);
   }
 
+  setupTakeoffTypeShortcut(grid, defs);
   setupTakeoffInteraction();
   setupTakeoffCrosshair();
   setupTakeoffEditInteraction();
