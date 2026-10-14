@@ -25,7 +25,7 @@ function handleSync(req, res) {
   const currentRows = db
     .prepare(
       `SELECT s.id, s.sheet_number, s.discipline, s.scale_feet_per_inch,
-              sv.id AS version_id, sv.revision_id, sv.title, r.published_at
+              sv.id AS version_id, sv.revision_id, sv.title, sv.pdf_path, r.published_at
        FROM sheets s
        JOIN sheet_versions sv ON sv.id = s.current_version_id
        JOIN revisions r ON r.id = sv.revision_id
@@ -70,6 +70,7 @@ function handleSync(req, res) {
       id: s.version_id,
       revision_id: s.revision_id,
       title: s.title,
+      pdf_path: s.pdf_path,
     },
   }));
 
@@ -97,6 +98,7 @@ function handleSync(req, res) {
         id: s.version_id,
         revision_id: s.revision_id,
         title: s.title,
+        pdf_path: s.pdf_path,
         pdf_url: `/api/sheet-versions/${s.version_id}/pdf`,
         thumb_url: `/api/sheet-versions/${s.version_id}/thumb`,
         preview_url: `/api/sheet-versions/${s.version_id}/preview`,

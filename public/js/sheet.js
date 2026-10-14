@@ -8883,6 +8883,7 @@ async function loadSheetOffline() {
         revision_id: cached.current_revision_id,
         revision_title: 'Current (offline)',
         title: cached.current_title,
+        pdf_path: cached.current_pdf_path || '',
         published_at: '',
       },
     ],
