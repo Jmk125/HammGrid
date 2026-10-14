@@ -526,7 +526,7 @@ export async function renderShell({
   topbarEl.innerHTML = `
     <div class="row" style="gap:6px;">
       ${sidebarEl ? '<button class="sidebar-toggle" id="sidebar-toggle-btn" type="button">&#9776;</button>' : ''}
-      <a class="brand" href="/dashboard.html">HammGrid</a>
+      <a class="brand" href="/dashboard.html"></a>
     </div>
     <div class="row topbar-actions">
       ${onOverlayClick ? '<button id="overlay-btn" type="button">Overlay</button>' : ''}

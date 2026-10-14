@@ -22,7 +22,7 @@ function renderTopbar() {
   topbar.innerHTML = `
     <div class="row" style="gap:6px;">
       ${me.role === 'admin' ? '<button class="sidebar-toggle" id="sidebar-toggle-btn" type="button">&#9776;</button>' : ''}
-      <a class="brand" href="/dashboard.html">HammGrid</a>
+      <a class="brand" href="/dashboard.html"></a>
     </div>
     <div class="row topbar-actions">
       <button id="view-multiple-btn" type="button">View Multiple</button>
