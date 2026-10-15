@@ -65,7 +65,10 @@ router.get('/', requireAuth, (req, res) => {
       `SELECT d.id, d.folder_id, d.name, d.created_at,
               dv.id AS current_version_id, dv.revision_name, dv.issue_date, dv.created_at AS version_created_at,
               dv.pdf_path AS current_path,
-              (SELECT COUNT(DISTINCT m.sheet_id) FROM markups m WHERE m.linked_document_id = d.id) AS linked_sheet_count
+              (SELECT COUNT(DISTINCT m.sheet_id) FROM markups m WHERE m.linked_document_id = d.id) AS linked_sheet_count,
+              (SELECT group_concat(x.id || ':' || x.sheet_number, '|')
+                 FROM (SELECT DISTINCT s.id, s.sheet_number FROM markups m JOIN sheets s ON s.id = m.sheet_id
+                       WHERE m.linked_document_id = d.id) x) AS linked_sheets
        FROM documents d
        LEFT JOIN document_versions dv ON dv.id = d.current_version_id
        WHERE d.project_id = ?
@@ -74,7 +77,13 @@ router.get('/', requireAuth, (req, res) => {
     .all(req.params.projectId);
   // Raw file paths stay server-side - only the derived flag the table's
   // thumbnail rendering needs (documents.js) crosses the wire.
-  const documents = rows.map(({ current_path, ...rest }) => ({ ...rest, is_image: isImagePath(current_path) }));
+  const documents = rows.map(({ current_path, linked_sheets, ...rest }) => ({
+    ...rest,
+    is_image: isImagePath(current_path),
+    linked_sheets: linked_sheets
+      ? linked_sheets.split('|').map((p) => ({ id: Number(p.slice(0, p.indexOf(':'))), sheet_number: p.slice(p.indexOf(':') + 1) }))
+      : [],
+  }));
   res.json({ documents });
 });
 
