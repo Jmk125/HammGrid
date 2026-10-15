@@ -218,6 +218,13 @@ function outputAndRawParts(item, rawValue) {
   return { output: formatQuantity(item.type, value), raw: '—' };
 }
 
+// Rows picked with click / ctrl+click / shift+click in the By Take-off table;
+// a "Selected" row under the grand total sums just these. Survives
+// re-renders (collapsing a folder, searching) - ids not currently visible
+// are simply left out of the sum.
+const selectedItemIds = new Set();
+let selectionAnchorId = null;
+
 // Sums each numeric column across whatever items are passed in. The By
 // Take-off view passes only items in expanded folders, so collapsing a
 // folder drops it out of the grand total (e.g. collapse Building B to see
@@ -502,6 +509,67 @@ function renderByItemTable() {
     tbody.appendChild(totalsRow);
   }
 
+  // ---- multi-select: click = just this row, ctrl/cmd+click = toggle,
+  // shift+click = range from the last clicked row (in on-screen order).
+  let selectedTotalsRow = null;
+  function updateSelectionUi() {
+    const picked = visibleItems.filter((i) => selectedItemIds.has(i.id));
+    tbody.querySelectorAll('tr[data-item-id]').forEach((tr) => {
+      tr.classList.toggle('takeoff-row-selected', selectedItemIds.has(Number(tr.dataset.itemId)));
+    });
+    if (selectedTotalsRow) selectedTotalsRow.remove();
+    selectedTotalsRow = null;
+    if (!picked.length) return;
+    const totals = computeItemsTotals(picked);
+    selectedTotalsRow = document.createElement('tr');
+    selectedTotalsRow.className = 'takeoff-totals-row takeoff-selected-totals-row';
+    selectedTotalsRow.innerHTML = `
+      <td></td>
+      <td></td>
+      <td><strong>Selected (${picked.length})</strong></td>
+      <td></td>
+      <td></td>
+      <td><strong>${totals.total}</strong></td>
+      <td><strong>${totals.takeoff}</strong></td>
+      <td><strong>${totals.perimeter}</strong></td>
+      <td><strong>${totals.instances}</strong></td>
+      <td><button type="button" class="icon-btn" title="Clear selection (Esc)">&times;</button></td>`;
+    selectedTotalsRow.querySelector('button').addEventListener('click', () => {
+      selectedItemIds.clear();
+      updateSelectionUi();
+    });
+    const grand = tbody.querySelector('.takeoff-totals-row');
+    if (grand) grand.after(selectedTotalsRow);
+    else tbody.appendChild(selectedTotalsRow);
+  }
+  tbody.querySelectorAll('tr[data-item-id]').forEach((tr) => {
+    const id = Number(tr.dataset.itemId);
+    // Stops the browser's text-range selection kicking in on shift+click.
+    tr.addEventListener('mousedown', (e) => {
+      if (e.shiftKey) e.preventDefault();
+    });
+    tr.addEventListener('click', (e) => {
+      if (e.target.closest('button, select, input, a')) return;
+      if (e.shiftKey && selectionAnchorId !== null && visibleItems.some((i) => i.id === selectionAnchorId)) {
+        const ids = visibleItems.map((i) => i.id);
+        const [a, b] = [ids.indexOf(selectionAnchorId), ids.indexOf(id)].sort((x, y) => x - y);
+        if (!(e.ctrlKey || e.metaKey)) selectedItemIds.clear();
+        for (const rid of ids.slice(a, b + 1)) selectedItemIds.add(rid);
+      } else if (e.ctrlKey || e.metaKey) {
+        if (selectedItemIds.has(id)) selectedItemIds.delete(id);
+        else selectedItemIds.add(id);
+        selectionAnchorId = id;
+      } else {
+        const onlyThis = selectedItemIds.size === 1 && selectedItemIds.has(id);
+        selectedItemIds.clear();
+        if (!onlyThis) selectedItemIds.add(id);
+        selectionAnchorId = id;
+      }
+      updateSelectionUi();
+    });
+  });
+  updateSelectionUi();
+
   updateExpandAllButtonLabel();
 
   tbody.querySelectorAll('[data-action="edit"]').forEach((btn) => {
@@ -550,6 +618,13 @@ function renderByItemTable() {
 
   settleItemHighlight();
 }
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !selectedItemIds.size) return;
+  if (document.querySelector('.modal-backdrop')) return;
+  selectedItemIds.clear();
+  renderByItemTable();
+});
 
 // The persistent highlight class itself is applied inline in the row loop
 // above (item.id === highlightedItemId), so it's already correct on every
