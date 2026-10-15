@@ -89,6 +89,34 @@ function pickSheet(sheets) {
   });
 }
 
+// Resolves 'published', 'private', or null (cancelled - pin not saved).
+function askPublish(sheetNumber) {
+  return new Promise((resolve) => {
+    const backdrop = openModal(`
+      <h2>Publish this pin?</h2>
+      <p class="muted">Published pins on ${escapeHtml(sheetNumber)} are visible to everyone on the project. Private pins are only visible to you.</p>
+      <div class="modal-actions">
+        <button type="button" id="pin-pub-cancel">Cancel</button>
+        <button type="button" id="pin-pub-private">Keep private</button>
+        <button type="button" class="primary" id="pin-pub-publish">Publish</button>
+      </div>
+    `);
+    let done = false;
+    function finish(v) {
+      if (done) return;
+      done = true;
+      closeModal();
+      resolve(v);
+    }
+    backdrop.querySelector('#pin-pub-cancel').addEventListener('click', () => finish(null));
+    backdrop.querySelector('#pin-pub-private').addEventListener('click', () => finish('private'));
+    backdrop.querySelector('#pin-pub-publish').addEventListener('click', () => finish('published'));
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) finish(null);
+    });
+  });
+}
+
 function placePin({ sheet, documentId, documentName }) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -182,6 +210,13 @@ function placePin({ sheet, documentId, documentName }) {
       if (!drawing) return;
       const { origin, direction } = drawing;
       busy = true;
+      // Orientation is set - ask whether to publish before saving.
+      const choice = await askPublish(sheet.sheet_number);
+      if (!choice) {
+        busy = false;
+        removeDraft();
+        return;
+      }
       const w = svg.viewBox.baseVal.width;
       const h = svg.viewBox.baseVal.height;
       try {
@@ -189,7 +224,7 @@ function placePin({ sheet, documentId, documentName }) {
           type: 'photo',
           geometry: { x: origin.x / w, y: origin.y / h, direction },
           style: { color: '#e11d48', strokeWidth: 2 },
-          visibility: 'private',
+          visibility: choice,
           linked_document_id: Number(documentId),
         });
       } catch (err) {

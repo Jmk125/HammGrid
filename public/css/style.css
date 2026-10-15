@@ -2042,3 +2042,4 @@ tr.doc-selected { background: var(--accent-light); }
 .pin-place-inner { position: absolute; left: 0; top: 0; transform-origin: 0 0; background: #fff; }
 .pin-place-inner img { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
 .pin-place-inner svg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+.pin-place-overlay ~ .modal-backdrop { z-index: 1100; }

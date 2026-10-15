@@ -233,6 +233,23 @@ function setupPinPhotoNav(doc, versions) {
   nextBtn.addEventListener('click', () => idx < versions.length - 1 && go(versions[idx + 1]));
 }
 
+// Names the drawing(s) this photo is pinned to, next to the pin button.
+// Best-effort - offline or on error the label just stays hidden.
+async function showPinnedTo(projectId) {
+  try {
+    const { documents } = await api('GET', `/api/projects/${projectId}/documents`);
+    const d = documents.find((x) => String(x.id) === String(documentId));
+    if (!d || !d.linked_sheets || !d.linked_sheets.length) return;
+    const label = document.getElementById('pinned-to-label');
+    const first = d.linked_sheets[0];
+    label.textContent = `Pinned to ${d.linked_sheets.map((s) => s.sheet_number).join(', ')}`;
+    label.href = `/sheet.html?projectId=${projectId}&sheetId=${first.id}`;
+    label.style.display = '';
+  } catch (err) {
+    // label is optional
+  }
+}
+
 const IMAGE_PATH = /\.(jpe?g|png|webp|gif)$/i;
 
 function updatePageNavBadge() {
@@ -699,6 +716,7 @@ document.getElementById('download-doc-btn').addEventListener('click', () => {
         const issueDate = shownVersion && shownVersion.issue_date ? ` (${shownVersion.issue_date})` : '';
         const isPhotoSet = versions.length > 0 && versions.every((v) => IMAGE_PATH.test(v.pdf_path || ''));
         // A pin's own photos (?versionId=) are already on a drawing.
+        if (isPhotoSet) showPinnedTo(projectId);
         if (isPhotoSet && !versionId && (me.role === 'admin' || me.role === 'editor')) {
           const pinBtn = document.getElementById('pin-to-drawing-btn');
           pinBtn.style.display = '';
