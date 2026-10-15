@@ -125,25 +125,25 @@ function cloudPath(x, y, w, h, bumpSize) {
 // sheet), not the usual atan2-from-east-counterclockwise math convention -
 // this is a facing direction a field worker reads like a compass bearing on
 // the drawing, not a vector angle.
-function photoAngleFromDelta(dx, dy) {
+export function photoAngleFromDelta(dx, dy) {
   let deg = Math.atan2(dx, -dy) * (180 / Math.PI);
   if (deg < 0) deg += 360;
   return deg;
 }
 
-function photoPoint(cx, cy, angleDeg, radius) {
+export function photoPoint(cx, cy, angleDeg, radius) {
   const rad = (angleDeg * Math.PI) / 180;
   return { x: cx + radius * Math.sin(rad), y: cy - radius * Math.cos(rad) };
 }
 
-const PHOTO_PIN_RADIUS = 7;
-const PHOTO_CONE_LENGTH = 22;
+export const PHOTO_PIN_RADIUS = 7;
+export const PHOTO_CONE_LENGTH = 22;
 const PHOTO_CONE_SPREAD = 24; // degrees each side of the facing direction
 
 // Screen-constant sizing (divide by the outer CSS zoom scale) - same
 // convention as every other stroke-width/handle-radius in this file, so the
 // cone reads the same physical size on screen regardless of sheet zoom.
-function photoConePathD(cx, cy, direction, zoomScale) {
+export function photoConePathD(cx, cy, direction, zoomScale) {
   const r = PHOTO_CONE_LENGTH / zoomScale;
   const p1 = photoPoint(cx, cy, direction - PHOTO_CONE_SPREAD, r);
   const p2 = photoPoint(cx, cy, direction + PHOTO_CONE_SPREAD, r);

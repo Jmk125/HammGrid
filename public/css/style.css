@@ -2034,3 +2034,11 @@ tr.doc-selected { background: var(--accent-light); }
 .import-folder-bar { margin-bottom: 10px; }
 .import-folder-form { padding: 12px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
 .import-current-job { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; margin: 10px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--accent-light); }
+
+/* Pin-to-drawing placement overlay (document viewer) */
+.pin-place-overlay { position: fixed; inset: 0; z-index: 1000; background: var(--bg); display: flex; flex-direction: column; }
+.pin-place-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 14px; }
+.pin-place-wrap { position: relative; flex: 1; overflow: hidden; touch-action: none; }
+.pin-place-inner { position: absolute; left: 0; top: 0; transform-origin: 0 0; background: #fff; }
+.pin-place-inner img { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+.pin-place-inner svg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }

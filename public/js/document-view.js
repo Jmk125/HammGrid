@@ -2,6 +2,7 @@ import * as pdfjsLib from '/vendor/pdfjs/pdf.min.mjs';
 import { setupZoomPan as setupSharedZoomPan } from '/js/zoomPan.js';
 import { initMarkups } from '/js/markups.js';
 import { renderUserMenu, applyTheme } from '/js/shell.js';
+import { pinDocumentToDrawing } from '/js/pinToDrawing.js';
 import { getCachedDocumentById, getCachedDocumentAsset } from '/js/offline-store.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
@@ -697,6 +698,14 @@ document.getElementById('download-doc-btn').addEventListener('click', () => {
         const revisionLabel = shownVersion && shownVersion.revision_name ? shownVersion.revision_name : 'Original';
         const issueDate = shownVersion && shownVersion.issue_date ? ` (${shownVersion.issue_date})` : '';
         const isPhotoSet = versions.length > 0 && versions.every((v) => IMAGE_PATH.test(v.pdf_path || ''));
+        // A pin's own photos (?versionId=) are already on a drawing.
+        if (isPhotoSet && !versionId && (me.role === 'admin' || me.role === 'editor')) {
+          const pinBtn = document.getElementById('pin-to-drawing-btn');
+          pinBtn.style.display = '';
+          pinBtn.addEventListener('click', () =>
+            pinDocumentToDrawing({ projectId, documentId, documentName: doc.name })
+          );
+        }
         if (isPhotoSet && versionId) {
           // A photo pin's photo - every "version" is just another photo, so
           // revision wording doesn't apply.
