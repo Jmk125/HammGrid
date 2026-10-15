@@ -10,7 +10,7 @@
 // note install() below fails closed: cache.addAll() rejects the whole
 // install if ANY url here 404s (e.g. a renamed/deleted page), so keep this
 // list in sync with public/ or the service worker stops updating entirely.
-const CACHE_NAME = 'app-shell-v32';
+const CACHE_NAME = 'app-shell-v33';
 
 const PRECACHE_URLS = [
   '/',
@@ -39,6 +39,7 @@ const PRECACHE_URLS = [
   '/js/activity.js',
   '/js/project-settings.js',
   '/js/document-view.js',
+  '/js/pinToDrawing.js',
   '/js/flags.js',
   // Imported (not <script>-tagged) modules the sheet viewer needs offline -
   // without these precached, a device that hadn't happened to fetch one
