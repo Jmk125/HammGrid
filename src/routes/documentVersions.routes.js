@@ -5,7 +5,7 @@ const db = require('../db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { streamFile } = require('../lib/streamFile');
 const { mimeForPath } = require('../lib/documentFileTypes');
-const { sendThumbOrOriginal, removeThumb } = require('../lib/documentThumbs');
+const { sendThumbOrOriginal, sendPreviewOrOriginal, removeThumb } = require('../lib/documentThumbs');
 
 const router = express.Router();
 
@@ -28,6 +28,12 @@ router.get('/:id/thumb', requireAuth, (req, res) => {
   const row = db.prepare('SELECT pdf_path FROM document_versions WHERE id = ?').get(req.params.id);
   if (!row || !row.pdf_path) return res.status(404).end();
   sendThumbOrOriginal(res, row.pdf_path);
+});
+
+router.get('/:id/preview', requireAuth, (req, res) => {
+  const row = db.prepare('SELECT pdf_path FROM document_versions WHERE id = ?').get(req.params.id);
+  if (!row || !row.pdf_path) return res.status(404).end();
+  sendPreviewOrOriginal(res, row.pdf_path);
 });
 
 // A photo pin's photos are all versions of one document (see

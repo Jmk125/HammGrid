@@ -1551,20 +1551,21 @@ tr.doc-selected { background: var(--accent-light); }
 
 .markup-popup-photo-gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  /* One big column; --pw (set by markups.js zoom controls) is the column width. */
+  grid-template-columns: var(--pw, 100%);
   align-content: start;
-  gap: 6px;
+  gap: 8px;
   padding: 4px 8px 6px;
-  width: 400px;
+  width: 760px;
   max-width: calc(100vw - 40px);
-  max-height: 65vh;
-  overflow-y: auto;
+  max-height: 80vh;
+  overflow: auto;
   box-sizing: border-box;
 }
 .markup-popup-photo-gallery > .markup-popup-photo-status { grid-column: 1 / -1; }
-@media (max-width: 520px) {
-  .markup-popup-photo-gallery { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
-}
+.markup-popup-zoombar { display: flex; align-items: center; gap: 4px; padding: 0 4px; }
+.markup-popup-zoombar button { min-width: 30px; font-size: 16px; line-height: 1; }
+.markup-popup-zoomlabel { font-size: 11px; color: rgba(255,255,255,0.75); min-width: 38px; text-align: center; }
 /* Corner grip for resizing the photo pin popup (markups.js addGalleryResizeHandle). */
 .markup-popup-resize {
   position: absolute;
@@ -1582,7 +1583,6 @@ tr.doc-selected { background: var(--accent-light); }
 .markup-popup-photo-thumb {
   position: relative;
   display: block;
-  aspect-ratio: 1;
   border-radius: 6px;
   overflow: hidden;
   border: 1px solid rgba(255,255,255,0.2);
@@ -1606,7 +1606,7 @@ tr.doc-selected { background: var(--accent-light); }
   box-shadow: 0 1px 4px rgba(0,0,0,0.4);
 }
 .markup-popup button.markup-popup-photo-delete:hover { background: #b91c1c; }
-.markup-popup-photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.markup-popup-photo-thumb img { width: 100%; height: auto; min-height: 60px; display: block; }
 .markup-popup-photo-thumb.pending { border: 1px dashed #f59e0b; }
 .markup-popup-photo-thumb.pending.failed { border-color: #e11d48; }
 .markup-popup-photo-badge {
