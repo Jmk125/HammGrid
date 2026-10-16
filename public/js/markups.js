@@ -1152,7 +1152,7 @@ export function initMarkups({
   const PHOTO_POPUP_ZOOM_KEY = 'hammgrid-photo-popup-zoom';
 
   // Zoom scales the photo column wider than the window (scroll to pan);
-  // 1 = photos fit the window width. Ctrl+scroll or the +/- buttons.
+  // 1 = photos fit the window width (below 1 shrinks them). Ctrl+scroll or the +/- buttons.
   function addGalleryZoomControls(gallery) {
     let zoom = 1;
     try {
@@ -1176,7 +1176,7 @@ export function initMarkups({
     }
     function setZoom(z) {
       const prev = zoom;
-      zoom = Math.max(1, Math.min(5, Math.round(z * 100) / 100));
+      zoom = Math.max(0.25, Math.min(5, Math.round(z * 100) / 100));
       if (zoom === prev) return;
       // Keep the same spot of the photo in view while zooming.
       const fx = (gallery.scrollLeft + gallery.clientWidth / 2) / gallery.scrollWidth;
@@ -1194,7 +1194,7 @@ export function initMarkups({
     bar.addEventListener('click', (e) => {
       e.stopPropagation();
       const b = e.target.closest('button');
-      if (b) setZoom(zoom + (b.dataset.z === 'in' ? 0.5 : -0.5));
+      if (b) setZoom(zoom + (b.dataset.z === 'in' ? 0.25 : -0.25));
     });
     ['mousedown', 'touchstart'].forEach((t) => bar.addEventListener(t, (e) => e.stopPropagation()));
     gallery.addEventListener(

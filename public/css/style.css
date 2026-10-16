@@ -1550,10 +1550,11 @@ tr.doc-selected { background: var(--accent-light); }
 .markup-popup-flag-tag::placeholder { color: rgba(255,255,255,0.5); }
 
 .markup-popup-photo-gallery {
-  display: grid;
-  /* One big column; --pw (set by markups.js zoom controls) is the column width. */
-  grid-template-columns: var(--pw, 100%);
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  /* One big column; --pw (set by markups.js zoom controls) is its width.
+     Items never shrink vertically - the gallery scrolls instead. */
   gap: 8px;
   padding: 4px 8px 6px;
   width: 760px;
@@ -1562,7 +1563,8 @@ tr.doc-selected { background: var(--accent-light); }
   overflow: auto;
   box-sizing: border-box;
 }
-.markup-popup-photo-gallery > .markup-popup-photo-status { grid-column: 1 / -1; }
+.markup-popup-photo-gallery > * { flex: none; }
+.markup-popup-photo-gallery > .markup-popup-photo-thumb { width: var(--pw, 100%); }
 .markup-popup-zoombar { display: flex; align-items: center; gap: 4px; padding: 0 4px; }
 .markup-popup-zoombar button { min-width: 30px; font-size: 16px; line-height: 1; }
 .markup-popup-zoomlabel { font-size: 11px; color: rgba(255,255,255,0.75); min-width: 38px; text-align: center; }
