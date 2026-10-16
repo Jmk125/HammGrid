@@ -1196,13 +1196,14 @@ export function initMarkups({
       const b = e.target.closest('button');
       if (b) setZoom(zoom + (b.dataset.z === 'in' ? 0.25 : -0.25));
     });
-    ['mousedown', 'touchstart'].forEach((t) => bar.addEventListener(t, (e) => e.stopPropagation()));
+    ['mousedown', 'touchstart', 'wheel'].forEach((t) => bar.addEventListener(t, (e) => e.stopPropagation()));
     gallery.addEventListener(
       'wheel',
       (e) => {
-        if (!e.ctrlKey) return;
-        e.preventDefault();
+        // Never let the wheel reach the sheet's pan/zoom behind the popup.
         e.stopPropagation();
+        if (!e.ctrlKey) return; // plain scroll = native scroll of the gallery
+        e.preventDefault();
         setZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
       },
       { passive: false }
