@@ -40,8 +40,34 @@ async function drain() {
   running = false;
 }
 
+// Larger (1600px) sidecar for the photo-pin popup, where photos are shown
+// big enough that the 480px thumbnail looks soft. Generated on first
+// request and cached next to the photo.
+function previewPathFor(filePath) {
+  return `${filePath}.preview.jpg`;
+}
+
+const previewJobs = new Map();
+
+async function sendPreviewOrOriginal(res, filePath) {
+  const preview = previewPathFor(filePath);
+  if (isImagePath(filePath) && !fs.existsSync(preview)) {
+    if (!previewJobs.has(filePath)) {
+      const job = runPython(THUMB_SCRIPT, [filePath, preview, '1600'])
+        .catch((err) => console.error(`Photo preview failed for ${filePath}:`, err.message))
+        .finally(() => previewJobs.delete(filePath));
+      previewJobs.set(filePath, job);
+    }
+    await previewJobs.get(filePath);
+  }
+  if (isImagePath(filePath) && fs.existsSync(preview)) return streamFile(res, preview, 'image/jpeg');
+  streamFile(res, filePath, mimeForPath(filePath));
+}
+
 function removeThumb(filePath) {
-  if (filePath) fs.rm(thumbPathFor(filePath), { force: true }, () => {});
+  if (!filePath) return;
+  fs.rm(thumbPathFor(filePath), { force: true }, () => {});
+  fs.rm(previewPathFor(filePath), { force: true }, () => {});
 }
 
 function sendThumbOrOriginal(res, filePath) {
@@ -57,4 +83,4 @@ function backfillThumbs() {
   for (const { pdf_path } of rows) ensureThumb(pdf_path);
 }
 
-module.exports = { thumbPathFor, ensureThumb, removeThumb, backfillThumbs, sendThumbOrOriginal };
+module.exports = { thumbPathFor, ensureThumb, removeThumb, backfillThumbs, sendThumbOrOriginal, sendPreviewOrOriginal };

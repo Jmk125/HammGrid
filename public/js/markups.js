@@ -937,6 +937,7 @@ export function initMarkups({
       gallery.className = 'markup-popup-photo-gallery';
       popupEl.appendChild(gallery);
       applySavedGallerySize(gallery);
+      addGalleryZoomControls(gallery);
       addGalleryResizeHandle(gallery);
       renderPhotoGalleryInto(gallery, m);
 
@@ -1101,8 +1102,17 @@ export function initMarkups({
         const thumb = document.createElement('div');
         thumb.className = 'markup-popup-photo-thumb';
         thumb.title = formatSqliteDate(v.created_at);
-        thumb.innerHTML = `<img src="/api/document-versions/${v.id}/thumb" loading="lazy" alt="">`;
-        thumb.querySelector('img').addEventListener('load', () => positionPopup(false));
+        // Large 1600px preview (the 480px thumb is too soft at this size);
+        // falls back to the thumb if the preview can't be made.
+        thumb.innerHTML = `<img src="/api/document-versions/${v.id}/preview" loading="lazy" alt="">`;
+        const photoImg = thumb.querySelector('img');
+        photoImg.addEventListener('error', () => {
+          if (!photoImg.dataset.fellBack) {
+            photoImg.dataset.fellBack = '1';
+            photoImg.src = `/api/document-versions/${v.id}/thumb`;
+          }
+        });
+        photoImg.addEventListener('load', () => positionPopup(false));
         thumb.addEventListener('click', (e) => {
           e.stopPropagation();
           window.open(`/document-view.html?documentId=${m.linked_document_id}&versionId=${v.id}`, '_blank');
@@ -1138,7 +1148,68 @@ export function initMarkups({
 
   // Drag the popup's bottom-right corner to make the photo grid bigger
   // (mouse or finger). The size is remembered per device for every pin.
-  const PHOTO_POPUP_SIZE_KEY = 'hammgrid-photo-popup-size';
+  const PHOTO_POPUP_SIZE_KEY = 'hammgrid-photo-popup-size-v2';
+  const PHOTO_POPUP_ZOOM_KEY = 'hammgrid-photo-popup-zoom';
+
+  // Zoom scales the photo column wider than the window (scroll to pan);
+  // 1 = photos fit the window width. Ctrl+scroll or the +/- buttons.
+  function addGalleryZoomControls(gallery) {
+    let zoom = 1;
+    try {
+      zoom = Number(localStorage.getItem(PHOTO_POPUP_ZOOM_KEY)) || 1;
+    } catch (e) {
+      zoom = 1;
+    }
+    const bar = document.createElement('div');
+    bar.className = 'markup-popup-zoombar';
+    bar.innerHTML =
+      '<button type="button" data-z="out" title="Zoom out">&minus;</button>' +
+      '<span class="markup-popup-zoomlabel"></span>' +
+      '<button type="button" data-z="in" title="Zoom in">+</button>';
+    popupEl.insertBefore(bar, gallery);
+    const label = bar.querySelector('.markup-popup-zoomlabel');
+
+    function applyZoom() {
+      const w = Math.max(100, gallery.clientWidth - 16);
+      gallery.style.setProperty('--pw', `${Math.round(w * zoom)}px`);
+      label.textContent = `${Math.round(zoom * 100)}%`;
+    }
+    function setZoom(z) {
+      const prev = zoom;
+      zoom = Math.max(1, Math.min(5, Math.round(z * 100) / 100));
+      if (zoom === prev) return;
+      // Keep the same spot of the photo in view while zooming.
+      const fx = (gallery.scrollLeft + gallery.clientWidth / 2) / gallery.scrollWidth;
+      const fy = (gallery.scrollTop + gallery.clientHeight / 2) / gallery.scrollHeight;
+      applyZoom();
+      gallery.scrollLeft = fx * gallery.scrollWidth - gallery.clientWidth / 2;
+      gallery.scrollTop = fy * gallery.scrollHeight - gallery.clientHeight / 2;
+      try {
+        localStorage.setItem(PHOTO_POPUP_ZOOM_KEY, String(zoom));
+      } catch (e) {
+        // Per-device convenience only.
+      }
+      positionPopup(false);
+    }
+    bar.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const b = e.target.closest('button');
+      if (b) setZoom(zoom + (b.dataset.z === 'in' ? 0.5 : -0.5));
+    });
+    ['mousedown', 'touchstart'].forEach((t) => bar.addEventListener(t, (e) => e.stopPropagation()));
+    gallery.addEventListener(
+      'wheel',
+      (e) => {
+        if (!e.ctrlKey) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setZoom(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+      },
+      { passive: false }
+    );
+    new ResizeObserver(applyZoom).observe(gallery);
+    applyZoom();
+  }
 
   function applySavedGallerySize(gallery) {
     let size = null;
