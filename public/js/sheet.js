@@ -2632,6 +2632,21 @@ function toggleHideTakeoffItem(item) {
   renderTakeoffInstances();
   renderTakeoffPane();
 }
+// Arriving from the take-offs page's per-item drawing link (?soloItem=<id>):
+// hide every other take-off on this sheet so only that item shows. The param
+// is stripped afterwards so a reload keeps whatever the user changes later.
+function applySoloTakeoffFromUrl() {
+  const soloId = Number(params.get('soloItem'));
+  if (!soloId) return;
+  for (const item of takeoffItems) {
+    if (item.id === soloId) hiddenTakeoffItemIds.delete(item.id);
+    else hiddenTakeoffItemIds.add(item.id);
+  }
+  saveHiddenTakeoffItemIds();
+  const url = new URL(window.location.href);
+  url.searchParams.delete('soloItem');
+  history.replaceState(null, '', url);
+}
 // Items pinned to this sheet's pane despite having zero instances placed
 // here yet - covers "I created/selected this item but haven't traced
 // anything with it" (a deliberate empty item meant for a later multi-select
@@ -8472,6 +8487,7 @@ async function setupTakeoffTools() {
   loadPinnedTakeoffItemIds();
   await loadTakeoffItems();
   await loadSheetTakeoffInstances();
+  applySoloTakeoffFromUrl();
   await loadTakeoffFolders();
   await loadTakeoffAssemblies();
   setupAssemblyDrawInteraction();
