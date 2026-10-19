@@ -346,7 +346,7 @@ async function toggleBreakdown(item, expandBtn, breakdownRow) {
         const perimeter = item.type === 'area' && s.perimeter ? `${s.perimeter.toFixed(1)} ft` : '—';
         return `
         <tr>
-          <td><a href="/sheet.html?projectId=${projectId}&sheetId=${s.sheet_id}">${escapeHtml(s.sheet_number)}</a></td>
+          <td><a href="/sheet.html?projectId=${projectId}&sheetId=${s.sheet_id}&soloItem=${item.id}">${escapeHtml(s.sheet_number)}</a></td>
           <td>${parts.output}</td>
           <td>${parts.raw}</td>
           <td>${perimeter}</td>
