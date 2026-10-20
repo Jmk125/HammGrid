@@ -414,7 +414,8 @@ function renderByItemTable() {
 
   // Returns whether the folder is collapsed.
   function appendFolderHeader(key, name, depth, folder) {
-    const isCollapsed = collapsedItemFolders.has(String(key));
+    // A live search looks inside every folder, collapsed or not.
+    const isCollapsed = !searchTerm && collapsedItemFolders.has(String(key));
     const headerRow = document.createElement('tr');
     headerRow.className = 'takeoff-folder-header-row';
     headerRow.innerHTML = `<td colspan="10"><div class="takeoff-folder-header-row-inner" style="padding-left:${depth * FOLDER_INDENT_PX}px;">
@@ -759,15 +760,37 @@ function currentViewContainer() {
   return document.getElementById(currentView === 'by-sheet' ? 'takeoff-by-sheet-view' : 'takeoff-by-item-view');
 }
 
+// By Take-off view: the button expands/collapses the folders (not each
+// item's drawings). Folder ids plus the 'none' bucket are the toggle keys.
+function itemFolderKeys() {
+  const keys = (allFolders || []).map((f) => String(f.id));
+  if (keys.length) keys.push('none');
+  return keys;
+}
+
 function updateExpandAllButtonLabel() {
+  const btn = document.getElementById('takeoff-expand-all-btn');
+  if (currentView === 'by-item') {
+    const keys = itemFolderKeys();
+    btn.textContent = keys.some((k) => collapsedItemFolders.has(k)) ? 'Expand all' : 'Collapse all';
+    btn.disabled = keys.length === 0;
+    return;
+  }
   const btns = [...currentViewContainer().querySelectorAll('.takeoff-expand-btn')];
   const anyCollapsed = btns.some((b) => b.textContent.trim() === '▸');
-  const btn = document.getElementById('takeoff-expand-all-btn');
   btn.textContent = anyCollapsed ? 'Expand all' : 'Collapse all';
   btn.disabled = btns.length === 0;
 }
 
 function toggleExpandAll() {
+  if (currentView === 'by-item') {
+    const keys = itemFolderKeys();
+    if (keys.some((k) => collapsedItemFolders.has(k))) collapsedItemFolders.clear();
+    else keys.forEach((k) => collapsedItemFolders.add(k));
+    saveCollapsedFolders(itemFolderCollapseKey, collapsedItemFolders);
+    renderByItemTable();
+    return;
+  }
   const btns = [...currentViewContainer().querySelectorAll('.takeoff-expand-btn')];
   const anyCollapsed = btns.some((b) => b.textContent.trim() === '▸');
   for (const b of btns) {
