@@ -5152,6 +5152,15 @@ function openChangeTakeoffItemModal(instance, targets = [instance]) {
       if (changeSelect.selectedIndex < 0) changeSelect.selectedIndex = 0;
     }
   });
+  // Existing-item pick and new-item name are mutually exclusive: typing a new
+  // name deselects any (auto-)selected search match, and picking a match clears the name.
+  const changeNewName = document.getElementById('change-item-new-name');
+  changeNewName.addEventListener('input', () => {
+    if (changeNewName.value.trim()) changeSelect.selectedIndex = -1;
+  });
+  changeSelect.addEventListener('change', () => {
+    if (changeSelect.value) changeNewName.value = '';
+  });
   changeSearch.focus();
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
   document.getElementById('modal-change').addEventListener('click', async () => {
