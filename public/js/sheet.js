@@ -4977,7 +4977,9 @@ function goToTakeoffItemInTakeoffs(itemId) {
   window.location.href = `/takeoffs.html?projectId=${projectId}&itemId=${itemId}`;
 }
 
-function showTakeoffContextMenu(x, y, instance) {
+// withCopy adds the two "copy selection" actions - used when right-clicking
+// with points selected in edit mode, so the menu is the full 7 items.
+function showTakeoffContextMenu(x, y, instance, withCopy = false) {
   hideTakeoffContextMenu();
   const menu = document.createElement('div');
   menu.id = 'takeoff-context-menu';
@@ -4988,8 +4990,21 @@ function showTakeoffContextMenu(x, y, instance) {
   if (instance.item_type === 'area') actions.push({ action: 'subtract', label: 'Subtract Area' });
   actions.push({ action: 'change', label: 'Change Item' });
   actions.push({ action: 'goto', label: 'Go to Item in Take-offs' });
+  if (withCopy) {
+    actions.push({ action: 'copy-new', label: 'Copy selection to new item' });
+    actions.push({ action: 'copy-existing', label: 'Copy selection to existing item...' });
+  }
   menu.innerHTML = actions.map((a) => `<button type="button" data-action="${a.action}">${a.label}</button>`).join('');
   document.body.appendChild(menu);
+
+  menu.querySelector('[data-action="copy-new"]')?.addEventListener('click', () => {
+    hideTakeoffContextMenu();
+    openCopySelectionModal();
+  });
+  menu.querySelector('[data-action="copy-existing"]')?.addEventListener('click', () => {
+    hideTakeoffContextMenu();
+    openCopySelectionToExistingModal();
+  });
 
   menu.querySelector('[data-action="activate"]').addEventListener('click', () => {
     hideTakeoffContextMenu();
@@ -5099,8 +5114,8 @@ function openChangeTakeoffItemModal(instance, targets = [instance]) {
     <p class="muted">Move ${many ? `these ${targets.length} ${escapeHtml(instance.item_type)} take-offs` : `this ${escapeHtml(instance.item_type)} take-off`} to a different item - the whole placed shape${many ? 's' : ''}, not part of ${many ? 'them' : 'it'}.</p>
     <div class="field">
       <label>Move to an existing item</label>
-      <select id="change-item-select">
-        <option value="">Choose an item...</option>
+      <input id="change-item-search" type="search" autocomplete="off" placeholder="Search items...">
+      <select id="change-item-select" size="8" style="margin-top:6px;">
         ${sameTypeItems.map((i) => `<option value="${i.id}">${escapeHtml(i.name)}</option>`).join('')}
       </select>
     </div>
@@ -5119,6 +5134,25 @@ function openChangeTakeoffItemModal(instance, targets = [instance]) {
       <button class="primary" type="button" id="modal-change">Move</button>
     </div>
   `);
+  const changeSelect = document.getElementById('change-item-select');
+  const changeSearch = document.getElementById('change-item-search');
+  changeSearch.addEventListener('input', () => {
+    const words = changeSearch.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const prev = changeSelect.value;
+    changeSelect.innerHTML = sameTypeItems
+      .filter((i) => words.every((w) => i.name.toLowerCase().includes(w)))
+      .map((i) => `<option value="${i.id}"${String(i.id) === prev ? ' selected' : ''}>${escapeHtml(i.name)}</option>`)
+      .join('');
+    if (!changeSelect.value && changeSelect.options.length === 1) changeSelect.selectedIndex = 0;
+  });
+  changeSearch.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' && changeSelect.options.length) {
+      e.preventDefault();
+      changeSelect.focus();
+      if (changeSelect.selectedIndex < 0) changeSelect.selectedIndex = 0;
+    }
+  });
+  changeSearch.focus();
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
   document.getElementById('modal-change').addEventListener('click', async () => {
     const errEl = document.getElementById('change-item-error');
@@ -5926,6 +5960,11 @@ function getSelectedEditPoints() {
 }
 
 function showCopySelectionContextMenu(x, y) {
+  const inst = sheetTakeoffInstances.find((i) => i.id === editingInstance?.id) || editingInstance;
+  if (inst) {
+    showTakeoffContextMenu(x, y, inst, true);
+    return;
+  }
   hideTakeoffContextMenu();
   const menu = document.createElement('div');
   menu.id = 'takeoff-context-menu';
