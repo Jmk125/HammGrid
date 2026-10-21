@@ -2533,6 +2533,8 @@ const MEASURE_ICONS = {
 
 let measureTool = null;
 let measurePoints = [];
+let measureAwaitingArc = false; // armed by "A" - next click sets measureArcThrough
+let measureArcThrough = null; // set once - next click is the arc's endpoint
 let scaleFeetPerInch = null;
 let scaleZones = []; // this sheet's scale zones - {id, label, scale_feet_per_inch, x, y, width, height}
 // Armed while a zone's box is mid-draw (2-click opposite-corners, same
@@ -2778,6 +2780,8 @@ function ensureMeasureLayer() {
 
 function clearMeasure() {
   measurePoints = [];
+  measureAwaitingArc = false;
+  measureArcThrough = null;
   ensureMeasureLayer().innerHTML = '';
   document.getElementById('measure-result').style.display = 'none';
 }
@@ -3998,7 +4002,16 @@ function arcPointsThrough(from, through, to, segments = 24) {
 function redrawMeasure(livePt) {
   const g = ensureMeasureLayer();
   g.innerHTML = '';
-  const pts = livePt ? [...measurePoints, livePt] : measurePoints;
+  let pts;
+  let handlePts = measurePoints;
+  if (livePt && measureArcThrough) {
+    const start = measurePoints[measurePoints.length - 1];
+    pts = [...measurePoints, ...arcPointsThrough(start, measureArcThrough, livePt)];
+    handlePts = [...measurePoints, measureArcThrough];
+  } else {
+    pts = livePt ? [...measurePoints, livePt] : measurePoints;
+    if (livePt) handlePts = pts;
+  }
   if (pts.length === 0) {
     updateLiveResult(pts);
     return;
@@ -4018,7 +4031,7 @@ function redrawMeasure(livePt) {
   poly.setAttribute('stroke-dasharray', `${5 / scale} ${3 / scale}`);
   g.appendChild(poly);
 
-  for (const p of pts) {
+  for (const p of handlePts) {
     const c = measureSvgNs('circle');
     c.setAttribute('cx', p.x);
     c.setAttribute('cy', p.y);
@@ -4039,7 +4052,7 @@ function updateLiveResult(pts) {
       resultEl.style.display = 'none';
       return;
     }
-    const feet = measureTool === 'line' ? polylineLengthFeet(pts.slice(0, 2)) : polylineLengthFeet(pts);
+    const feet = polylineLengthFeet(pts); // a line is 2 points unless an arc added more
     resultEl.textContent = `Length: ${feet.toFixed(1)} ft (${formatFeetInches(feet)})`;
     resultEl.style.display = 'block';
   } else if (measureTool === 'area') {
@@ -4079,6 +4092,18 @@ function finishMeasurement() {
   stopMeasureTool();
 }
 
+// Click/hover point for the measure tools: Shift locks to 0/45/90 from the
+// last placed point (inverted when the take-off "axis lock" toggle is pinned),
+// never during arc placement since a curve isn't orthogonal.
+function measureEventPoint(e) {
+  const pt = getMeasureSvgPoint(e);
+  const wantsSnap = axisLockPinned ? !e.shiftKey : e.shiftKey;
+  if (wantsSnap && measurePoints.length > 0 && !measureAwaitingArc && !measureArcThrough) {
+    return snapToAngle(measurePoints[measurePoints.length - 1], pt);
+  }
+  return pt;
+}
+
 function setupMeasureInteraction() {
   const svg = document.getElementById('markup-svg');
   // Capture phase + unconditional on target: an existing markup (even an
@@ -4092,7 +4117,24 @@ function setupMeasureInteraction() {
     (e) => {
       if (!measureTool) return;
       e.stopPropagation();
-      const pt = getMeasureSvgPoint(e);
+      const pt = measureEventPoint(e);
+
+      // Arc mode (armed by "A"): first click = a point the curve passes
+      // through, second = where it ends. Same as the take-off tools.
+      if (measureAwaitingArc) {
+        measureAwaitingArc = false;
+        measureArcThrough = pt;
+        redrawMeasure();
+        return;
+      }
+      if (measureArcThrough) {
+        const start = measurePoints[measurePoints.length - 1];
+        measurePoints.push(...arcPointsThrough(start, measureArcThrough, pt));
+        measureArcThrough = null;
+        redrawMeasure();
+        if (measureTool === 'line') stopMeasureTool();
+        return;
+      }
 
       if (measureTool === 'line') {
         measurePoints.push(pt);
@@ -4116,12 +4158,27 @@ function setupMeasureInteraction() {
 
   svg.addEventListener('mousemove', (e) => {
     if (!measureTool || measurePoints.length === 0) return;
-    redrawMeasure(getMeasureSvgPoint(e));
+    redrawMeasure(measureEventPoint(e));
   });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && measureTool && measureTool !== 'line') finishMeasurement();
+    if ((e.key === 'a' || e.key === 'A') && measureTool && measurePoints.length > 0 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const tag = (document.activeElement && document.activeElement.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      e.preventDefault();
+      measureAwaitingArc = true;
+      measureArcThrough = null;
+      showToast('Click a point on the curve, then click where it ends.');
+    }
     if (e.key === 'Escape' && measureTool) {
+      // Back out of a pending arc first, like the take-off tools.
+      if (measureAwaitingArc || measureArcThrough) {
+        measureAwaitingArc = false;
+        measureArcThrough = null;
+        redrawMeasure();
+        return;
+      }
       clearMeasure();
       stopMeasureTool();
     }
@@ -6063,7 +6120,7 @@ function setupTakeoffCrosshair() {
   const vLine = document.getElementById('takeoff-crosshair-v');
   const hLine = document.getElementById('takeoff-crosshair-h');
   wrap.addEventListener('mousemove', (e) => {
-    if (!takeoffTool) {
+    if (!takeoffTool && !measureTool) {
       hideTakeoffCrosshair();
       return;
     }

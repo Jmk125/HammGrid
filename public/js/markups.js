@@ -175,7 +175,7 @@ export function initMarkups({
   let drawing = null;
   let previewEl = null;
   let selectedId = null;
-  let editingId = null;
+  let popupDrag = null; // {id, dx, dy}: photo popup offset from its anchor after a title-bar drag  let editingId = null;
   let handleDrag = null;
   let bodyDrag = null;
   // documentId -> its document_versions array (newest first), lazily fetched
@@ -717,11 +717,84 @@ export function initMarkups({
     const halfW = popW / 2;
     const minCenterX = halfW + PAD;
     const maxCenterX = Math.max(minCenterX, wrapRect.width - halfW - PAD);
-    popupEl.style.left = `${Math.min(Math.max(centerX, minCenterX), maxCenterX)}px`;
+    const baseLeft = Math.min(Math.max(centerX, minCenterX), maxCenterX);
 
     const spaceBelow = wrapRect.height - bottomY;
     const fitsBelow = popH + 8 + PAD <= spaceBelow;
-    popupEl.style.top = `${fitsBelow ? bottomY + 8 : Math.max(PAD, topY - popH - 8)}px`;
+    const baseTop = fitsBelow ? bottomY + 8 : Math.max(PAD, topY - popH - 8);
+
+    // A photo popup the user dragged by its title bar keeps that offset from
+    // its normal anchor (so it still follows the pin through zoom/pan), but
+    // always leaves the title bar reachable inside the sheet area.
+    const drag = popupDrag && popupDrag.id === m.id ? popupDrag : null;
+    const left = baseLeft + (drag ? drag.dx : 0);
+    const top = baseTop + (drag ? drag.dy : 0);
+    popupEl.style.left = `${Math.min(Math.max(left, PAD + 40), Math.max(PAD + 40, wrapRect.width - PAD - 40))}px`;
+    popupEl.style.top = `${Math.min(Math.max(top, PAD), Math.max(PAD, wrapRect.height - 40))}px`;
+  }
+
+  // Title-bar drag for the photo pin popup (pointer events: mouse, pen, touch).
+  function addPopupDragBar(m, buttonRow) {
+    const grip = document.createElement('div');
+    grip.className = 'markup-popup-grip';
+    grip.title = 'Drag to move';
+    buttonRow.insertBefore(grip, buttonRow.firstChild);
+    buttonRow.classList.add('draggable');
+    let start = null;
+    buttonRow.addEventListener('pointerdown', (e) => {
+      if (e.target.closest('button')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      buttonRow.setPointerCapture(e.pointerId);
+      const cur = popupDrag && popupDrag.id === m.id ? popupDrag : { id: m.id, dx: 0, dy: 0 };
+      start = { x: e.clientX, y: e.clientY, dx: cur.dx, dy: cur.dy };
+    });
+    buttonRow.addEventListener('pointermove', (e) => {
+      if (!start) return;
+      popupDrag = { id: m.id, dx: start.dx + e.clientX - start.x, dy: start.dy + e.clientY - start.y };
+      applyPopupPosition(m);
+    });
+    const end = () => {
+      start = null;
+    };
+    buttonRow.addEventListener('pointerup', end);
+    buttonRow.addEventListener('pointercancel', end);
+    ['click', 'touchstart', 'mousedown'].forEach((t) => buttonRow.addEventListener(t, (e) => e.stopPropagation()));
+  }
+
+  // Click-and-drag the photos to pan them (mouse/pen; touch already scrolls
+  // natively). A drag swallows the click that follows so it doesn't open a photo.
+  function addGalleryDragPan(gallery) {
+    let drag = null;
+    gallery.addEventListener('pointerdown', (e) => {
+      if (e.pointerType === 'touch' || e.button !== 0 || e.target.closest('button')) return;
+      drag = { x: e.clientX, y: e.clientY, sl: gallery.scrollLeft, st: gallery.scrollTop, moved: false, id: e.pointerId };
+    });
+    gallery.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      const dy = e.clientY - drag.y;
+      if (!drag.moved) {
+        if (Math.hypot(dx, dy) < 4) return;
+        drag.moved = true;
+        gallery.setPointerCapture(drag.id);
+        gallery.classList.add('panning');
+      }
+      e.preventDefault();
+      gallery.scrollLeft = drag.sl - dx;
+      gallery.scrollTop = drag.st - dy;
+    });
+    const end = () => {
+      if (drag && drag.moved) {
+        const swallow = (ev) => ev.stopPropagation();
+        gallery.addEventListener('click', swallow, { capture: true, once: true });
+        setTimeout(() => gallery.removeEventListener('click', swallow, true), 0);
+      }
+      gallery.classList.remove('panning');
+      drag = null;
+    };
+    gallery.addEventListener('pointerup', end);
+    gallery.addEventListener('pointercancel', end);
   }
 
   function renderPopupButtons(m) {
@@ -939,6 +1012,8 @@ export function initMarkups({
       applySavedGallerySize(gallery);
       addGalleryZoomControls(gallery);
       addGalleryResizeHandle(gallery);
+      addGalleryDragPan(gallery);
+      addPopupDragBar(m, buttonRow);
       renderPhotoGalleryInto(gallery, m);
 
       // Attaching a photo here doesn't touch the markup's own author/edit
@@ -1470,6 +1545,7 @@ export function initMarkups({
   }
 
   function selectMarkup(id) {
+    if (popupDrag && popupDrag.id !== id) popupDrag = null;
     selectedId = id;
     editingId = null;
     renderAll();

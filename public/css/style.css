@@ -1512,6 +1512,16 @@ tr.doc-selected { background: var(--accent-light); }
   box-shadow: 0 6px 18px rgba(0,0,0,0.35);
 }
 .markup-popup-buttons { display: flex; gap: 2px; }
+.markup-popup-buttons.draggable { cursor: move; touch-action: none; }
+.markup-popup-grip {
+  flex: 1;
+  min-width: 24px;
+  min-height: 22px;
+  background: radial-gradient(circle, rgba(255,255,255,0.5) 1px, transparent 1.5px) center / 6px 6px;
+  opacity: 0.8;
+}
+.markup-popup-photo-gallery { cursor: grab; }
+.markup-popup-photo-gallery.panning { cursor: grabbing; user-select: none; }
 .markup-popup button {
   background: transparent;
   border: none;
