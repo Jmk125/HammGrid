@@ -4979,6 +4979,25 @@ function goToTakeoffItemInTakeoffs(itemId) {
 
 // withCopy adds the two "copy selection" actions - used when right-clicking
 // with points selected in edit mode, so the menu is the full 7 items.
+// Selects every visible placed shape of an item on this sheet: one becomes the
+// edited piece and the rest join the Ctrl+click multi-selection, so Change
+// Item etc. act on all of them.
+function selectAllTakeoffInstancesOfItem(itemId) {
+  const all = sheetTakeoffInstances.filter(
+    (i) => i.item_id === itemId && !hiddenTakeoffItemIds.has(i.item_id) && i.geometry && i.geometry.points && i.geometry.points.length
+  );
+  if (all.length === 0) {
+    showToast('No shapes of that item on this drawing.', 'error');
+    return;
+  }
+  const primary = (editingInstance && all.find((i) => i.id === editingInstance.id)) || all[0];
+  if (!editingInstance || editingInstance.id !== primary.id) enterTakeoffEditMode(primary);
+  extraSelectedInstanceIds.clear();
+  for (const i of all) if (i.id !== primary.id) extraSelectedInstanceIds.add(i.id);
+  renderTakeoffInstances();
+  updateSelectedPiecesReadout();
+}
+
 function showTakeoffContextMenu(x, y, instance, withCopy = false) {
   hideTakeoffContextMenu();
   const menu = document.createElement('div');
@@ -4989,6 +5008,7 @@ function showTakeoffContextMenu(x, y, instance, withCopy = false) {
   if (instance.item_type !== 'count') actions.push({ action: 'continue', label: 'Continue Item' });
   if (instance.item_type === 'area') actions.push({ action: 'subtract', label: 'Subtract Area' });
   actions.push({ action: 'change', label: 'Change Item' });
+  actions.push({ action: 'select-all', label: 'Select all of this item' });
   actions.push({ action: 'goto', label: 'Go to Item in Take-offs' });
   if (withCopy) {
     actions.push({ action: 'copy-new', label: 'Copy selection to new item' });
@@ -4997,6 +5017,10 @@ function showTakeoffContextMenu(x, y, instance, withCopy = false) {
   menu.innerHTML = actions.map((a) => `<button type="button" data-action="${a.action}">${a.label}</button>`).join('');
   document.body.appendChild(menu);
 
+  menu.querySelector('[data-action="select-all"]').addEventListener('click', () => {
+    hideTakeoffContextMenu();
+    selectAllTakeoffInstancesOfItem(instance.item_id);
+  });
   menu.querySelector('[data-action="copy-new"]')?.addEventListener('click', () => {
     hideTakeoffContextMenu();
     openCopySelectionModal();
@@ -8191,6 +8215,7 @@ function showTakeoffItemContextMenu(x, y, item) {
   menu.style.top = `${y}px`;
   const isHidden = hiddenTakeoffItemIds.has(item.id);
   const actions = [
+    { action: 'select-all', label: 'Select all on this drawing' },
     { action: 'edit', label: 'Edit properties & formula' },
     { action: 'hide', label: isHidden ? 'Unhide on this drawing' : 'Hide on this drawing' },
     { action: 'remove', label: 'Remove from this sheet' },
@@ -8199,6 +8224,10 @@ function showTakeoffItemContextMenu(x, y, item) {
   menu.innerHTML = actions.map((a) => `<button type="button" data-action="${a.action}">${escapeHtml(a.label)}</button>`).join('');
   const menuDoc = takeoffDoc();
   menuDoc.body.appendChild(menu);
+  menu.querySelector('[data-action="select-all"]').addEventListener('click', () => {
+    hideTakeoffContextMenu();
+    selectAllTakeoffInstancesOfItem(item.id);
+  });
   menu.querySelector('[data-action="edit"]').addEventListener('click', () => {
     hideTakeoffContextMenu();
     openTakeoffEditModal(item);
