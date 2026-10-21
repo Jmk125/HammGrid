@@ -5175,6 +5175,10 @@ function openChangeTakeoffItemModal(instance, targets = [instance]) {
           type: instance.item_type,
           color,
           shape: instance.item_type === 'count' ? originalItem?.shape || 'square' : undefined,
+          // Carry the original item's properties/values and output formula over.
+          properties: originalItem ? parseTakeoffProperties(originalItem.properties) : [],
+          formula: originalItem?.formula || undefined,
+          output_label: originalItem?.output_label || undefined,
           folder_id: defaultTakeoffFolderId(),
         });
         takeoffItems.push({ ...item, total_quantity: 0, instance_count: 0 });
