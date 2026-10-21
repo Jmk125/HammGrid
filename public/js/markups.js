@@ -175,7 +175,8 @@ export function initMarkups({
   let drawing = null;
   let previewEl = null;
   let selectedId = null;
-  let popupDrag = null; // {id, dx, dy}: photo popup offset from its anchor after a title-bar drag  let editingId = null;
+  let popupDrag = null; // {id, dx, dy}: photo popup offset from its anchor after a title-bar drag
+  let editingId = null;
   let handleDrag = null;
   let bodyDrag = null;
   // documentId -> its document_versions array (newest first), lazily fetched
