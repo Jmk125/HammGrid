@@ -10,7 +10,7 @@
 // note install() below fails closed: cache.addAll() rejects the whole
 // install if ANY url here 404s (e.g. a renamed/deleted page), so keep this
 // list in sync with public/ or the service worker stops updating entirely.
-const CACHE_NAME = 'app-shell-v33';
+const CACHE_NAME = 'app-shell-v34';
 
 const PRECACHE_URLS = [
   '/',
@@ -54,6 +54,8 @@ const PRECACHE_URLS = [
   '/js/takeoffAdvancedFields.js',
   '/js/takeoffDefaultFolder.js',
   '/js/takeoffFormula.js',
+  '/js/takeoffOmit.js',
+  '/vendor/polygon-clipping/polygon-clipping.umd.min.js',
   '/vendor/pdfjs/pdf.min.mjs',
   '/vendor/pdfjs/pdf.worker.min.mjs',
   '/manifest.webmanifest',
