@@ -7384,8 +7384,8 @@ function armNewlyCreatedTakeoffItem(item, type) {
 }
 
 // "From Existing" - continues an item already on this job (same
-// activateTakeoffItem used when clicking a pane row - only ones NOT already
-// on this sheet, since those already show in the pane), or pulls one in
+// activateTakeoffItem used when clicking a pane row - including ones already
+// on this sheet, so Shift+A > Existing can resume any of them), or pulls one in
 // from a different job as a starting point. Take-off items are
 // project-scoped in the schema (see takeoffItems.routes.js), so a
 // cross-project pick can never literally be the same row - it goes through
@@ -7397,8 +7397,7 @@ function armNewlyCreatedTakeoffItem(item, type) {
 // see anything created in the meantime.
 let takeoffOtherProjectsCache = null;
 async function openExistingItemPickerModal() {
-  const grouped = groupTakeoffInstancesByItem();
-  const sameProjectCandidates = takeoffItems.filter((i) => !grouped.has(i.id));
+  const sameProjectCandidates = takeoffItems;
 
   if (!takeoffOtherProjectsCache) {
     try {
@@ -7484,7 +7483,7 @@ async function openExistingItemPickerModal() {
     if (scope === 'this') {
       const matches = term ? sameProjectCandidates.filter((i) => i.name.toLowerCase().includes(term)) : sameProjectCandidates;
       if (matches.length === 0 && !term && sameProjectCandidates.length === 0) {
-        listEl.innerHTML = '<p class="muted">Every take-off item in this project is already on this sheet.</p>';
+        listEl.innerHTML = '<p class="muted">This project has no take-off items yet.</p>';
         return;
       }
       renderRows(matches);
