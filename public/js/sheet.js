@@ -15,6 +15,7 @@ import { getDefaultTakeoffFolderId, setDefaultTakeoffFolderId } from '/js/takeof
 import { computeTakeoffOutput, parseTakeoffProperties, resolveTakeoffName } from '/js/takeoffFormula.js';
 import { openFragmentPicker } from '/js/fragmentPicker.js';
 import { resolvePaneOrder } from '/js/paneOrder.js';
+import { computeOmitHoles } from '/js/takeoffOmit.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.mjs';
 
@@ -2593,6 +2594,11 @@ let continuingInstanceId = null; // set by "Continue Item" - finishing the draft
 // right next to the one you meant to extend.
 let continuingSeedPointCount = 0;
 let subtractingIntoInstanceId = null; // set by "Subtract Area" - finishing the draft appends a hole to this instance instead of POSTing/continuing
+// "Omit" (bottom bar, area placement only): null = off, 'all' = every other
+// area take-off on this sheet, or a Set of item ids. New area shapes get the
+// overlapping parts of those instances cut out as holes at placement time
+// (a fixed snapshot - later moving a window doesn't re-cut the brick).
+let takeoffOmit = null;
 let takeoffPlacementMode = 'points'; // 'points' | 'box' - box mode is a 2-click rectangle shortcut for area placement/subtraction
 let axisLockPinned = false; // when true, angle-snap is on by default and Shift temporarily *disables* it (inverted from the normal hold-to-snap)
 let takeoffSearchTerm = ''; // filters the pane's item list - a job can easily have hundreds of items
@@ -6583,6 +6589,7 @@ function deactivateTakeoff() {
   continuingInstanceId = null;
   continuingSeedPointCount = 0;
   subtractingIntoInstanceId = null;
+  takeoffOmit = null; // never carry a silent "cut things out" setting into the next item
   clearTakeoffDraft();
   localStorage.removeItem(takeoffStorageKey());
   takeoffDoc().querySelectorAll('#takeoff-tool-grid .tool-btn').forEach((b) => b.classList.remove('active'));
@@ -6591,11 +6598,11 @@ function deactivateTakeoff() {
   renderTakeoffPane();
 }
 
-async function submitTakeoffInstance(itemId, points, quantity, perimeter) {
+async function submitTakeoffInstance(itemId, points, quantity, perimeter, holes) {
   try {
     const { instance } = await api('POST', `/api/projects/${projectId}/sheets/${sheetId}/take-off-instances`, {
       item_id: itemId,
-      geometry: { points },
+      geometry: holes && holes.length ? { points, holes } : { points },
       quantity,
       perimeter: perimeter ?? null,
     });
@@ -6613,13 +6620,13 @@ async function submitTakeoffInstance(itemId, points, quantity, perimeter) {
 // undo only reaches the last of the batch (lastPlacedInstanceId is single-
 // valued) - a known, minor limitation, not worth an array of "last placed"
 // ids just for this one edge case.
-async function submitTakeoffInstances(itemIds, points, quantity, perimeter) {
+async function submitTakeoffInstances(itemIds, points, quantity, perimeter, holes) {
   try {
     const results = await Promise.all(
       itemIds.map((itemId) =>
         api('POST', `/api/projects/${projectId}/sheets/${sheetId}/take-off-instances`, {
           item_id: itemId,
-          geometry: { points },
+          geometry: holes && holes.length ? { points, holes } : { points },
           quantity,
           perimeter: perimeter ?? null,
         })
@@ -6654,6 +6661,87 @@ async function patchTakeoffInstance(id, points, quantity, holes, perimeter) {
 // measurement is actually being placed - this just records the instance.
 // If continuingInstanceId is set ("Continue Item" from the right-click
 // menu), this extends that existing instance instead of creating a new one.
+// Holes for a new area shape under the current Omit setting - [] when Omit is
+// off or nothing overlaps. The item(s) being placed are never omitted from
+// themselves, so adjoining pieces of the same item don't cut each other.
+function omitHolesFor(points, placingItemIds) {
+  if (!takeoffOmit) return [];
+  const geometries = sheetTakeoffInstances
+    .filter(
+      (i) =>
+        i.item_type === 'area' &&
+        !placingItemIds.includes(i.item_id) &&
+        (takeoffOmit === 'all' || takeoffOmit.has(i.item_id))
+    )
+    .map((i) => i.geometry);
+  try {
+    const holes = computeOmitHoles(points, geometries);
+    if (holes.length) {
+      const sf = holes.reduce((sum, h) => sum + polygonAreaFeet(h), 0);
+      showToast(`Omitted ${sf.toFixed(1)} SF (${holes.length} ${holes.length === 1 ? 'area' : 'areas'}).`, 'success');
+    }
+    return holes;
+  } catch (err) {
+    showToast(`Omit failed, placed without cutting anything out: ${err.message}`, 'error');
+    return [];
+  }
+}
+
+// Omit picker - "all area take-offs", or specific items that already have
+// area instances on this sheet (the only ones with geometry to cut out).
+function openTakeoffOmitModal() {
+  const byItem = new Map();
+  for (const i of sheetTakeoffInstances) {
+    if (i.item_type !== 'area') continue;
+    const entry = byItem.get(i.item_id) || { name: i.item_name, count: 0 };
+    entry.count++;
+    byItem.set(i.item_id, entry);
+  }
+  const isChecked = (id) => takeoffOmit instanceof Set && takeoffOmit.has(id);
+  openModal(`
+    <h2>Omit from new area take-offs</h2>
+    <p class="muted">Anything already placed on this drawing that overlaps the area you trace next is cut out of it automatically.</p>
+    <label class="chip-toggle${takeoffOmit === 'all' ? ' checked' : ''}" style="margin-bottom:8px;">
+      <input type="checkbox" id="omit-all"${takeoffOmit === 'all' ? ' checked' : ''}><span class="dot"></span>All area take-offs
+    </label>
+    <div id="omit-item-list" style="max-height:260px; overflow:auto;">
+      ${
+        byItem.size === 0
+          ? '<p class="muted">No area take-offs on this drawing yet.</p>'
+          : [...byItem.entries()]
+              .map(
+                ([id, e]) => `<label style="display:block; padding:4px 0;">
+        <input type="checkbox" class="omit-item" value="${id}"${isChecked(id) ? ' checked' : ''}> ${escapeHtml(e.name)}
+        <span class="muted">(${e.count} on this drawing)</span></label>`
+              )
+              .join('')
+      }
+    </div>
+    <div class="modal-actions">
+      <button type="button" id="modal-cancel">Cancel</button>
+      <button type="button" id="omit-off">Turn off</button>
+      <button class="primary" type="button" id="modal-apply">Apply</button>
+    </div>
+  `);
+  const allBox = document.getElementById('omit-all');
+  const itemBoxes = [...document.querySelectorAll('.omit-item')];
+  const syncDisabled = () => itemBoxes.forEach((b) => (b.disabled = allBox.checked));
+  allBox.addEventListener('change', syncDisabled);
+  syncDisabled();
+  document.getElementById('modal-cancel').addEventListener('click', closeModal);
+  document.getElementById('omit-off').addEventListener('click', () => {
+    takeoffOmit = null;
+    closeModal();
+    updateTakeoffToolbar();
+  });
+  document.getElementById('modal-apply').addEventListener('click', () => {
+    const picked = itemBoxes.filter((b) => b.checked).map((b) => Number(b.value));
+    takeoffOmit = allBox.checked ? 'all' : picked.length ? new Set(picked) : null;
+    closeModal();
+    updateTakeoffToolbar();
+  });
+}
+
 function finishTakeoffInstance() {
   const points = [...takeoffPoints];
   clearTakeoffDraft();
@@ -6716,12 +6804,13 @@ function finishTakeoffInstance() {
       if (ok) renderTakeoffPane();
     });
   } else {
-    const quantity = takeoffTool === 'area' ? polygonAreaFeet(points) : polylineLengthFeet(points);
+    const holes = takeoffTool === 'area' ? omitHolesFor(points, [activeTakeoffItemId, ...multiSelectExtraItemIds]) : [];
+    const quantity = takeoffTool === 'area' ? netAreaFeet(points, holes) : polylineLengthFeet(points);
     const perimeter = takeoffTool === 'area' ? polygonPerimeterFeet(points) : null;
     if (multiSelectExtraItemIds.size > 0) {
-      submitTakeoffInstances([activeTakeoffItemId, ...multiSelectExtraItemIds], points, quantity, perimeter);
+      submitTakeoffInstances([activeTakeoffItemId, ...multiSelectExtraItemIds], points, quantity, perimeter, holes);
     } else {
-      submitTakeoffInstance(activeTakeoffItemId, points, quantity, perimeter);
+      submitTakeoffInstance(activeTakeoffItemId, points, quantity, perimeter, holes);
     }
   }
 }
@@ -8682,6 +8771,8 @@ function setupTakeoffToolbar() {
     btn.addEventListener('click', () => setTakeoffPlacementMode(btn.dataset.mode));
   });
 
+  document.getElementById('takeoff-omit-btn').addEventListener('click', openTakeoffOmitModal);
+
   const axisLockInput = document.getElementById('takeoff-axis-lock-checkbox');
   axisLockInput.addEventListener('change', () => {
     axisLockPinned = axisLockInput.checked;
@@ -8723,6 +8814,10 @@ function updateTakeoffToolbar() {
   );
   bar.style.display = placementActive || itemActionsRelevant ? '' : 'none';
   document.getElementById('takeoff-placement-mode').style.display = takeoffTool === 'area' ? '' : 'none';
+  const omitBtn = document.getElementById('takeoff-omit-btn');
+  omitBtn.style.display = takeoffTool === 'area' ? '' : 'none';
+  omitBtn.classList.toggle('active', !!takeoffOmit);
+  omitBtn.textContent = !takeoffOmit ? 'Omit' : takeoffOmit === 'all' ? 'Omit: all' : `Omit: ${takeoffOmit.size} item${takeoffOmit.size === 1 ? '' : 's'}`;
   // Axis-lock/snap only ever mean something while actively tracing a
   // line/perimeter/area - hide them (not just the whole bar) for the
   // item-actions-only cases (a merely-selected item, an armed count item,

@@ -171,6 +171,7 @@
       <button type="button" data-mode="points" class="active" title="Point-to-point (shortcut: P)">Point-to-point</button>
       <button type="button" data-mode="box" title="Box (shortcut: B)">Box</button>
     </div>
+    <button type="button" id="takeoff-omit-btn" style="display:none;" title="Automatically cut already-placed area take-offs (windows, doors...) out of the area you trace">Omit</button>
     <label class="chip-toggle" id="takeoff-axis-lock-chip">
       <input type="checkbox" id="takeoff-axis-lock-checkbox"><span class="dot"></span>Lock axes
     </label>
@@ -187,6 +188,7 @@
     <span>Drag a box around what you want to pin on screen</span>
     <button type="button" id="freeze-pane-cancel-btn">Cancel</button>
   </div>
+  <script src="/vendor/polygon-clipping/polygon-clipping.umd.min.js"></script>
   <script src="/js/api.js"></script>
   <script type="module" src="/js/sheet.js"></script>
   <script type="module" src="/js/pwa.js"></script>
