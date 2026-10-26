@@ -2594,8 +2594,8 @@ let continuingInstanceId = null; // set by "Continue Item" - finishing the draft
 // right next to the one you meant to extend.
 let continuingSeedPointCount = 0;
 let subtractingIntoInstanceId = null; // set by "Subtract Area" - finishing the draft appends a hole to this instance instead of POSTing/continuing
-// "Omit" (bottom bar, area placement only): null = off, 'all' = every other
-// area take-off on this sheet, or a Set of item ids. New area shapes get the
+// "Omit" (bottom bar, area placement only): null = off, or a Set of item ids
+// whose area instances on this sheet get cut out. New area shapes get the
 // overlapping parts of those instances cut out as holes at placement time
 // (a fixed snapshot - later moving a window doesn't re-cut the brick).
 let takeoffOmit = null;
@@ -6662,17 +6662,13 @@ async function patchTakeoffInstance(id, points, quantity, holes, perimeter) {
 // If continuingInstanceId is set ("Continue Item" from the right-click
 // menu), this extends that existing instance instead of creating a new one.
 // Holes for a new area shape under the current Omit setting - [] when Omit is
-// off or nothing overlaps. The item(s) being placed are never omitted from
-// themselves, so adjoining pieces of the same item don't cut each other.
-function omitHolesFor(points, placingItemIds) {
+// off or nothing overlaps. The item being placed can be omitted from itself
+// on purpose (e.g. separate carpet rooms kept as their own shapes for
+// perimeter/base quantities, so none of them double-count shared ground).
+function omitHolesFor(points) {
   if (!takeoffOmit) return [];
   const geometries = sheetTakeoffInstances
-    .filter(
-      (i) =>
-        i.item_type === 'area' &&
-        !placingItemIds.includes(i.item_id) &&
-        (takeoffOmit === 'all' || takeoffOmit.has(i.item_id))
-    )
+    .filter((i) => i.item_type === 'area' && takeoffOmit.has(i.item_id))
     .map((i) => i.geometry);
   try {
     const holes = computeOmitHoles(points, geometries);
@@ -6697,13 +6693,11 @@ function openTakeoffOmitModal() {
     entry.count++;
     byItem.set(i.item_id, entry);
   }
-  const isChecked = (id) => takeoffOmit instanceof Set && takeoffOmit.has(id);
+  const isChecked = (id) => !!takeoffOmit && takeoffOmit.has(id);
   openModal(`
     <h2>Omit from new area take-offs</h2>
-    <p class="muted">Anything already placed on this drawing that overlaps the area you trace next is cut out of it automatically.</p>
-    <label class="chip-toggle${takeoffOmit === 'all' ? ' checked' : ''}" style="margin-bottom:8px;">
-      <input type="checkbox" id="omit-all"${takeoffOmit === 'all' ? ' checked' : ''}><span class="dot"></span>All area take-offs
-    </label>
+    <p class="muted">Anything already placed on this drawing that overlaps the area you trace next is cut out of it automatically. This includes the item you're tracing, if you pick it.</p>
+    <button type="button" id="omit-toggle-all" style="margin-bottom:8px;">Select all</button>
     <div id="omit-item-list" style="max-height:260px; overflow:auto;">
       ${
         byItem.size === 0
@@ -6723,11 +6717,20 @@ function openTakeoffOmitModal() {
       <button class="primary" type="button" id="modal-apply">Apply</button>
     </div>
   `);
-  const allBox = document.getElementById('omit-all');
   const itemBoxes = [...document.querySelectorAll('.omit-item')];
-  const syncDisabled = () => itemBoxes.forEach((b) => (b.disabled = allBox.checked));
-  allBox.addEventListener('change', syncDisabled);
-  syncDisabled();
+  // One button flips between "check every box" and "clear every box".
+  const toggleAllBtn = document.getElementById('omit-toggle-all');
+  const syncToggleAll = () => {
+    toggleAllBtn.textContent = itemBoxes.length && itemBoxes.every((b) => b.checked) ? 'Select none' : 'Select all';
+    toggleAllBtn.disabled = itemBoxes.length === 0;
+  };
+  toggleAllBtn.addEventListener('click', () => {
+    const check = !itemBoxes.every((b) => b.checked);
+    itemBoxes.forEach((b) => (b.checked = check));
+    syncToggleAll();
+  });
+  itemBoxes.forEach((b) => b.addEventListener('change', syncToggleAll));
+  syncToggleAll();
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
   document.getElementById('omit-off').addEventListener('click', () => {
     takeoffOmit = null;
@@ -6736,7 +6739,7 @@ function openTakeoffOmitModal() {
   });
   document.getElementById('modal-apply').addEventListener('click', () => {
     const picked = itemBoxes.filter((b) => b.checked).map((b) => Number(b.value));
-    takeoffOmit = allBox.checked ? 'all' : picked.length ? new Set(picked) : null;
+    takeoffOmit = picked.length ? new Set(picked) : null;
     closeModal();
     updateTakeoffToolbar();
   });
@@ -6804,7 +6807,7 @@ function finishTakeoffInstance() {
       if (ok) renderTakeoffPane();
     });
   } else {
-    const holes = takeoffTool === 'area' ? omitHolesFor(points, [activeTakeoffItemId, ...multiSelectExtraItemIds]) : [];
+    const holes = takeoffTool === 'area' ? omitHolesFor(points) : [];
     const quantity = takeoffTool === 'area' ? netAreaFeet(points, holes) : polylineLengthFeet(points);
     const perimeter = takeoffTool === 'area' ? polygonPerimeterFeet(points) : null;
     if (multiSelectExtraItemIds.size > 0) {
@@ -8817,7 +8820,7 @@ function updateTakeoffToolbar() {
   const omitBtn = document.getElementById('takeoff-omit-btn');
   omitBtn.style.display = takeoffTool === 'area' ? '' : 'none';
   omitBtn.classList.toggle('active', !!takeoffOmit);
-  omitBtn.textContent = !takeoffOmit ? 'Omit' : takeoffOmit === 'all' ? 'Omit: all' : `Omit: ${takeoffOmit.size} item${takeoffOmit.size === 1 ? '' : 's'}`;
+  omitBtn.textContent = takeoffOmit ? `Omit: ${takeoffOmit.size} item${takeoffOmit.size === 1 ? '' : 's'}` : 'Omit';
   // Axis-lock/snap only ever mean something while actively tracing a
   // line/perimeter/area - hide them (not just the whole bar) for the
   // item-actions-only cases (a merely-selected item, an armed count item,
