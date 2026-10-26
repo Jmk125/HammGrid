@@ -8575,6 +8575,20 @@ function setupTakeoffTypeShortcut(grid, defs) {
   document.addEventListener(
     'keydown',
     (e) => {
+      const modePicker = document.getElementById('takeoff-mode-picker');
+      if (modePicker) {
+        const k = e.key.toLowerCase();
+        if (e.key === 'Escape') {
+          closeModal();
+        } else if ((k === 'n' || k === 'e') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          chooseMode(k);
+        } else {
+          return;
+        }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        return;
+      }
       const picker = document.getElementById('takeoff-type-picker');
       if (picker) {
         const idx = Number(e.key) - 1;
@@ -8600,25 +8614,43 @@ function setupTakeoffTypeShortcut(grid, defs) {
         showToast('Set a scale first.', 'error');
         return;
       }
-      const labels = { linear: 'Linear', perimeter: 'Perimeter', area: 'Area', count: 'Count' };
-      const keyFor = (tool) => Object.keys(hotkeys).find((k) => hotkeys[k] === tool).toUpperCase();
       const backdrop = openModal(`
-        <div id="takeoff-type-picker">
-          <h2>New take-off item</h2>
-          <div class="takeoff-type-picker-list" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-            ${defs
-              .map(
-                (d, i) =>
-                  `<button type="button" class="tool-btn" data-pick="${d.tool}" style="padding:10px;">${labels[d.tool]} <span class="muted">(${keyFor(d.tool)})</span></button>`
-              )
-              .join('')}
+        <div id="takeoff-mode-picker">
+          <h2>Add take-off item</h2>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <button type="button" class="tool-btn" data-mode="n" style="padding:10px;">New <span class="muted">(N)</span></button>
+            <button type="button" class="tool-btn" data-mode="e" style="padding:10px;">Existing <span class="muted">(E)</span></button>
           </div>
         </div>
       `);
-      backdrop.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => pick(b.dataset.pick)));
+      backdrop.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => chooseMode(b.dataset.mode)));
     },
     true
   );
+
+  function chooseMode(mode) {
+    closeModal();
+    if (mode === 'e') {
+      openExistingItemPickerModal();
+      return;
+    }
+    const labels = { linear: 'Linear', perimeter: 'Perimeter', area: 'Area', count: 'Count' };
+    const keyFor = (tool) => Object.keys(hotkeys).find((k) => hotkeys[k] === tool).toUpperCase();
+    const backdrop = openModal(`
+      <div id="takeoff-type-picker">
+        <h2>New take-off item</h2>
+        <div class="takeoff-type-picker-list" style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+          ${defs
+            .map(
+              (d) =>
+                `<button type="button" class="tool-btn" data-pick="${d.tool}" style="padding:10px;">${labels[d.tool]} <span class="muted">(${keyFor(d.tool)})</span></button>`
+            )
+            .join('')}
+        </div>
+      </div>
+    `);
+    backdrop.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => pick(b.dataset.pick)));
+  }
 }
 
 async function setupTakeoffTools() {
