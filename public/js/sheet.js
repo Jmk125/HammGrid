@@ -3153,12 +3153,13 @@ function setupMagnifierLens() {
 // ---------- Hold-middle-mouse precision cursor ----------
 // While a take-off/measure tool is armed, holding the middle button slows the
 // cursor to PRECISION_FACTOR of its real speed (Shift stays axis-lock). The
-// browser can't slow the OS cursor, so this locks the pointer and drives a
-// drawn crosshair from movementX/Y; getMeasureSvgPoint substitutes that
-// virtual position for the event's own clientX/Y, so every placement,
-// rubber-band preview and magnifier read it without knowing about it. After
-// release the virtual spot stays (the real cursor reappears back where the
-// lock began) until the real mouse moves again.
+// browser can't slow the OS cursor, so the real one is hidden and a drawn
+// crosshair is driven from the real cursor's movement deltas;
+// getMeasureSvgPoint substitutes that virtual position for the event's own
+// clientX/Y, so every placement, rubber-band preview and magnifier read it
+// without knowing about it. After release the virtual spot stays until the
+// real mouse moves again. No pointer lock (Firefox shows a banner every
+// time); the pointer-lock version is on branch precision-pointer-lock.
 const PRECISION_FACTOR = 0.2;
 let precisionPos = null; // { x, y } client coords, or null when inactive
 let precisionHeld = false;
@@ -3172,6 +3173,11 @@ function setupPrecisionCursor() {
     'position:fixed;width:20px;height:20px;margin:-10px 0 0 -10px;pointer-events:none;z-index:9999;display:none;' +
     'background:linear-gradient(#e11d48,#e11d48) center/1px 100% no-repeat,linear-gradient(#e11d48,#e11d48) center/100% 1px no-repeat;';
   document.body.appendChild(cross);
+  // Hide the real cursor while held so only the slowed crosshair shows.
+  const style = document.createElement('style');
+  style.textContent = 'body.precision-active, body.precision-active * { cursor: none !important; }';
+  document.head.appendChild(style);
+  let lastReal = null; // previous real cursor spot while held; deltas from it drive precisionPos
 
   function sync() {
     if (!precisionPos) {
@@ -3183,6 +3189,7 @@ function setupPrecisionCursor() {
     cross.style.top = `${precisionPos.y}px`;
   }
   function clear() {
+    document.body.classList.remove('precision-active');
     precisionHeld = false;
     precisionPos = null;
     precisionResumeFrom = null;
@@ -3201,11 +3208,8 @@ function setupPrecisionCursor() {
       if (!precisionPos) precisionPos = { x: e.clientX, y: e.clientY };
       precisionHeld = true;
       precisionResumeFrom = null;
-      try {
-        svg.requestPointerLock();
-      } catch (_) {
-        /* unsupported: precision just won't engage */
-      }
+      lastReal = { x: e.clientX, y: e.clientY };
+      document.body.classList.add('precision-active');
       sync();
     },
     true
@@ -3213,20 +3217,20 @@ function setupPrecisionCursor() {
   window.addEventListener('mouseup', (e) => {
     if (e.button !== 1 || !precisionHeld) return;
     precisionHeld = false;
-    if (document.pointerLockElement) document.exitPointerLock();
+    document.body.classList.remove('precision-active');
     precisionResumeFrom = { x: e.clientX, y: e.clientY };
   });
   document.addEventListener(
     'mousemove',
     (e) => {
-      if (!precisionPos) return;
+      if (!precisionPos || !e.isTrusted) return; // untrusted = our own repaint dispatch
       if (precisionHeld) {
-        if (!document.pointerLockElement) return; // lock denied: ignore movement rather than jump
         const rect = svg.getBoundingClientRect();
-        precisionPos.x = Math.min(rect.right, Math.max(rect.left, precisionPos.x + e.movementX * PRECISION_FACTOR));
-        precisionPos.y = Math.min(rect.bottom, Math.max(rect.top, precisionPos.y + e.movementY * PRECISION_FACTOR));
+        precisionPos.x = Math.min(rect.right, Math.max(rect.left, precisionPos.x + (e.clientX - lastReal.x) * PRECISION_FACTOR));
+        precisionPos.y = Math.min(rect.bottom, Math.max(rect.top, precisionPos.y + (e.clientY - lastReal.y) * PRECISION_FACTOR));
+        lastReal = { x: e.clientX, y: e.clientY };
         sync();
-        if (e.isTrusted) repaint(e);
+        repaint(e);
         return;
       }
       if (precisionResumeFrom && e.isTrusted && Math.hypot(e.clientX - precisionResumeFrom.x, e.clientY - precisionResumeFrom.y) > 4) clear();
