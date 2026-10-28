@@ -3180,7 +3180,9 @@ function setupPrecisionCursor() {
   let lastReal = null; // previous real cursor spot while held; deltas from it drive precisionPos
 
   function sync() {
-    if (!precisionPos) {
+    // Red crosshair only while held; after release the normal dashed guides
+    // (setupTakeoffCrosshair) sit at the precision spot instead.
+    if (!precisionPos || !precisionHeld) {
       cross.style.display = 'none';
       return;
     }
@@ -3219,6 +3221,7 @@ function setupPrecisionCursor() {
     precisionHeld = false;
     document.body.classList.remove('precision-active');
     precisionResumeFrom = { x: e.clientX, y: e.clientY };
+    sync();
   });
   document.addEventListener(
     'mousemove',
@@ -6300,9 +6303,11 @@ function setupTakeoffCrosshair() {
       hideTakeoffCrosshair();
       return;
     }
+    // The slowed precision spot (hold middle mouse) replaces the real cursor.
+    const p = precisionPos || e;
     const rect = wrap.getBoundingClientRect();
-    vLine.style.left = `${e.clientX - rect.left}px`;
-    hLine.style.top = `${e.clientY - rect.top}px`;
+    vLine.style.left = `${p.clientX !== undefined ? p.clientX - rect.left : p.x - rect.left}px`;
+    hLine.style.top = `${p.clientY !== undefined ? p.clientY - rect.top : p.y - rect.top}px`;
     vLine.style.display = '';
     hLine.style.display = '';
   });
