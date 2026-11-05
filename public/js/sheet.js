@@ -3669,6 +3669,59 @@ function buildFreezePaneEl({ id, contentEl, left, top, pinState, label, collapse
     removePersistedFreezePane(id);
   });
 
+  // Right-click anywhere on the pane: escape hatch for a pane dragged
+  // somewhere its header can't be grabbed. Reset restores the size and
+  // position it was created with (which also pulls it back on screen).
+  const originalBox = { left, top, width: boxWidth, height: boxHeight };
+  el.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    hideTakeoffContextMenu();
+    const menu = document.createElement('div');
+    menu.id = 'takeoff-context-menu';
+    menu.style.left = `${e.clientX}px`;
+    menu.style.top = `${e.clientY}px`;
+    menu.innerHTML = `
+      <button type="button" data-action="reset">Reset size &amp; position</button>
+      <button type="button" data-action="remove">Remove pane</button>
+    `;
+    document.body.appendChild(menu);
+    menu.querySelector('[data-action="reset"]').addEventListener('click', () => {
+      hideTakeoffContextMenu();
+      delete el.dataset.expandedHeight;
+      el.style.width = originalBox.width ? `${originalBox.width}px` : '';
+      el.style.height = originalBox.height && !el.classList.contains('freeze-pane-collapsed') ? `${originalBox.height}px` : '';
+      if (originalBox.height) el.dataset.expandedHeight = `${originalBox.height}px`;
+      el.style.left = `${originalBox.left}px`;
+      el.style.top = `${originalBox.top}px`;
+      applyPaneZoom();
+      if (isPinned()) {
+        updatePersistedFreezePane(id, {
+          left: el.offsetLeft,
+          top: el.offsetTop,
+          boxWidth: originalBox.width || undefined,
+          boxHeight: originalBox.height || undefined,
+        });
+      }
+    });
+    menu.querySelector('[data-action="remove"]').addEventListener('click', () => {
+      hideTakeoffContextMenu();
+      el.remove();
+      freezePanes = freezePanes.filter((p) => p.id !== id);
+      removePersistedFreezePane(id);
+    });
+    setTimeout(() => {
+      document.addEventListener('click', hideTakeoffContextMenu, { once: true });
+      document.addEventListener(
+        'keydown',
+        (ev) => {
+          if (ev.key === 'Escape') hideTakeoffContextMenu();
+        },
+        { once: true }
+      );
+    }, 0);
+  });
+
   const header = el.querySelector('.freeze-pane-header');
   function startPaneDrag(e) {
     if (e.target.closest('.freeze-pane-close') || e.target.closest('.freeze-pane-pin') || e.target.closest('.freeze-pane-collapse') || e.target.closest('.freeze-pane-label'))
