@@ -8851,6 +8851,90 @@ function setupTakeoffTypeShortcut(grid, defs) {
   }
 }
 
+// "View Multiple" take-off tabs: when this sheet was opened from a combined
+// view, the pane gets one tab per viewed project. The sheet's own project is
+// the normal editable pane (new quantities always land on the project that
+// owns the sheet being drawn on - instances are keyed to the sheet). The other
+// projects' tabs are read-only references (item totals) so e.g. SD quantities
+// can sit beside the DD take-off being built.
+async function setupTakeoffProjectTabs() {
+  if (!combinedProjectIds) return;
+  const ids = [...new Set(combinedProjectIds.split(',').map((s) => s.trim()).filter(Boolean))];
+  if (!ids.includes(String(projectId))) ids.unshift(String(projectId));
+  if (ids.length < 2) return;
+  const tabsEl = document.getElementById('takeoff-project-tabs');
+  const names = new Map();
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const { project } = await api('GET', `/api/projects/${id}`);
+        names.set(id, project.name);
+      } catch {
+        names.set(id, `Project ${id}`);
+      }
+    })
+  );
+  const ordered = [String(projectId), ...ids.filter((id) => id !== String(projectId))];
+  tabsEl.style.display = 'flex';
+  tabsEl.style.cssText += ';gap:4px;flex-wrap:wrap;margin-bottom:6px;';
+  let activeTab = String(projectId);
+
+  async function renderRef(id) {
+    const doc = takeoffDoc();
+    const ref = doc.getElementById('takeoff-ref-view');
+    ref.innerHTML = '<p class="muted">Loading...</p>';
+    try {
+      const { items } = await api('GET', `/api/projects/${id}/take-off-items`);
+      if (activeTab !== id) return;
+      const term = (doc.getElementById('takeoff-search')?.value || '').trim().toLowerCase();
+      const shown = term ? items.filter((i) => i.name.toLowerCase().includes(term)) : items;
+      ref.innerHTML = `
+        <p class="muted" style="margin:0 0 6px;">Read-only reference. Quantities you draw on this sheet go to ${escapeHtml(names.get(String(projectId)))}.
+          <a href="/takeoffs.html?projectId=${id}" target="_blank" rel="noopener">Open full take-off</a></p>
+        <div class="takeoff-items-list">${
+          shown.length
+            ? shown
+                .map(
+                  (i) => `<div class="takeoff-item-row" style="cursor:default;">
+                    <span class="takeoff-color-dot" style="background:${escapeHtml(i.color)};"></span>
+                    <span class="takeoff-item-name">${escapeHtml(i.name)}</span>
+                    <span class="muted" style="margin-left:auto;white-space:nowrap;">${escapeHtml(formatTakeoffQuantity(i, i.total_quantity || 0))}</span>
+                  </div>`
+                )
+                .join('')
+            : '<p class="muted">No take-off items.</p>'
+        }</div>`;
+    } catch (err) {
+      ref.innerHTML = `<p class="error">Failed to load: ${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  function selectTab(id) {
+    activeTab = id;
+    const doc = takeoffDoc();
+    const own = id === String(projectId);
+    doc.getElementById('takeoff-main-controls').style.display = own ? 'contents' : 'none';
+    doc.getElementById('takeoff-ref-view').style.display = own ? 'none' : '';
+    doc.querySelectorAll('#takeoff-project-tabs .takeoff-project-tab').forEach((b) => b.classList.toggle('active', b.dataset.id === id));
+    if (!own) renderRef(id);
+  }
+
+  for (const id of ordered) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tool-btn takeoff-project-tab';
+    b.dataset.id = id;
+    b.textContent = names.get(id);
+    b.title = id === String(projectId) ? "This sheet's project (editable)" : 'Read-only reference';
+    b.addEventListener('click', () => selectTab(id));
+    tabsEl.appendChild(b);
+  }
+  selectTab(String(projectId));
+  document.getElementById('takeoff-search').addEventListener('input', () => {
+    if (activeTab !== String(projectId)) renderRef(activeTab);
+  });
+}
+
 async function setupTakeoffTools() {
   document.getElementById('section-takeoffs').style.display = '';
   document.getElementById('sheet-pane').classList.add('pane-wide');
@@ -8902,6 +8986,7 @@ async function setupTakeoffTools() {
   setupTakeoffEditToolbar();
   setupTakeoffToolbar();
   setupTakeoffItemActionsBar();
+  setupTakeoffProjectTabs().catch(() => {});
   document.getElementById('takeoff-search').addEventListener('input', (e) => {
     takeoffSearchTerm = e.target.value.trim().toLowerCase();
     renderTakeoffPane();
