@@ -1424,6 +1424,7 @@ async function deleteItem(item) {
     topbarEl: document.getElementById('topbar'),
     sidebarEl: document.getElementById('sidebar'),
     projectId,
+    combinedProjectIds: params.get('combinedProjectIds') || undefined,
     active: 'takeoffs',
     me,
   });
