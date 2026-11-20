@@ -2205,7 +2205,7 @@ function exportOverlayImage() {
   if (!overlayActive || !canvas.width) return;
   const versionLabel = (id) => {
     const v = allVersions.find((ver) => ver.id === id);
-    return v ? v.revision_title : String(id);
+    return v ? v.revision_title : overlayExtraVersionLabels.get(id) || String(id);
   };
   const safe = (s) => String(s).replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '');
   const filename = `overlay-${safe(currentSheet.sheet_number)}-${safe(versionLabel(overlayLayers.a))}-vs-${safe(versionLabel(overlayLayers.b))}.png`;
@@ -2374,8 +2374,34 @@ function exitOverlay(rerender) {
   if (rerender) renderPdf(displayedVersionId);
 }
 
+// Sheets from every project in the "View Multiple" set (or just this project
+// when opened normally), each tagged with its project name so the picker can
+// group by project. Version ids are globally unique and the version file
+// endpoints aren't project-scoped, so an overlay can pair versions across projects.
+async function loadOverlayCandidateSheets() {
+  const ids = [String(projectId)];
+  if (combinedProjectIds) {
+    for (const raw of combinedProjectIds.split(',')) {
+      const id = raw.trim();
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+  }
+  const multi = ids.length > 1;
+  const lists = await Promise.all(
+    ids.map(async (id) => {
+      const [{ sheets }, projRes] = await Promise.all([
+        api('GET', `/api/projects/${id}/sheets`),
+        multi ? api('GET', `/api/projects/${id}`).catch(() => null) : Promise.resolve(null),
+      ]);
+      const name = projRes && projRes.project ? projRes.project.name : `Project ${id}`;
+      return sheets.map((s) => ({ ...s, _projectName: name, _otherProject: id !== String(projectId) }));
+    })
+  );
+  return { sheets: lists.flat(), multi };
+}
+
 async function openOverlayPicker() {
-  const { sheets } = await api('GET', `/api/projects/${projectId}/sheets`);
+  const { sheets, multi } = await loadOverlayCandidateSheets();
 
   openModal(`
     <h2>Overlay drawing</h2>
@@ -2385,43 +2411,56 @@ async function openOverlayPicker() {
   `);
   document.getElementById('modal-cancel').addEventListener('click', closeModal);
 
+  const labelFor = (s) =>
+    `${s.sheet_number} - ${s.current_title || ''}${multi && s._otherProject ? `  (${s._projectName})` : ''}`;
+
   function renderList(filter) {
     const listEl = document.getElementById('overlay-picker-list');
     listEl.innerHTML = '';
+    const f = filter ? filter.toLowerCase() : '';
+    const matches = (s) => !f || `${s.sheet_number} ${s.current_title || ''} ${s._projectName}`.toLowerCase().includes(f);
+    const addItem = (s) => {
+      const item = document.createElement('div');
+      item.className = 'overlay-picker-item';
+      item.textContent = labelFor(s);
+      item.addEventListener('click', () => pickOverlayTarget(s));
+      listEl.appendChild(item);
+    };
+    const addLabel = (text) => {
+      const label = document.createElement('div');
+      label.className = 'overlay-picker-group-label';
+      label.textContent = text;
+      listEl.appendChild(label);
+    };
     const recents = getRecentOverlaySheetIds()
       .map((id) => sheets.find((s) => s.id === id))
-      .filter((s) => s && (!filter || `${s.sheet_number} ${s.current_title || ''}`.toLowerCase().includes(filter.toLowerCase())));
+      .filter((s) => s && matches(s));
     if (recents.length) {
-      const label = document.createElement('div');
-      label.className = 'overlay-picker-group-label';
-      label.textContent = 'Recent';
-      listEl.appendChild(label);
-      for (const s of recents) {
-        const item = document.createElement('div');
-        item.className = 'overlay-picker-item';
-        item.textContent = `${s.sheet_number} - ${s.current_title || ''}`;
-        item.addEventListener('click', () => pickOverlayTarget(s));
-        listEl.appendChild(item);
-      }
+      addLabel('Recent');
+      recents.forEach(addItem);
     }
-    const grouped = {};
+    // Group by project (multi mode, this project first) then discipline.
+    const byProject = new Map();
     for (const s of sheets) {
-      const hay = `${s.sheet_number} ${s.current_title || ''}`.toLowerCase();
-      if (filter && !hay.includes(filter.toLowerCase())) continue;
-      const disc = s.discipline || 'Unspecified';
-      (grouped[disc] = grouped[disc] || []).push(s);
+      if (!matches(s)) continue;
+      const key = multi ? s._projectName : '';
+      if (!byProject.has(key)) byProject.set(key, { other: s._otherProject, sheets: [] });
+      byProject.get(key).sheets.push(s);
     }
-    for (const disc of Object.keys(grouped).sort()) {
-      const label = document.createElement('div');
-      label.className = 'overlay-picker-group-label';
-      label.textContent = disc;
-      listEl.appendChild(label);
-      for (const s of grouped[disc].sort((a, b) => naturalSheetCompare(a.sheet_number, b.sheet_number))) {
-        const item = document.createElement('div');
-        item.className = 'overlay-picker-item';
-        item.textContent = `${s.sheet_number} - ${s.current_title || ''}`;
-        item.addEventListener('click', () => pickOverlayTarget(s));
-        listEl.appendChild(item);
+    const projectKeys = [...byProject.keys()].sort((a, b) => {
+      const ao = byProject.get(a).other ? 1 : 0;
+      const bo = byProject.get(b).other ? 1 : 0;
+      return ao - bo || a.localeCompare(b);
+    });
+    for (const pk of projectKeys) {
+      const grouped = {};
+      for (const s of byProject.get(pk).sheets) {
+        const disc = s.discipline || 'Unspecified';
+        (grouped[disc] = grouped[disc] || []).push(s);
+      }
+      for (const disc of Object.keys(grouped).sort()) {
+        addLabel(multi ? `${pk} - ${disc}` : disc);
+        for (const s of grouped[disc].sort((a, b) => naturalSheetCompare(a.sheet_number, b.sheet_number))) addItem(s);
       }
     }
   }
@@ -2432,6 +2471,8 @@ async function openOverlayPicker() {
 // Recently overlaid sheets, per base sheet (the one being viewed), most recent first. Per-device
 // convenience only, so localStorage is fine (and may be unavailable).
 const RECENT_OVERLAY_MAX = 5;
+// version id -> label, for overlay-pair versions that aren't in allVersions (other projects' sheets)
+const overlayExtraVersionLabels = new Map();
 function recentOverlayKey() {
   return `recentOverlaySheets:${projectId}:${sheetId}`;
 }
@@ -2454,6 +2495,12 @@ function rememberOverlaySheet(id) {
 
 async function pickOverlayTarget(otherSheet) {
   rememberOverlaySheet(otherSheet.id);
+  if (otherSheet.current_version_id) {
+    overlayExtraVersionLabels.set(
+      otherSheet.current_version_id,
+      otherSheet._otherProject ? `${otherSheet._projectName}-${otherSheet.sheet_number}` : otherSheet.sheet_number
+    );
+  }
   if (otherSheet.id === Number(sheetId)) {
     openModal(`
       <h2>Overlay against which version?</h2>
