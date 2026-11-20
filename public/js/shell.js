@@ -595,12 +595,43 @@ export async function renderShell({
           { key: 'help', label: 'Help', href: `/help.html?projectId=${projectId}`, show: true },
         ];
 
+  // Combined view: Take-offs are per-project data, so instead of one link
+  // (or none) there's one per viewed project, each opening that project's own
+  // take-off page. The current project (if on a real project page) leads.
+  const canTakeoff = me.role === 'admin' || !!me.can_takeoff;
+  let activeKey = active;
+  if (isCombined && canTakeoff) {
+    const ids = [...new Set(combinedProjectIds.split(',').map((x) => x.trim()).filter(Boolean))];
+    if (projectId) {
+      const at = ids.indexOf(String(projectId));
+      if (at > 0) ids.unshift(...ids.splice(at, 1));
+      else if (at < 0) ids.unshift(String(projectId));
+    }
+    let nameById = new Map();
+    try {
+      const { projects } = await api('GET', '/api/projects');
+      nameById = new Map(projects.map((p) => [String(p.id), p.name]));
+    } catch {
+      /* names fall back to ids */
+    }
+    const takeoffItems = ids.map((id) => ({
+      key: `takeoffs-${id}`,
+      label: `Take-offs: ${nameById.get(id) || `Project ${id}`}`,
+      href: `/takeoffs.html?projectId=${id}&combinedProjectIds=${encodeURIComponent(combinedProjectIds)}`,
+      show: true,
+    }));
+    const at = items.findIndex((i) => i.key === 'takeoffs');
+    if (at >= 0) items.splice(at, 1, ...takeoffItems);
+    else items.push(...takeoffItems);
+    if (active === 'takeoffs' && projectId) activeKey = `takeoffs-${projectId}`;
+  }
+
   sidebarEl.innerHTML = `
     <nav>
       ${viewingSheet ? '' : '<a href="/dashboard.html">&larr; Back to projects</a>'}
       ${items
         .filter((i) => i.show)
-        .map((i) => `<a href="${i.href}" data-key="${i.key}" class="${i.key === active ? 'active' : ''}">${i.label}</a>`)
+        .map((i) => `<a href="${i.href}" data-key="${i.key}" class="${i.key === activeKey ? 'active' : ''}">${i.label}</a>`)
         .join('')}
     </nav>
   `;
