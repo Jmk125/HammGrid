@@ -289,6 +289,13 @@ export async function getCachedTakeoffInstancesForSheet(sheetId) {
   return all.filter((r) => r.sheet_id === Number(sheetId));
 }
 
+// Sheet ids with at least one cached take-off instance (drawing-list badge).
+export async function getCachedTakeoffSheetIds(projectId) {
+  const db = await openDb();
+  const all = await idbGetAll(db, 'takeoff_instances');
+  return new Set(all.filter((r) => r.project_id === Number(projectId)).map((r) => r.sheet_id));
+}
+
 // Neither documents nor document_folders carry project_id on the server row
 // (both are already fetched via a project-scoped URL) - reconcileProjectScopedStore
 // attaches it synthetically at write time, same as take-off instances above.

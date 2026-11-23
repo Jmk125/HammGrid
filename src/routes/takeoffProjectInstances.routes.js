@@ -14,6 +14,18 @@ const { requireTakeoff } = require('../middleware/auth');
 const router = express.Router({ mergeParams: true });
 
 router.get('/', requireTakeoff, (req, res) => {
+  // ?sheetIdsOnly=1 - just which sheets have any take-off on them (drawing
+  // list badge/filter), without shipping every instance's geometry.
+  if (req.query.sheetIdsOnly) {
+    const rows = db
+      .prepare(
+        `SELECT DISTINCT inst.sheet_id FROM take_off_instances inst
+         JOIN sheets s ON s.id = inst.sheet_id
+         WHERE s.project_id = ?`
+      )
+      .all(req.params.projectId);
+    return res.json({ sheet_ids: rows.map((r) => r.sheet_id) });
+  }
   const instances = db
     .prepare(
       `SELECT inst.*, ti.name AS item_name, ti.color AS item_color, ti.type AS item_type, ti.shape AS item_shape,

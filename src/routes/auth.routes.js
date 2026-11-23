@@ -51,7 +51,7 @@ const ALLOWED_MAGNIFIER_CORNERS = ['bottom-left', 'bottom-right'];
 const PANE_SECTION_IDS = ['markup', 'reference', 'measure', 'takeoffs'];
 
 router.put('/settings', requireAuth, (req, res) => {
-  const { theme, darkCanvas, magnifierCorner, paneSectionOrder } = req.body || {};
+  const { theme, darkCanvas, magnifierCorner, paneSectionOrder, showTakeoffBadges } = req.body || {};
   if (
     paneSectionOrder !== undefined &&
     !(Array.isArray(paneSectionOrder) && paneSectionOrder.every((id) => PANE_SECTION_IDS.includes(id)))
@@ -70,6 +70,7 @@ router.put('/settings', requireAuth, (req, res) => {
   if (theme !== undefined) next.theme = theme;
   if (darkCanvas !== undefined) next.darkCanvas = !!darkCanvas;
   if (magnifierCorner !== undefined) next.magnifierCorner = magnifierCorner;
+  if (showTakeoffBadges !== undefined) next.showTakeoffBadges = !!showTakeoffBadges;
   if (paneSectionOrder !== undefined) next.paneSectionOrder = [...new Set(paneSectionOrder)];
 
   db.prepare('UPDATE users SET settings = ? WHERE id = ?').run(JSON.stringify(next), req.session.user.id);
