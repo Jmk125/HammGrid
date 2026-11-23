@@ -1,4 +1,4 @@
-import { syncProject, getCachedSheets, getCachedAsset, getProjectSyncInfo, ensureProjectCacheFresh } from '/js/offline-store.js';
+import { getCachedTakeoffSheetIds, syncProject, getCachedSheets, getCachedAsset, getProjectSyncInfo, ensureProjectCacheFresh } from '/js/offline-store.js';
 import { renderShell, openModal, closeModal } from '/js/shell.js';
 
 const params = new URLSearchParams(window.location.search);
@@ -44,6 +44,51 @@ try {
   bookmarkedIds = new Set(JSON.parse(localStorage.getItem(BOOKMARKS_KEY) || '[]'));
   bookmarksOnly = localStorage.getItem('hammgrid-bookmarks-only') === '1';
 } catch (e) { /* storage unavailable - bookmarks just don't persist */ }
+
+// Optional take-off indicator on thumbnails (user setting showTakeoffBadges,
+// take-off-access users only) plus a "Take-offs only" filter that's only
+// available while the indicator is on. Filter state is per-device.
+let takeoffBadgesOn = false;
+let takeoffSheetIds = new Set();
+let takeoffsOnly = false;
+try { takeoffsOnly = localStorage.getItem('hammgrid-takeoffs-only') === '1'; } catch (e) { /* ignore */ }
+
+function syncTakeoffButton() {
+  const btn = document.getElementById('takeoff-filter-btn');
+  btn.style.display = takeoffBadgesOn ? '' : 'none';
+  btn.classList.toggle('active', takeoffsOnly);
+  btn.setAttribute('aria-pressed', String(takeoffsOnly));
+}
+
+async function loadTakeoffSheetIds() {
+  if (!takeoffBadgesOn) return;
+  const ids = new Set();
+  const projectIds = combinedMode ? combinedIds : [projectId];
+  for (const id of projectIds) {
+    try {
+      const res = await fetch(`/api/projects/${id}/take-off-instances?sheetIdsOnly=1`, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error(String(res.status));
+      (await res.json()).sheet_ids.forEach((s) => ids.add(s));
+    } catch (e) {
+      // Offline - fall back to the synced take-off cache (single-project only).
+      if (!combinedMode) (await getCachedTakeoffSheetIds(id)).forEach((s) => ids.add(s));
+    }
+  }
+  takeoffSheetIds = ids;
+  renderGrid(lastItems);
+}
+
+function setupTakeoffBadges(me) {
+  takeoffBadgesOn = !!(me.settings && me.settings.showTakeoffBadges) && (me.role === 'admin' || !!me.can_takeoff);
+  syncTakeoffButton();
+  document.getElementById('takeoff-filter-btn').addEventListener('click', () => {
+    takeoffsOnly = !takeoffsOnly;
+    try { localStorage.setItem('hammgrid-takeoffs-only', takeoffsOnly ? '1' : '0'); } catch (e) { /* ignore */ }
+    syncTakeoffButton();
+    renderGrid(lastItems);
+  });
+  loadTakeoffSheetIds();
+}
 
 function saveBookmarks() {
   try { localStorage.setItem(BOOKMARKS_KEY, JSON.stringify([...bookmarkedIds])); } catch (e) { /* ignore */ }
@@ -225,6 +270,7 @@ function renderGrid(items) {
   if (revisionId) filtered = filtered.filter((s) => String(s.revision_id) === revisionId);
   if (combinedMode && projectFilterValue) filtered = filtered.filter((s) => String(s.project_id) === projectFilterValue);
   if (bookmarksOnly) filtered = filtered.filter((s) => bookmarkedIds.has(s.sheet_id));
+  if (takeoffBadgesOn && takeoffsOnly) filtered = filtered.filter((s) => takeoffSheetIds.has(s.sheet_id));
   const isMetadataMatch = (s) =>
     s.sheet_number.toLowerCase().includes(search) ||
     (s.title || '').toLowerCase().includes(search) ||
@@ -273,6 +319,7 @@ function renderGrid(items) {
     card.innerHTML = `
       ${selectionMode ? `<span class="card-checkbox"><input type="checkbox" tabindex="-1" ${selected ? 'checked' : ''}><span class="checkmark"></span></span>` : ''}
       ${bookmarkedIds.has(s.sheet_id) ? '<span class="bookmark-badge">🔖</span>' : ''}
+      ${takeoffBadgesOn && takeoffSheetIds.has(s.sheet_id) ? '<span class="takeoff-badge" title="Has take-offs">📐</span>' : ''}
       <div class="thumb-wrap"><img src="${s.thumbSrc}" loading="lazy"></div>
       <div class="meta">
         <div class="sheet-number">${s.sheet_number}</div>
@@ -655,6 +702,7 @@ async function initCombined(me) {
     active: 'viewer',
     me,
   });
+  setupTakeoffBadges(me);
   await loadCombinedFilters();
   await renderFromCombinedLiveApi();
 }
@@ -678,6 +726,7 @@ async function initCombined(me) {
   setupSelectionToggleButton();
   setupNewCompositeButton(me);
   setupSelectionBar();
+  setupTakeoffBadges(me);
 
   const savedSearchTerm = localStorage.getItem(searchStorageKey());
   if (savedSearchTerm) {

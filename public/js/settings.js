@@ -79,6 +79,10 @@ async function save(patch) {
   document.querySelectorAll('input[name="theme"]').forEach((input) => {
     input.addEventListener('change', () => save({ theme: input.value }));
   });
+  const badgesBox = document.getElementById('takeoff-badges-checkbox');
+  badgesBox.checked = !!settings.showTakeoffBadges;
+  if (!(me.role === 'admin' || me.can_takeoff)) document.getElementById('takeoff-badge-card').style.display = 'none';
+  badgesBox.addEventListener('change', () => save({ showTakeoffBadges: badgesBox.checked }));
   document.getElementById('dark-canvas-checkbox').addEventListener('change', (e) => {
     save({ darkCanvas: e.target.checked });
   });
