@@ -1962,6 +1962,22 @@ async function loadOverlayImages() {
   overlayImages = { a: imgA, b: imgB };
 }
 
+function overlayBaseKey() {
+  return overlayLayers.b === displayedVersionId ? 'b' : 'a';
+}
+
+function rotateVector(x, y, degrees) {
+  const r = (degrees * Math.PI) / 180;
+  return { x: x * Math.cos(r) - y * Math.sin(r), y: x * Math.sin(r) + y * Math.cos(r) };
+}
+
+// Where `other` lands once both layers are moved together so that `base`
+// returns to its original position. The lineup between them is unchanged.
+function relativeTransform(other, base) {
+  const d = rotateVector(other.tx - base.tx, other.ty - base.ty, -base.rotation);
+  return { tx: d.x, ty: d.y, rotation: other.rotation - base.rotation };
+}
+
 // A -> blue, B -> red, shared -> black, blank -> white. Mirrors
 // pyproc/overlay.py's formula exactly (R=gA, G=min(gA,gB), B=gB).
 // `fit` re-fits the zoom/pan to the composite - only wanted right after
@@ -2033,16 +2049,18 @@ function computeOverlay({ fit = false } = {}) {
     return layerCanvas;
   }
 
-  // A manual align-drag/rotate offset only means something as a comparison
-  // aid between the two layers - viewed alone (the other toggled off), that
-  // offset just shifts the drawing off-center and can clip content past the
-  // composite canvas's edges. So a single-layer view always renders at the
-  // untouched identity transform ("original position, whole drawing
-  // visible"), regardless of what alignment is currently dialed in; only the
-  // full A+B composite honors the manual alignment, since that's the only
-  // place it's meant to be seen.
-  const bothShown = showA && showB;
-  const IDENTITY_TRANSFORM = { tx: 0, ty: 0, rotation: 0 };
+  // The base layer (the version that was on screen when overlay started)
+  // always draws untransformed, because take-off geometry lives in its
+  // coordinate space and never moves. The other layer is placed relative to
+  // it, and keeps that placement when viewed alone, so take-offs traced on
+  // the base sheet stay lined up over the other drawing. Parts of it shifted
+  // past the base page's edges are clipped.
+  const baseKey = overlayBaseKey();
+  const otherKey = baseKey === 'a' ? 'b' : 'a';
+  const placement = {
+    [baseKey]: { tx: 0, ty: 0, rotation: 0 },
+    [otherKey]: relativeTransform(overlayTransform[otherKey], overlayTransform[baseKey]),
+  };
 
   const ctx = canvas.getContext('2d');
   ctx.filter = 'none';
@@ -2050,21 +2068,21 @@ function computeOverlay({ fit = false } = {}) {
   ctx.fillStyle = 'white';
   ctx.fillRect(0, 0, width, height);
 
-  if (bothShown) {
+  if (showA && showB) {
     // layerA = (gA, gA, 255), layerB = (255, gB, gB) - drawing layerA then
     // darken-blending (per-channel min) layerB on top yields exactly
     // (min(gA,255), min(gA,gB), min(255,gB)) = (gA, min(gA,gB), gB), the same
     // result the old per-pixel loop computed, entirely via native ops.
-    const layerA = tint(grayLayer(imgA, overlayTransform.a), 'rgb(0,0,255)');
-    const layerB = tint(grayLayer(imgB, overlayTransform.b), 'rgb(255,0,0)');
+    const layerA = tint(grayLayer(imgA, placement.a), 'rgb(0,0,255)');
+    const layerB = tint(grayLayer(imgB, placement.b), 'rgb(255,0,0)');
     ctx.drawImage(layerA, 0, 0);
     ctx.globalCompositeOperation = 'darken';
     ctx.drawImage(layerB, 0, 0);
     ctx.globalCompositeOperation = 'source-over';
   } else if (showA) {
-    ctx.drawImage(grayLayer(imgA, IDENTITY_TRANSFORM), 0, 0);
+    ctx.drawImage(grayLayer(imgA, placement.a), 0, 0);
   } else if (showB) {
-    ctx.drawImage(grayLayer(imgB, IDENTITY_TRANSFORM), 0, 0);
+    ctx.drawImage(grayLayer(imgB, placement.b), 0, 0);
   }
   document.getElementById('pdf-status').textContent = '';
   if (fit) fitToView();
@@ -2103,8 +2121,13 @@ function setupOverlayAlignDrag() {
     const p = clientPointFromEvent(e);
     const scale = zoomPan ? zoomPan.state.scale : 1;
     const t = overlayTransform[overlayAlignTarget];
-    t.tx = overlayDrag.origTx + (p.x - overlayDrag.startX) / scale;
-    t.ty = overlayDrag.origTy + (p.y - overlayDrag.startY) / scale;
+    let dx = (p.x - overlayDrag.startX) / scale;
+    let dy = (p.y - overlayDrag.startY) / scale;
+    // The base layer is pinned on screen, so adjusting it moves the other
+    // layer exactly opposite the drag - even if the base has a saved rotation.
+    if (overlayAlignTarget === overlayBaseKey()) ({ x: dx, y: dy } = rotateVector(dx, dy, t.rotation));
+    t.tx = overlayDrag.origTx + dx;
+    t.ty = overlayDrag.origTy + dy;
     scheduleOverlayRecompute();
   }
   function endAlignDrag() {
